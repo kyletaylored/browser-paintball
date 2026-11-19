@@ -10,6 +10,7 @@ import { Paintballs, type Target, type BallEvents } from './paintballs';
 import { Fx } from './fx';
 import { Avatar } from './avatars';
 import { Hud } from './hud';
+import { SoundSystem, Footsteps } from './audio';
 import { Net, sampleRemote } from './net';
 import { spawnPoint } from '../shared/field';
 import { BALL_SPEED, FIRE_INTERVAL, STAND_HEIGHT, CROUCH_HEIGHT, CLIENT_SEND_HZ, RESPAWN_SECONDS } from '../shared/sim';
@@ -36,7 +37,17 @@ const input = new Input(canvas, hud.playButton);
 const player = new LocalPlayer(camera);
 const balls = new Paintballs(scene);
 const fx = new Fx(scene);
+const sound = new SoundSystem(camera);
 player.placeAt(spawnPoint(0, 2));
+
+// browsers only let audio start from a click or key press
+hud.playButton.addEventListener('click', () => sound.unlock());
+canvas.addEventListener('click', () => sound.unlock());
+hud.bindAudio(sound);
+
+// mix levels (each synthesised sound is normalised, so these set the balance)
+const VOL = { shot: 0.5, remoteShot: 0.9, splat: 0.55, hit: 0.9, confirm: 0.5, out: 0.55, step: 0.22, remoteStep: 0.5, reload: 0.45, dry: 0.5 };
+const myFeet = new Footsteps();
 
 let hopper = HOPPER;
 let reloadLeft = 0;
@@ -68,7 +79,7 @@ function updateDummies(now: number) {
 
 // ---- networking ---------------------------------------------------------------------------
 
-const remoteAvatars = new Map<number, { avatar: Avatar; target: Target }>();
+const remoteAvatars = new Map<number, { avatar: Avatar; target: Target; feet: Footsteps; lx: number; ly: number; lz: number }>();
 
 function clearRemotes() {
   for (const ra of remoteAvatars.values()) {
@@ -92,6 +103,7 @@ const net = new Net(serverUrl, {
   },
   ball(m) {
     balls.spawn(m.o, m.v, m.owner, m.team, TEAM_COLORS[m.team], false);
+    sound.playAt('shot', m.o[0], m.o[1], m.o[2], { volume: VOL.remoteShot });
   },
   hit(m) {
     fx.burst(m.p[0], m.p[1], m.p[2], 0, 1, 0, TEAM_COLORS[m.team], 20);
@@ -99,9 +111,11 @@ const net = new Net(serverUrl, {
       player.alive = false;
       outUntil = performance.now() + RESPAWN_SECONDS * 1000;
       hud.damageFlash();
+      sound.play('out', { volume: VOL.out, rate: 1 });
     }
     if (m.shooter === net.id) {
       hud.hitMarker();
+      sound.play('confirm', { volume: VOL.confirm, rate: 1 });
       hud.toast('Eliminated!');
     }
   },
@@ -128,7 +142,7 @@ function updateRemotes(now: number) {
     if (!ra) {
       const avatar = new Avatar(TEAM_COLORS[r.team]);
       scene.add(avatar.root);
-      ra = { avatar, target: { id, team: r.team, x: 0, y: 0, z: 0, height: STAND_HEIGHT, alive: true } };
+      ra = { avatar, target: { id, team: r.team, x: 0, y: 0, z: 0, height: STAND_HEIGHT, alive: true }, feet: new Footsteps(), lx: NaN, ly: 0, lz: NaN };
       remoteAvatars.set(id, ra);
     }
     const s = sampleRemote(r, at);
@@ -136,6 +150,15 @@ function updateRemotes(now: number) {
     const h = s.c ? CROUCH_HEIGHT : STAND_HEIGHT;
     ra.avatar.set(s.x, s.y, s.z, s.yaw, s.pitch, h, s.alive);
     Object.assign(ra.target, { x: s.x, y: s.y, z: s.z, height: h, alive: s.alive });
+    // footsteps you can hear from around a bunker (crouch-walking is silent)
+    const moved = Number.isNaN(ra.lx) ? 0 : Math.hypot(s.x - ra.lx, s.z - ra.lz);
+    const grounded = Math.abs(s.y - ra.ly) < 0.01;
+    ra.lx = s.x;
+    ra.ly = s.y;
+    ra.lz = s.z;
+    if (moved < 1 && s.alive && !s.c && ra.feet.update(moved, grounded)) {
+      sound.playAt('step', s.x, s.y + 0.05, s.z, { volume: VOL.remoteStep });
+    }
   }
   for (const [id, ra] of remoteAvatars) {
     if (net.remotes.has(id)) continue;
@@ -165,15 +188,18 @@ function fire() {
   if (online) net.send({ t: 'fire', o, d: [dir.x, dir.y, dir.z] });
   hopper--;
   player.kick();
+  sound.play('shot', { volume: VOL.shot });
 }
 
 const ballEvents: BallEvents = {
   onWorld(b, x, y, z, nx, ny, nz) {
     fx.splat(x, y, z, nx, ny, nz, b.color);
     fx.burst(x, y, z, nx, ny, nz, b.color, 6);
+    sound.playAt('splat', x, y, z, { volume: VOL.splat });
   },
   onTarget(b, t, x, y, z) {
     fx.burst(x, y, z, 0, 1, 0, b.color, 16);
+    sound.playAt('hit', x, y, z, { volume: VOL.hit });
     // Online, this is only a visual: the server decides eliminations (see the 'hit' handler).
     if (b.local && net.status !== 'online') {
       const d = dummies.find((d) => d.id === t.id);
@@ -182,10 +208,16 @@ const ballEvents: BallEvents = {
         d.downUntil = performance.now() + RESPAWN_SECONDS * 1000;
         practiceHits++;
         hud.hitMarker();
+        sound.play('confirm', { volume: VOL.confirm, rate: 1 });
       }
     }
   },
 };
+
+function startReload() {
+  reloadLeft = RELOAD_SECONDS;
+  sound.play('reload', { volume: VOL.reload, rate: 1 });
+}
 
 // ---- loop ---------------------------------------------------------------------------------
 
@@ -193,6 +225,7 @@ const targets: Target[] = [];
 let last = performance.now();
 let acc = 0;
 let sendAcc = 0;
+let wasFireHeld = false;
 
 function frame(now: number) {
   requestAnimationFrame(frame);
@@ -211,6 +244,8 @@ function frame(now: number) {
   if (online) for (const ra of remoteAvatars.values()) targets.push(ra.target);
   else targets.push(...dummies);
 
+  const px = player.body.x;
+  const pz = player.body.z;
   acc += dt;
   let steps = 0;
   while (acc >= STEP && steps < 12) {
@@ -220,18 +255,28 @@ function frame(now: number) {
     steps++;
   }
   if (steps === 12) acc = 0; // way behind (tab was hidden): drop the backlog instead of spiralling
+  const moved = Math.hypot(player.body.x - px, player.body.z - pz);
+  if (player.alive && !player.crouching && moved < 1 && myFeet.update(moved, player.body.onGround)) {
+    sound.play('step', { volume: VOL.step });
+  }
 
   // reload + fire
   if (reloadLeft > 0) {
     reloadLeft -= dt;
-    if (reloadLeft <= 0) hopper = HOPPER;
-  } else if (input.wasPressed('KeyR') && hopper < HOPPER) {
-    reloadLeft = RELOAD_SECONDS;
+    if (reloadLeft <= 0) {
+      hopper = HOPPER;
+      sound.play('reloadDone', { volume: VOL.reload });
+    }
+  } else if (input.wasPressed('KeyR') && hopper < HOPPER && player.alive) {
+    startReload();
   }
   fireCooldown -= dt;
+  const firePressed = input.fireHeld && !wasFireHeld;
+  wasFireHeld = input.fireHeld;
   const canFire = input.locked && player.alive && reloadLeft <= 0;
+  if (firePressed && input.locked && player.alive && (reloadLeft > 0 || hopper <= 0)) sound.play('dry', { volume: VOL.dry });
   if (canFire && input.fireHeld) {
-    if (hopper <= 0) reloadLeft = RELOAD_SECONDS;
+    if (hopper <= 0) startReload();
     while (fireCooldown <= 0 && hopper > 0) {
       fire();
       fireCooldown += FIRE_INTERVAL;
@@ -272,4 +317,4 @@ requestAnimationFrame(frame);
 
 // Poke at the game from the browser console while developing, e.g. __game.player.body.
 // import.meta.env.DEV is false in `npm run build`, so this is stripped from production.
-if (import.meta.env.DEV) Object.assign(window, { __game: { THREE, scene, camera, renderer, input, player, net, balls, fx, dummies } });
+if (import.meta.env.DEV) Object.assign(window, { __game: { THREE, scene, camera, renderer, input, player, net, balls, fx, dummies, sound } });

@@ -80,6 +80,10 @@
       #play:hover { filter: brightness(1.08); }
       .keys { list-style: none; padding: 0; margin: 20px 0 0; color: var(--dim); font-size: 14px; line-height: 1.9; }
       .keys b { color: var(--ink); }
+      .audio { display: flex; align-items: center; gap: 12px; margin-top: 18px; color: var(--dim); font-size: 14px; }
+      .audio input[type='range'] { flex: 1; accent-color: var(--accent); }
+      .audio label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+      .audio input[type='checkbox'] { accent-color: var(--accent); }
     </style>
   </head>
   <body>
@@ -101,6 +105,11 @@
         <h1>SPLAT <span>ARENA</span></h1>
         <p class="sub">A three.js paintball starter</p>
         <button id="play" type="button">Click to play</button>
+        <div class="audio">
+          <label for="volume">Volume</label>
+          <input id="volume" type="range" min="0" max="100" step="1" value="80" aria-label="Volume" />
+          <label><input id="mute" type="checkbox" /> Mute</label>
+        </div>
         <ul class="keys">
           <li><b>Mouse</b> aim · <b>Click</b> fire</li>
           <li><b>WASD</b> move · <b>Shift</b> sprint</li>

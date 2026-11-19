@@ -1,5 +1,7 @@
 // The HTML overlay on top of the canvas. Plain DOM, no framework.
 
+import type { SoundSystem } from './audio';
+
 const $ = (id: string) => document.getElementById(id)!;
 
 export class Hud {
@@ -15,6 +17,27 @@ export class Hud {
   private flash = $('flash');
   private toastTimer = 0;
   private last = { status: '', ammo: '', score: '', out: '' };
+
+  /** volume slider + mute checkbox on the start screen */
+  bindAudio(sound: SoundSystem): void {
+    const vol = $('volume') as HTMLInputElement;
+    const mute = $('mute') as HTMLInputElement;
+    vol.value = String(Math.round(sound.volume * 100));
+    mute.checked = sound.muted;
+    vol.addEventListener('input', () => {
+      sound.unlock();
+      sound.setVolume(Number(vol.value) / 100);
+      if (sound.muted && Number(vol.value) > 0) {
+        sound.setMuted(false);
+        mute.checked = false;
+      }
+    });
+    vol.addEventListener('change', () => sound.play('shot', { volume: 0.5 })); // preview the level
+    mute.addEventListener('change', () => {
+      sound.unlock();
+      sound.setMuted(mute.checked);
+    });
+  }
 
   setLocked(locked: boolean): void {
     this.overlay.hidden = locked;
