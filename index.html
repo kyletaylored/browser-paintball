@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Splat Arena</title>
+    <style>
+      :root {
+        --ink: #f6f3ee;
+        --dim: rgba(246, 243, 238, 0.7);
+        --panel: rgba(16, 14, 20, 0.72);
+        --accent: #ffc93c;
+        --red: #ff3b3b;
+        --blue: #3b8bff;
+        font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #0e0c12; color: var(--ink); }
+      #view { display: block; width: 100vw; height: 100vh; }
+
+      #hud { position: fixed; inset: 0; pointer-events: none; user-select: none; }
+      #crosshair {
+        position: absolute; left: 50%; top: 50%; width: 22px; height: 22px; translate: -50% -50%;
+        background:
+          linear-gradient(var(--ink), var(--ink)) center / 2px 8px no-repeat,
+          linear-gradient(var(--ink), var(--ink)) center / 8px 2px no-repeat;
+        filter: drop-shadow(0 0 2px #000);
+      }
+      #crosshair::after {
+        content: ''; position: absolute; inset: 3px; border: 2px solid var(--ink); border-radius: 50%; opacity: 0.55;
+      }
+      #hitmarker {
+        position: absolute; left: 50%; top: 50%; width: 34px; height: 34px; translate: -50% -50%; opacity: 0;
+        background:
+          linear-gradient(45deg, transparent 46%, var(--accent) 46% 54%, transparent 54%),
+          linear-gradient(-45deg, transparent 46%, var(--accent) 46% 54%, transparent 54%);
+        -webkit-mask: radial-gradient(circle, transparent 7px, #000 8px);
+        mask: radial-gradient(circle, transparent 7px, #000 8px);
+      }
+      #hitmarker.show { animation: pop 0.35s ease-out; }
+      @keyframes pop { from { opacity: 1; scale: 1.4; } to { opacity: 0; scale: 1; } }
+
+      .chip {
+        position: absolute; padding: 8px 12px; border-radius: 10px; background: var(--panel);
+        font-weight: 700; letter-spacing: 0.02em; backdrop-filter: blur(6px);
+      }
+      #score { top: 16px; left: 50%; translate: -50% 0; font-size: 18px; display: flex; gap: 14px; align-items: center; }
+      #score .r { color: var(--red); } #score .b { color: var(--blue); }
+      #status { top: 16px; left: 16px; font-size: 13px; font-weight: 600; color: var(--dim); max-width: min(420px, 60vw); }
+      #status .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; background: #888; }
+      #status.online .dot { background: #5ee07a; } #status.offline .dot { background: var(--accent); }
+      #ammo { right: 16px; bottom: 16px; font-size: 28px; font-variant-numeric: tabular-nums; }
+      #ammo small { font-size: 13px; color: var(--dim); margin-left: 6px; }
+      #toast {
+        top: 64px; left: 50%; translate: -50% 0; font-size: 15px; opacity: 0; transition: opacity 0.3s;
+      }
+      #toast.show { opacity: 1; }
+      #flash { position: absolute; inset: 0; background: radial-gradient(transparent 40%, rgba(255, 40, 40, 0.55)); opacity: 0; }
+      #flash.show { animation: fade 0.9s ease-out; }
+      @keyframes fade { from { opacity: 1; } to { opacity: 0; } }
+      #out {
+        position: absolute; left: 50%; top: 38%; translate: -50% -50%; text-align: center;
+        font-size: 44px; font-weight: 900; letter-spacing: 0.04em; text-shadow: 0 3px 18px #000;
+      }
+      #out small { display: block; font-size: 16px; font-weight: 600; color: var(--dim); letter-spacing: 0; }
+
+      #overlay {
+        position: fixed; inset: 0; display: grid; place-items: center; padding: 16px;
+        background: radial-gradient(ellipse at center, rgba(14, 12, 18, 0.55), rgba(14, 12, 18, 0.88));
+      }
+      #overlay[hidden] { display: none; }
+      .card { width: min(440px, 100%); padding: 28px; border-radius: 18px; background: var(--panel); text-align: center; }
+      .card h1 { margin: 0; font-size: 40px; font-weight: 900; letter-spacing: 0.06em; }
+      .card h1 span { color: var(--accent); }
+      .card .sub { margin: 6px 0 22px; color: var(--dim); }
+      #play {
+        font: inherit; font-size: 18px; font-weight: 800; padding: 14px 28px; border: 0; border-radius: 12px;
+        background: var(--accent); color: #1b1409; cursor: pointer; width: 100%;
+      }
+      #play:hover { filter: brightness(1.08); }
+      .keys { list-style: none; padding: 0; margin: 20px 0 0; color: var(--dim); font-size: 14px; line-height: 1.9; }
+      .keys b { color: var(--ink); }
+    </style>
+  </head>
+  <body>
+    <canvas id="view"></canvas>
+
+    <div id="hud">
+      <div id="crosshair"></div>
+      <div id="hitmarker"></div>
+      <div id="score" class="chip"></div>
+      <div id="status" class="chip"><span class="dot"></span><span class="txt">Connecting…</span></div>
+      <div id="ammo" class="chip"></div>
+      <div id="toast" class="chip"></div>
+      <div id="flash"></div>
+      <div id="out" hidden></div>
+    </div>
+
+    <div id="overlay">
+      <div class="card">
+        <h1>SPLAT <span>ARENA</span></h1>
+        <p class="sub">A three.js paintball starter</p>
+        <button id="play" type="button">Click to play</button>
+        <ul class="keys">
+          <li><b>Mouse</b> aim · <b>Click</b> fire</li>
+          <li><b>WASD</b> move · <b>Shift</b> sprint</li>
+          <li><b>Space</b> jump · <b>C</b> crouch</li>
+          <li><b>R</b> reload · <b>Esc</b> release mouse</li>
+        </ul>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
