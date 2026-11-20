@@ -7,7 +7,7 @@ Everything is drawn from code (no model files yet), so you can read the whole th
 
 ## Run it
 
-Needs Node 20 or newer.
+Needs Node 20.19 or newer.
 
 ```powershell
 npm install
