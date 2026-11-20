@@ -8,7 +8,8 @@ import { Input } from './input';
 import { LocalPlayer } from './player';
 import { Paintballs, type Target, type BallEvents } from './paintballs';
 import { Fx } from './fx';
-import { Avatar } from './avatars';
+import { makeAvatar, type Avatar } from './avatars';
+import { loadModels } from './models';
 import { Hud } from './hud';
 import { SoundSystem, Footsteps } from './audio';
 import { Nameplates, type PlateTarget } from './nameplates';
@@ -47,12 +48,15 @@ const renderer = createRenderer(canvas);
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, 1, 0.05, 400);
 scene.add(camera); // the gun is a child of the camera, so the camera must be in the scene
-buildWorld(scene);
+const hud = new Hud();
+// models first (behind the loading bar); if they fail, everything falls back to shapes drawn in code
+const models = await loadModels((f) => hud.setLoading(f));
+hud.setLoading(null);
+buildWorld(scene, models);
 const composer = createComposer(renderer, scene, camera);
 
-const hud = new Hud();
 const input = new Input(canvas, hud.playButton);
-const player = new LocalPlayer(camera);
+const player = new LocalPlayer(camera, models?.marker ?? null);
 const balls = new Paintballs(scene);
 const fx = new Fx(scene);
 const sound = new SoundSystem(camera);
@@ -102,7 +106,7 @@ interface Dummy extends Target {
   downUntil: number;
 }
 const dummies: Dummy[] = ([[7.5, 2.5], [13.8, -6], [11, 8]] as const).map(([x, z], i) => {
-  const avatar = new Avatar(TEAM_COLORS[1]);
+  const avatar = makeAvatar(models, TEAM_COLORS[1]);
   scene.add(avatar.root);
   return { id: -100 - i, team: 1, x, y: 0, z, baseZ: z, height: STAND_HEIGHT, alive: true, avatar, downUntil: 0 };
 });
@@ -147,6 +151,7 @@ const net = new Net(serverUrl, {
     hud.toast(`Joined the ${TEAM_NAMES[team]} team`);
   },
   ball(m) {
+    remoteAvatars.get(m.owner)?.avatar.fire();
     balls.spawn(m.o, m.v, m.owner, m.team, TEAM_COLORS[m.team], false);
     sound.playAt('shot', m.o[0], m.o[1], m.o[2], { volume: VOL.remoteShot });
   },
@@ -197,7 +202,7 @@ function updateRemotes(now: number) {
   for (const [id, r] of net.remotes) {
     let ra = remoteAvatars.get(id);
     if (!ra) {
-      const avatar = new Avatar(TEAM_COLORS[r.team]);
+      const avatar = makeAvatar(models, TEAM_COLORS[r.team]);
       scene.add(avatar.root);
       ra = { avatar, target: { id, team: r.team, x: 0, y: 0, z: 0, height: STAND_HEIGHT, alive: true }, feet: new Footsteps(), lx: NaN, ly: 0, lz: NaN };
       remoteAvatars.set(id, ra);
@@ -460,4 +465,4 @@ requestAnimationFrame(frame);
 
 // Poke at the game from the browser console while developing, e.g. __game.player.body.
 // import.meta.env.DEV is false in `npm run build`, so this is stripped from production.
-if (import.meta.env.DEV) Object.assign(window, { __game: { THREE, scene, camera, renderer, input, player, net, balls, fx, dummies, sound, hud, frame, prediction } });
+if (import.meta.env.DEV) Object.assign(window, { __game: { THREE, scene, camera, renderer, composer, input, player, net, balls, fx, dummies, sound, hud, frame, prediction, models, remoteAvatars } });

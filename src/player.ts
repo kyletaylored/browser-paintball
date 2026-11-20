@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { stepMovement, STAND_HEIGHT, EYE_FROM_TOP, type Body, type MoveInput } from '../shared/sim';
 import { TEAM_COLORS, type Spawn, type Team } from '../shared/protocol';
 import type { Input } from './input';
+import { paintTeam } from './models';
 
 const SENSITIVITY = 0.0022;
 
@@ -23,9 +24,23 @@ export class LocalPlayer {
   /** visual-only offset left over from a server correction; decays to zero so fixes don't look like teleports */
   private smooth = { x: 0, y: 0, z: 0 };
 
-  constructor(private camera: THREE.PerspectiveCamera) {
+  private markerModel: THREE.Object3D | null = null;
+  /** where the marker sits in front of the camera (right, down, forward) */
+  readonly gunOffset = new THREE.Vector3(0.17, -0.17, -0.4);
+
+  /** marker: the model from marker.glb, or null to draw a simple one from code */
+  constructor(private camera: THREE.PerspectiveCamera, marker: THREE.Object3D | null = null) {
     camera.rotation.order = 'YXZ';
-    this.buildGun();
+    if (marker) {
+      this.markerModel = marker.clone(true);
+      this.markerModel.traverse((o) => (o.castShadow = false)); // it's inside your head as far as the sun knows
+      this.gun.add(this.markerModel);
+      this.gun.scale.setScalar(0.55);
+      this.gun.rotation.y = 0.06; // angled a touch toward the centre of the screen
+      this.gunOffset.set(0.22, -0.24, -0.62);
+    } else {
+      this.buildGun();
+    }
     camera.add(this.gun);
     this.setTeam(0);
   }
@@ -33,6 +48,7 @@ export class LocalPlayer {
   setTeam(team: Team): void {
     this.team = team;
     this.hopperMat.color.setHex(TEAM_COLORS[team]);
+    if (this.markerModel) paintTeam(this.markerModel, TEAM_COLORS[team]);
   }
 
   placeAt(sp: Spawn): void {
@@ -108,7 +124,8 @@ export class LocalPlayer {
     this.camera.rotation.set(this.pitch, this.yaw, 0);
 
     this.recoil = Math.max(0, this.recoil - dt * 14);
-    this.gun.position.set(0.17 + Math.cos(this.bobPhase) * 0.005, -0.17 - bob * 0.5, -0.4 + this.recoil * 0.03);
+    const o = this.gunOffset;
+    this.gun.position.set(o.x + Math.cos(this.bobPhase) * 0.005, o.y - bob * 0.5, o.z + this.recoil * 0.03);
     this.gun.rotation.x = this.recoil * 0.05;
     this.gun.visible = this.alive;
   }

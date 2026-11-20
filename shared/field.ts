@@ -41,6 +41,12 @@ const redHalf: Bunker[] = [
 
 export const BUNKERS: readonly Bunker[] = [...center, ...redHalf, ...redHalf.map((b) => ({ ...b, x: -b.x }))];
 
+/** name of a bunker's model in public/models/bunkers.glb (same shape + colour = same model) */
+export function bunkerKey(b: Bunker): string {
+  const c = b.color.toString(16).padStart(6, '0');
+  return b.kind === 'box' ? `box-${b.w}x${b.d}x${b.h}-${c}` : `can-${b.r}x${b.h}-${c}`;
+}
+
 export function spawnPoint(team: Team, slot: number): Spawn {
   const x = team === 0 ? -HALF_L + 1.5 : HALF_L - 1.5;
   const z = ((slot % 6) - 2.5) * 2.2;

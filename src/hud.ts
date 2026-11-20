@@ -23,8 +23,25 @@ export class Hud {
   private feed = $('feed');
   private board = $('board');
   private boardKey = '';
+  private loading = $('loading');
+  private loadingBar = this.loading.querySelector('.bar') as HTMLElement;
   private toastTimer = 0;
   private last = { status: '', ammo: '', score: '', out: '', banner: '' };
+
+  /** model download progress (0..1), or null when done: the play button waits for it */
+  setLoading(fraction: number | null): void {
+    const btn = this.playButton as HTMLButtonElement;
+    if (fraction === null) {
+      this.loading.hidden = true;
+      btn.disabled = false;
+      btn.textContent = 'Click to play';
+      return;
+    }
+    this.loading.hidden = false;
+    btn.disabled = true;
+    btn.textContent = `Loading… ${Math.round(fraction * 100)}%`;
+    this.loadingBar.style.width = `${(fraction * 100).toFixed(1)}%`;
+  }
 
   /** volume slider + mute checkbox on the start screen */
   bindAudio(sound: SoundSystem): void {

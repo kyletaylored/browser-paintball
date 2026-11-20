@@ -1,10 +1,114 @@
-// A simple player figure built from primitives. Swap this for a rigged GLB character
-// (GLTFLoader + AnimationMixer) when you have one; keep the same set() interface.
+// Other players. ModelAvatar is the animated figure from player.glb; PrimitiveAvatar is the simple
+// shape drawn from code, used if the models didn't load. Both have the same set() interface.
 
 import * as THREE from 'three';
 import { STAND_HEIGHT } from '../shared/sim';
+import { paintTeam, type Models } from './models';
 
-export class Avatar {
+export interface Avatar {
+  readonly root: THREE.Object3D;
+  /** where they are and what they're doing (call every frame) */
+  set(x: number, y: number, z: number, yaw: number, pitch: number, height: number, alive: boolean): void;
+  /** they fired: play the recoil */
+  fire(): void;
+  dispose(): void;
+}
+
+export function makeAvatar(models: Models | null, color: number): Avatar {
+  return models ? new ModelAvatar(models, color) : new PrimitiveAvatar(color);
+}
+
+type State = 'idle' | 'run' | 'crouch' | 'crouchMove' | 'out';
+
+/**
+ * The player.glb figure, driven by network state: speed and crouch pick the base animation
+ * (crossfaded), "out" plays when eliminated, and each shot plays the additive "shoot" kick on top.
+ * Aim pitch bends the torso and head after the animation is applied.
+ */
+export class ModelAvatar implements Avatar {
+  readonly root = new THREE.Group();
+  private model: THREE.Object3D;
+  private mixer: THREE.AnimationMixer;
+  private actions = new Map<string, THREE.AnimationAction>();
+  private shoot: THREE.AnimationAction | null = null;
+  private state: State | null = null;
+  private torso: THREE.Object3D | null;
+  private head: THREE.Object3D | null;
+  private last = { x: NaN, z: NaN, t: 0 };
+  private speed = 0;
+
+  constructor(models: Models, color: number) {
+    this.model = models.player.scene.clone(true);
+    paintTeam(this.model, color);
+    this.root.add(this.model);
+    this.mixer = new THREE.AnimationMixer(this.model);
+    for (const clip of models.player.clips) {
+      if (clip.name === 'shoot') {
+        const add = THREE.AnimationUtils.makeClipAdditive(clip.clone());
+        this.shoot = this.mixer.clipAction(add);
+        this.shoot.blendMode = THREE.AdditiveAnimationBlendMode;
+        this.shoot.setLoop(THREE.LoopOnce, 1);
+      } else {
+        this.actions.set(clip.name, this.mixer.clipAction(clip));
+      }
+    }
+    this.torso = this.model.getObjectByName('torso') ?? null;
+    this.head = this.model.getObjectByName('head') ?? null;
+    this.play('idle', 0);
+  }
+
+  set(x: number, y: number, z: number, yaw: number, pitch: number, height: number, alive: boolean): void {
+    const now = performance.now() / 1000;
+    const dt = this.last.t ? Math.min(0.1, now - this.last.t) : 0;
+    if (dt > 0 && !Number.isNaN(this.last.x)) {
+      const v = Math.hypot(x - this.last.x, z - this.last.z) / dt;
+      this.speed += ((v > 20 ? 0 : v) - this.speed) * Math.min(1, dt * 10); // > 20 m/s is a respawn jump
+    }
+    this.last = { x, z, t: now };
+    this.root.position.set(x, y, z);
+    this.root.rotation.y = yaw;
+
+    const crouched = height < STAND_HEIGHT - 0.2;
+    const state: State = !alive ? 'out' : crouched ? (this.speed > 0.6 ? 'crouchMove' : 'crouch') : this.speed > 1 ? 'run' : 'idle';
+    if (state !== this.state) this.play(state, 0.2);
+    const run = this.actions.get('run');
+    if (run) run.timeScale = Math.max(0.6, Math.min(1.4, this.speed / 6.5));
+
+    this.mixer.update(dt);
+    // aim up/down: bend at the waist and neck on top of whatever the animation did
+    if (alive) {
+      if (this.torso) this.torso.rotation.x += pitch * 0.55;
+      if (this.head) this.head.rotation.x += pitch * 0.4;
+    }
+  }
+
+  fire(): void {
+    if (this.state === 'out' || !this.shoot) return;
+    this.shoot.reset().play();
+  }
+
+  dispose(): void {
+    this.mixer.stopAllAction();
+    this.mixer.uncacheRoot(this.model);
+    this.model.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh) return;
+      for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) if (m.userData.teamCopy) m.dispose();
+    });
+  }
+
+  private play(state: State, fade: number): void {
+    const next = this.actions.get(state);
+    if (!next) return;
+    const prev = this.state ? this.actions.get(this.state) : undefined;
+    next.reset().setEffectiveWeight(1).play();
+    if (prev && prev !== next && fade > 0) prev.crossFadeTo(next, fade, false);
+    else if (prev && prev !== next) prev.stop();
+    this.state = state;
+  }
+}
+
+export class PrimitiveAvatar implements Avatar {
   readonly root = new THREE.Group();
   private head = new THREE.Group();
   private mats: THREE.MeshStandardMaterial[] = [];
@@ -48,6 +152,8 @@ export class Avatar {
       }
     }
   }
+
+  fire(): void {}
 
   dispose(): void {
     this.root.traverse((o) => {
