@@ -4,6 +4,7 @@
 //    inputs instead and run shared/sim.ts stepMovement here too.
 //  - Paintballs are simulated HERE. The server decides who got hit, so clients can't fake eliminations.
 //  - It sends everyone a snapshot 20 times a second; clients interpolate between them.
+//  - It runs the match: countdown, live point, point won, match over (see RoundPhase in shared/protocol.ts).
 
 import { WebSocketServer, type WebSocket } from 'ws';
 import { spawnPoint, HALF_L, HALF_W, NET_MARGIN } from '../shared/field';
@@ -12,11 +13,23 @@ import {
   BALL_SPEED, BALL_LIFETIME, FIRE_INTERVAL, STAND_HEIGHT, CROUCH_HEIGHT, EYE_FROM_TOP,
   RESPAWN_SECONDS, SERVER_TICK_HZ, SNAPSHOT_HZ, type Ball,
 } from '../shared/sim';
-import { DEFAULT_PORT, type ClientMsg, type ServerMsg, type Team, type V3 } from '../shared/protocol';
+import {
+  DEFAULT_PORT, TEAM_NAMES, type ClientMsg, type ServerMsg, type Team, type V3, type RoundPhase, type RoundState,
+} from '../shared/protocol';
+
+const envNum = (name: string, fallback: number) => {
+  const v = Number(process.env[name]);
+  return Number.isFinite(v) && v > 0 ? v : fallback;
+};
 
 const PORT = Number(process.env.PORT ?? DEFAULT_PORT);
 const MAX_PLAYERS = 12;
 const MAX_BALLS = 2000;
+const POINTS_TO_WIN = envNum('POINTS_TO_WIN', 5);
+const ROUND_SECONDS = envNum('ROUND_SECONDS', 120);
+const COUNTDOWN_SECONDS = envNum('COUNTDOWN_SECONDS', 3);
+const POINT_PAUSE_SECONDS = envNum('POINT_PAUSE_SECONDS', 3);
+const MATCH_OVER_SECONDS = envNum('MATCH_OVER_SECONDS', 6);
 
 interface Player {
   ws: WebSocket;
@@ -38,6 +51,8 @@ const players = new Map<number, Player>();
 const balls: Ball[] = [];
 const score: [number, number] = [0, 0];
 let nextId = 1;
+
+const match = { phase: 'waiting' as RoundPhase, endsAt: 0, round: 1, winner: -1 as Team | -1 };
 
 const now = () => performance.now() / 1000;
 const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
@@ -75,13 +90,16 @@ wss.on('connection', (ws) => {
   const team = pickTeam();
   const slot = freeSlot(team);
   const sp = spawnPoint(team, slot);
+  // joining while a point is being played: sit out until the next one
+  const alive = match.phase !== 'live';
   const p: Player = {
     ws, id, team, slot, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw, pitch: 0,
-    crouch: false, alive: true, outUntil: 0, lastFire: 0,
+    crouch: false, alive, outUntil: alive ? 0 : Infinity, lastFire: 0,
   };
   players.set(id, p);
-  send(ws, { t: 'welcome', id, team, spawn: sp });
-  console.log(`+ player ${id} joined ${team === 0 ? 'Red' : 'Blue'} (${players.size} online)`);
+  send(ws, { t: 'welcome', id, team, spawn: sp, round: roundState() });
+  console.log(`+ player ${id} joined ${TEAM_NAMES[team]} (${players.size} online)`);
+  updateMatch();
 
   ws.on('message', (data, isBinary) => {
     if (isBinary) return;
@@ -98,12 +116,14 @@ wss.on('connection', (ws) => {
     players.delete(id);
     broadcast({ t: 'leave', id });
     console.log(`- player ${id} left (${players.size} online)`);
+    updateMatch();
   });
 });
 
 function handle(p: Player, msg: ClientMsg) {
   if (msg.t === 'state') {
     if (!p.alive) return; // eliminated players are frozen until they respawn
+    if (match.phase === 'countdown') return; // everyone stays in their start box
     if (![msg.x, msg.y, msg.z, msg.yaw, msg.pitch].every(finite)) return;
     p.x = Math.max(-HALF_L - NET_MARGIN, Math.min(HALF_L + NET_MARGIN, msg.x));
     p.y = Math.max(0, Math.min(5, msg.y));
@@ -113,6 +133,7 @@ function handle(p: Player, msg: ClientMsg) {
     p.crouch = msg.c === true;
   } else if (msg.t === 'fire') {
     if (!p.alive || !isV3(msg.o) || !isV3(msg.d)) return;
+    if (match.phase !== 'live' && match.phase !== 'waiting') return; // no shooting during countdowns and pauses
     const t = now();
     if (t - p.lastFire < FIRE_INTERVAL * 0.75) return; // rate limit (with slack for network jitter)
     // The shot has to start near the shooter's eyes.
@@ -158,21 +179,107 @@ function tick(dt: number) {
   }
 
   const t = now();
-  for (const p of players.values()) {
-    if (!p.alive && t >= p.outUntil) {
-      const sp = spawnPoint(p.team, p.slot);
-      Object.assign(p, { alive: true, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw, pitch: 0, crouch: false });
-      send(p.ws, { t: 'respawn', spawn: sp });
-    }
-  }
+  for (const p of players.values()) if (!p.alive && t >= p.outUntil) respawn(p); // warm-up only: live points use Infinity
+  updateMatch();
+}
+
+function respawn(p: Player) {
+  const sp = spawnPoint(p.team, p.slot);
+  Object.assign(p, { alive: true, outUntil: 0, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw, pitch: 0, crouch: false });
+  send(p.ws, { t: 'respawn', spawn: sp });
 }
 
 function eliminate(victim: Player, ball: Ball, p: V3) {
   victim.alive = false;
-  victim.outUntil = now() + RESPAWN_SECONDS;
-  const team = ball.team as Team;
-  score[team]++;
-  broadcast({ t: 'hit', victim: victim.id, shooter: ball.owner, team, p });
+  // during warm-up you come back after a few seconds; during a point you're out until it ends
+  victim.outUntil = match.phase === 'waiting' ? now() + RESPAWN_SECONDS : Infinity;
+  broadcast({ t: 'hit', victim: victim.id, shooter: ball.owner, team: ball.team as Team, p });
+}
+
+// ---- match flow ---------------------------------------------------------------------------
+
+function teamCounts() {
+  const total: [number, number] = [0, 0];
+  const alive: [number, number] = [0, 0];
+  for (const p of players.values()) {
+    total[p.team]++;
+    if (p.alive) alive[p.team]++;
+  }
+  return { total, alive };
+}
+
+function setPhase(phase: RoundPhase, seconds: number, winner: Team | -1 = -1) {
+  match.phase = phase;
+  match.endsAt = now() + seconds;
+  match.winner = winner;
+  const who = winner !== -1 ? ` (${TEAM_NAMES[winner]})` : '';
+  console.log(`  match: ${phase}${who} · ${score[0]}-${score[1]} · point ${match.round}`);
+}
+
+/** reset everyone to their start box and start the countdown for the next point */
+function startCountdown() {
+  balls.length = 0;
+  for (const p of players.values()) respawn(p);
+  setPhase('countdown', COUNTDOWN_SECONDS);
+}
+
+function updateMatch() {
+  const { total, alive } = teamCounts();
+  const t = now();
+
+  if (total[0] === 0 || total[1] === 0) {
+    if (match.phase !== 'waiting') {
+      setPhase('waiting', 0);
+      // back to warm-up: anyone sitting out comes back shortly
+      for (const p of players.values()) if (!p.alive) p.outUntil = t + RESPAWN_SECONDS;
+    }
+    return;
+  }
+
+  switch (match.phase) {
+    case 'waiting':
+      score[0] = score[1] = 0;
+      match.round = 1;
+      startCountdown();
+      break;
+    case 'countdown':
+      if (t >= match.endsAt) setPhase('live', ROUND_SECONDS);
+      break;
+    case 'live': {
+      const redOut = alive[0] === 0;
+      const blueOut = alive[1] === 0;
+      if (redOut || blueOut || t >= match.endsAt) {
+        const winner: Team | -1 = redOut && !blueOut ? 1 : blueOut && !redOut ? 0 : -1;
+        if (winner !== -1) score[winner]++;
+        const over = winner !== -1 && score[winner] >= POINTS_TO_WIN;
+        setPhase(over ? 'matchover' : 'point', over ? MATCH_OVER_SECONDS : POINT_PAUSE_SECONDS, winner);
+      }
+      break;
+    }
+    case 'point':
+      if (t >= match.endsAt) {
+        match.round++;
+        startCountdown();
+      }
+      break;
+    case 'matchover':
+      if (t >= match.endsAt) {
+        score[0] = score[1] = 0;
+        match.round = 1;
+        startCountdown();
+      }
+      break;
+  }
+}
+
+function roundState(): RoundState {
+  return {
+    phase: match.phase,
+    endsIn: match.phase === 'waiting' ? 0 : Math.max(0, match.endsAt - now()),
+    round: match.round,
+    winner: match.winner,
+    toWin: POINTS_TO_WIN,
+  };
 }
 
 function snapshot() {
@@ -181,6 +288,7 @@ function snapshot() {
     t: 'snap',
     time: now(),
     score,
+    round: roundState(),
     players: [...players.values()].map((p) => ({
       id: p.id, team: p.team, x: p.x, y: p.y, z: p.z, yaw: p.yaw, pitch: p.pitch, c: p.crouch, alive: p.alive,
     })),

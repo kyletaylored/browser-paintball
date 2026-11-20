@@ -1,7 +1,7 @@
 // WebSocket client. Keeps a short history of snapshots for each other player so they can be
 // drawn slightly in the past, smoothly interpolated, instead of jumping 20 times a second.
 
-import type { ClientMsg, ServerMsg, PlayerSnap, Spawn, Team } from '../shared/protocol';
+import type { ClientMsg, ServerMsg, PlayerSnap, RoundState, Spawn, Team } from '../shared/protocol';
 
 export interface RemotePlayer {
   id: number;
@@ -24,6 +24,9 @@ export class Net {
   id = -1;
   team: Team = 0;
   score: [number, number] = [0, 0];
+  /** latest match state from the server, and when it arrived (performance.now ms) */
+  round: RoundState | null = null;
+  roundAt = 0;
   readonly remotes = new Map<number, RemotePlayer>();
   private ws: WebSocket | null = null;
   private retryTimer = 0;
@@ -61,6 +64,7 @@ export class Net {
       this.ws = null;
       this.status = 'offline';
       this.id = -1;
+      this.round = null;
       this.remotes.clear();
       if (wasOnline) this.ev.disconnected();
       this.retry();
@@ -83,11 +87,15 @@ export class Net {
         this.retryDelay = 3000;
         this.id = m.id;
         this.team = m.team;
+        this.round = m.round;
+        this.roundAt = performance.now();
         this.ev.welcome(m.id, m.team, m.spawn);
         break;
       case 'snap': {
         const now = performance.now();
         this.score = m.score;
+        this.round = m.round;
+        this.roundAt = now;
         const seen = new Set<number>();
         for (const p of m.players) {
           if (p.id === this.id) continue;
@@ -117,6 +125,12 @@ export class Net {
         break;
     }
   }
+}
+
+/** seconds left in the current phase, counting down smoothly between snapshots */
+export function phaseSecondsLeft(net: Net, now: number): number {
+  if (!net.round) return 0;
+  return Math.max(0, net.round.endsIn - (now - net.roundAt) / 1000);
 }
 
 /** where a remote player was at local time `at` (ms), blended between the two snapshots around it */

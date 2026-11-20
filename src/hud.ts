@@ -15,8 +15,9 @@ export class Hud {
   private hitmarker = $('hitmarker');
   private toastEl = $('toast');
   private flash = $('flash');
+  private banner = $('banner');
   private toastTimer = 0;
-  private last = { status: '', ammo: '', score: '', out: '' };
+  private last = { status: '', ammo: '', score: '', out: '', banner: '' };
 
   /** volume slider + mute checkbox on the start screen */
   bindAudio(sound: SoundSystem): void {
@@ -63,12 +64,23 @@ export class Hud {
     this.score.innerHTML = html;
   }
 
-  showOut(secondsLeft: number | null): void {
-    const html = secondsLeft === null ? '' : `YOU'RE OUT<small>back in ${secondsLeft}…</small>`;
+  /** "YOU'RE OUT" with a line under it, or null to hide */
+  showOut(sub: string | null): void {
+    const html = sub === null ? '' : `YOU'RE OUT<small>${sub}</small>`;
     if (this.last.out === html) return;
     this.last.out = html;
-    this.out.hidden = secondsLeft === null;
+    this.out.hidden = sub === null;
     this.out.innerHTML = html;
+  }
+
+  /** big centre text for countdowns and point results; null hides it */
+  setBanner(html: string | null, kind = ''): void {
+    const key = kind + (html ?? '');
+    if (this.last.banner === key) return;
+    this.last.banner = key;
+    this.banner.hidden = html === null;
+    this.banner.className = kind;
+    this.banner.innerHTML = html ?? '';
   }
 
   hitMarker(): void {
