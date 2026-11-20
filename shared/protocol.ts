@@ -64,10 +64,23 @@ export interface RosterEntry {
   bot: boolean;
 }
 
+/**
+ * One fixed movement step (INPUT_DT seconds) of keys + aim, as sent by the browser:
+ * [sequence number, forward -1..1, right -1..1, flags, yaw, pitch]. flags: 1 jump, 2 sprint, 4 crouch.
+ * The server runs shared/sim.ts stepMovement on each one, exactly as the browser did when it predicted it.
+ */
+export type InputFrame = [seq: number, forward: number, right: number, flags: number, yaw: number, pitch: number];
+export const INPUT_JUMP = 1;
+export const INPUT_SPRINT = 2;
+export const INPUT_CROUCH = 4;
+
+/** a player's full movement state: [x, y, z, vx, vy, vz, height, onGround (1/0)] */
+export type BodyState = [number, number, number, number, number, number, number, number];
+
 /** browser → server */
 export type ClientMsg =
   | { t: 'hello'; name: string }
-  | { t: 'state'; x: number; y: number; z: number; yaw: number; pitch: number; c: boolean }
+  | { t: 'input'; i: InputFrame[] }
   | { t: 'fire'; o: V3; d: V3 }
   | { t: 'pong'; s: number };
 
@@ -83,7 +96,9 @@ export type ServerMsg =
   /** names and stats; sent when they change and every couple of seconds (for ping) */
   | { t: 'roster'; players: RosterEntry[] }
   /** latency probe: answer with { t: 'pong', s } */
-  | { t: 'ping'; s: number };
+  | { t: 'ping'; s: number }
+  /** to one player, with every snapshot: where the server has you after your input `seq` */
+  | { t: 'ack'; seq: number; b: BodyState };
 
 export const DEFAULT_PORT = 8787;
 export const NAME_MAX = 16;

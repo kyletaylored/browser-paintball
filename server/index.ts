@@ -1,22 +1,23 @@
 // A small authoritative game server: one room, two teams.
 //
-//  - Movement is trusted from the client (simple, but cheatable). The next step is to send
-//    inputs instead and run shared/sim.ts stepMovement here too.
+//  - Movement is decided HERE: browsers send their keys + aim as fixed-length input frames and the
+//    server runs the same shared/sim.ts stepMovement on them. Each browser predicts its own movement
+//    with that code and corrects itself from the 'ack' the server sends back (see src/main.ts).
 //  - Paintballs are simulated HERE. The server decides who got hit, so clients can't fake eliminations.
 //  - It sends everyone a snapshot 20 times a second; clients interpolate between them.
 //  - It runs the match: countdown, live point, point won, match over (see RoundPhase in shared/protocol.ts).
 //  - It fills empty slots with bots (server/bots.ts) so there's always someone to play against.
 
 import { WebSocketServer, type WebSocket } from 'ws';
-import { spawnPoint, HALF_L, HALF_W, NET_MARGIN } from '../shared/field';
+import { spawnPoint } from '../shared/field';
 import {
   advanceBall, traceWorld, segmentHitsCapsule, isOutOfBounds, stepMovement,
   BALL_SPEED, BALL_LIFETIME, FIRE_INTERVAL, STAND_HEIGHT, CROUCH_HEIGHT, EYE_FROM_TOP,
-  RESPAWN_SECONDS, SERVER_TICK_HZ, SNAPSHOT_HZ, type Ball, type Body,
+  RESPAWN_SECONDS, SERVER_TICK_HZ, SNAPSHOT_HZ, INPUT_DT, type Ball, type Body, type MoveInput,
 } from '../shared/sim';
 import { BotBrain, NavGrid, SKILLS, botName, type CoverSpot, type Seen } from './bots';
 import {
-  DEFAULT_PORT, TEAM_NAMES, cleanName,
+  DEFAULT_PORT, TEAM_NAMES, cleanName, INPUT_JUMP, INPUT_SPRINT, INPUT_CROUCH,
   type ClientMsg, type ServerMsg, type Team, type V3, type RoundPhase, type RoundState, type RosterEntry,
 } from '../shared/protocol';
 
@@ -40,7 +41,13 @@ const BOT_SKILL = SKILLS[process.env.BOT_SKILL ?? 'normal'] ?? SKILLS.normal;
 interface Player {
   /** null for bots */
   ws: WebSocket | null;
-  bot: { brain: BotBrain; body: Body } | null;
+  bot: { brain: BotBrain } | null;
+  /** authoritative movement state; x/y/z below mirror it */
+  body: Body;
+  /** last input frame applied (humans) */
+  lastSeq: number;
+  /** seconds of input we'll still accept; refills in real time, so nobody can move faster than the clock */
+  budget: number;
   id: number;
   team: Team;
   slot: number;
@@ -72,6 +79,9 @@ let nextId = 1;
 const match = { phase: 'waiting' as RoundPhase, endsAt: 0, round: 1, winner: -1 as Team | -1 };
 
 const now = () => performance.now() / 1000;
+const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+const MAX_INPUT_BACKLOG = 0.25;
+const newBody = (x: number, y: number, z: number): Body => ({ x, y, z, vx: 0, vy: 0, vz: 0, height: STAND_HEIGHT, onGround: true });
 const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 const isV3 = (v: unknown): v is V3 => Array.isArray(v) && v.length === 3 && v.every(finite);
 
@@ -114,7 +124,7 @@ wss.on('connection', (ws) => {
   // joining while a point is being played: sit out until the next one
   const alive = match.phase !== 'live';
   const p: Player = {
-    ws, bot: null, id, team, slot, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw, pitch: 0,
+    ws, bot: null, body: newBody(sp.x, sp.y, sp.z), lastSeq: -1, budget: 0.1, id, team, slot, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw, pitch: 0,
     crouch: false, alive, outUntil: alive ? 0 : Infinity, lastFire: 0,
     name: `Player ${id}`, wantName: `Player ${id}`, lastRename: -Infinity, k: 0, d: 0, ping: 0,
   };
@@ -155,29 +165,51 @@ function handle(p: Player, msg: ClientMsg) {
     const rtt = (now() - msg.s) * 1000;
     if (rtt < 0 || rtt > 10000) return;
     p.ping = p.ping ? p.ping * 0.7 + rtt * 0.3 : rtt;
-  } else if (msg.t === 'state') {
-    if (!p.alive) return; // eliminated players are frozen until they respawn
-    if (match.phase === 'countdown') return; // everyone stays in their start box
-    if (![msg.x, msg.y, msg.z, msg.yaw, msg.pitch].every(finite)) return;
-    p.x = Math.max(-HALF_L - NET_MARGIN, Math.min(HALF_L + NET_MARGIN, msg.x));
-    p.y = Math.max(0, Math.min(5, msg.y));
-    p.z = Math.max(-HALF_W - NET_MARGIN, Math.min(HALF_W + NET_MARGIN, msg.z));
-    p.yaw = msg.yaw;
-    p.pitch = msg.pitch;
-    p.crouch = msg.c === true;
+  } else if (msg.t === 'input') {
+    if (!Array.isArray(msg.i) || msg.i.length > 64) return;
+    for (const f of msg.i) applyInput(p, f);
   } else if (msg.t === 'fire') {
     if (!p.alive || !isV3(msg.o) || !isV3(msg.d)) return;
     if (match.phase !== 'live' && match.phase !== 'waiting') return; // no shooting during countdowns and pauses
     const t = now();
     if (t - p.lastFire < FIRE_INTERVAL * 0.75) return; // rate limit (with slack for network jitter)
-    // The shot has to start near the shooter's eyes.
-    const eyeY = p.y + (p.crouch ? CROUCH_HEIGHT : STAND_HEIGHT) - EYE_FROM_TOP;
+    // The shot has to start near the shooter's eyes (where the server has them).
+    const eyeY = p.body.y + p.body.height - EYE_FROM_TOP;
     if (Math.hypot(msg.o[0] - p.x, msg.o[1] - eyeY, msg.o[2] - p.z) > 1.5) return;
     const len = Math.hypot(...msg.d);
     if (len < 0.5 || len > 1.5) return;
     p.lastFire = t;
     spawnBall(p, msg.o, [msg.d[0] / len, msg.d[1] / len, msg.d[2] / len]);
   }
+}
+
+const moveIn: MoveInput = { forward: 0, right: 0, jump: false, sprint: false, crouch: false, yaw: 0 };
+
+/** run one of a browser's input frames through the same movement code the browser predicted with */
+function applyInput(p: Player, f: unknown) {
+  if (!Array.isArray(f) || f.length !== 6 || !f.every(finite)) return;
+  const [seq, forward, right, flags, yaw, pitch] = f as number[];
+  if (seq <= p.lastSeq) return; // old or repeated
+  p.lastSeq = seq;
+  // More input than real time allows (a speed hack, or a burst after a stall): drop it. The browser
+  // gets corrected by the next ack.
+  if (p.budget < INPUT_DT * 0.5) return;
+  p.budget -= INPUT_DT;
+  p.yaw = yaw;
+  p.pitch = clamp(pitch, -1.6, 1.6);
+  // eliminated, or holding still for the countdown: the browser steps with no keys, so do the same
+  const canMove = p.alive && match.phase !== 'countdown';
+  moveIn.forward = canMove ? clamp(forward, -1, 1) : 0;
+  moveIn.right = canMove ? clamp(right, -1, 1) : 0;
+  moveIn.jump = canMove && (flags & INPUT_JUMP) !== 0;
+  moveIn.sprint = canMove && (flags & INPUT_SPRINT) !== 0;
+  moveIn.crouch = canMove && (flags & INPUT_CROUCH) !== 0;
+  moveIn.yaw = yaw;
+  stepMovement(p.body, moveIn, INPUT_DT);
+  p.x = p.body.x;
+  p.y = p.body.y;
+  p.z = p.body.z;
+  p.crouch = moveIn.crouch;
 }
 
 function spawnBall(p: Player, o: V3, dir: V3) {
@@ -200,12 +232,11 @@ function addBot(team: Team) {
   const slot = freeSlot(team);
   const sp = spawnPoint(team, slot);
   const name = botName(botCount++);
-  const body: Body = { x: sp.x, y: sp.y, z: sp.z, vx: 0, vy: 0, vz: 0, height: STAND_HEIGHT, onGround: true };
   const brain = new BotBrain(nav, BOT_SKILL, claimed[team]);
   brain.reset(sp.yaw);
   const alive = match.phase !== 'live';
   players.set(id, {
-    ws: null, bot: { brain, body }, id, team, slot, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw, pitch: 0,
+    ws: null, bot: { brain }, body: newBody(sp.x, sp.y, sp.z), lastSeq: -1, budget: 0, id, team, slot, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw, pitch: 0,
     crouch: false, alive, outUntil: alive ? 0 : Infinity, lastFire: 0,
     name, wantName: name, lastRename: 0, k: 0, d: 0, ping: 0,
   });
@@ -244,7 +275,8 @@ function updateBots(dt: number) {
   for (const p of players.values()) seen.push({ id: p.id, team: p.team, x: p.x, y: p.y, z: p.z, crouch: p.crouch, alive: p.alive });
   for (const p of players.values()) {
     if (!p.bot || !p.alive || !canMove) continue;
-    const { brain, body } = p.bot;
+    const { brain } = p.bot;
+    const body = p.body;
     const out = brain.update(t, dt, { id: p.id, team: p.team, x: body.x, y: body.y, z: body.z, height: body.height, speed: Math.hypot(body.vx, body.vz) }, seen, canMove);
     stepMovement(body, out.move, dt);
     p.x = body.x;
@@ -263,6 +295,7 @@ function updateBots(dt: number) {
 }
 
 function tick(dt: number) {
+  for (const p of players.values()) if (!p.bot) p.budget = Math.min(MAX_INPUT_BACKLOG, p.budget + dt);
   updateBots(dt);
   for (let i = balls.length - 1; i >= 0; i--) {
     const b = balls[i];
@@ -316,10 +349,8 @@ function applyName(p: Player) {
 function respawn(p: Player) {
   const sp = spawnPoint(p.team, p.slot);
   Object.assign(p, { alive: true, outUntil: 0, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw, pitch: 0, crouch: false });
-  if (p.bot) {
-    Object.assign(p.bot.body, { x: sp.x, y: sp.y, z: sp.z, vx: 0, vy: 0, vz: 0, height: STAND_HEIGHT, onGround: true });
-    p.bot.brain.reset(sp.yaw);
-  }
+  p.body = newBody(sp.x, sp.y, sp.z);
+  p.bot?.brain.reset(sp.yaw);
   send(p.ws, { t: 'respawn', spawn: sp });
 }
 
@@ -448,6 +479,12 @@ function snapshot() {
       id: p.id, team: p.team, x: p.x, y: p.y, z: p.z, yaw: p.yaw, pitch: p.pitch, c: p.crouch, alive: p.alive,
     })),
   });
+  // and tell each browser where the server has *them*, so it can correct its prediction
+  for (const p of players.values()) {
+    if (!p.ws) continue;
+    const b = p.body;
+    send(p.ws, { t: 'ack', seq: p.lastSeq, b: [b.x, b.y, b.z, b.vx, b.vy, b.vz, b.height, b.onGround ? 1 : 0] });
+  }
 }
 
 let last = now();

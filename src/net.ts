@@ -14,10 +14,17 @@ export interface NetEvents {
   ball(m: Extract<ServerMsg, { t: 'ball' }>): void;
   hit(m: Extract<ServerMsg, { t: 'hit' }>): void;
   respawn(spawn: Spawn): void;
+  ack(m: Extract<ServerMsg, { t: 'ack' }>): void;
   disconnected(): void;
 }
 
 export type NetStatus = 'connecting' | 'online' | 'offline';
+
+/**
+ * Development only: add ?lag=150 to the URL to fake 150 ms of round-trip latency (half each way),
+ * to see how prediction and interpolation cope. Stripped from production builds.
+ */
+const FAKE_LAG_MS = import.meta.env.DEV ? Math.max(0, Number(new URLSearchParams(location.search).get('lag')) || 0) : 0;
 
 export class Net {
   status: NetStatus = 'connecting';
@@ -47,7 +54,11 @@ export class Net {
   }
 
   send(m: ClientMsg): void {
-    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(m));
+    const data = JSON.stringify(m);
+    if (FAKE_LAG_MS) {
+      const ws = this.ws;
+      setTimeout(() => ws?.readyState === WebSocket.OPEN && ws.send(data), FAKE_LAG_MS / 2);
+    } else if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(data);
   }
 
   private connect(): void {
@@ -68,7 +79,8 @@ export class Net {
       } catch {
         return;
       }
-      this.handle(m);
+      if (FAKE_LAG_MS) setTimeout(() => this.ws === ws && this.handle(m), FAKE_LAG_MS / 2);
+      else this.handle(m);
     };
     ws.onclose = () => {
       const wasOnline = this.status === 'online';
@@ -110,6 +122,9 @@ export class Net {
         break;
       case 'ping':
         this.send({ t: 'pong', s: m.s });
+        break;
+      case 'ack':
+        this.ev.ack(m);
         break;
       case 'snap': {
         const now = performance.now();

@@ -63,11 +63,15 @@ src/          the browser game
 
 **Who decides what:**
 
-- **Your movement:** your browser simulates it and tells the server where you are 20×/s. Simple, but a cheater could teleport.
+- **Your movement:** your browser sends its keys and aim to the server as small fixed-length steps. The server runs
+  the same movement code (`shared/sim.ts`) on them and decides where you are, so nobody can teleport or speed up.
+  Your browser predicts the same steps locally, so moving feels instant, and quietly corrects itself if the server
+  disagrees (`src/prediction.ts`).
 - **Paintballs:** your browser draws them the instant you click. The server *also* flies them using the same `shared/sim.ts` code and is the only one that decides eliminations.
 - **Other players:** drawn 100 ms in the past, blended between the server's snapshots, so they move smoothly instead of jumping 20 times a second.
 
-In development, `window.__game` in the browser console exposes the player, network, scene and so on.
+In development, `window.__game` in the browser console exposes the player, network, scene and so on, and adding
+`?lag=150` to the URL fakes 150 ms of network latency so you can see how prediction copes.
 
 ## Where to take it next
 
@@ -76,14 +80,10 @@ Roughly in order of payoff:
 1. **Real art.** Model bunkers, a marker and a player in Blender and export `.glb`. Compress with
    [`gltf-transform`](https://gltf-transform.dev) (`gltf-transform optimize in.glb out.glb --compress meshopt`), then load with
    `GLTFLoader` + `MeshoptDecoder`. Animate the player with `AnimationMixer`.
-2. **Sound.** three's `AudioListener` + `PositionalAudio` for shots and splats.
-3. **Server-side movement + prediction.** Send *inputs* (keys + aim, with a sequence number) instead of positions. The server
-   runs `stepMovement` on them, the client keeps predicting locally and replays unacknowledged inputs when a snapshot corrects it.
-   Search for "client-side prediction and server reconciliation" for the background.
-4. **Lag compensation.** Keep a short history of player positions on the server and test hits against where the target was
+2. **Lag compensation.** Keep a short history of player positions on the server and test hits against where the target was
    when the shooter fired.
-5. **Binary messages.** Pack snapshots into an `ArrayBuffer` with `DataView` instead of JSON (often 5–10× smaller).
-6. **More modes.** Capture the flag, an attack/defend variant, and so on (rounds are already in).
+3. **Binary messages.** Pack snapshots into an `ArrayBuffer` with `DataView` instead of JSON (often 5–10× smaller).
+4. **More modes.** Capture the flag, an attack/defend variant, and so on (rounds are already in).
 
 ## Deploying
 

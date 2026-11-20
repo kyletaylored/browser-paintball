@@ -10,8 +10,8 @@
 
 import WebSocket from 'ws';
 import { spawn, type ChildProcess } from 'node:child_process';
-import { cleanName, type ClientMsg, type ServerMsg, type Team } from '../shared/protocol';
-import { STAND_HEIGHT, EYE_FROM_TOP } from '../shared/sim';
+import { cleanName, type ClientMsg, type ServerMsg, type Team, type InputFrame } from '../shared/protocol';
+import { EYE_FROM_TOP, INPUT_DT, STAND_HEIGHT, stepMovement, type Body, type MoveInput } from '../shared/sim';
 
 type Snap = Extract<ServerMsg, { t: 'snap' }>;
 type Roster = Extract<ServerMsg, { t: 'roster' }>;
@@ -21,7 +21,12 @@ interface Client {
   id: number;
   team: Team;
   inbox: ServerMsg[];
+  /** our own prediction of where we are, run with the same code the server uses */
+  body: Body;
+  yaw: number;
+  seq: number;
 }
+type Ack = Extract<ServerMsg, { t: 'ack' }>;
 
 const results: [string, boolean][] = [];
 const check = (name: string, ok: boolean) => {
@@ -38,7 +43,13 @@ function join(url: string): Promise<Client> {
       const m = JSON.parse(data.toString()) as ServerMsg;
       inbox.push(m);
       if (m.t === 'ping') ws.send(JSON.stringify({ t: 'pong', s: m.s }));
-      if (m.t === 'welcome') resolve({ ws, id: m.id, team: m.team, inbox });
+      if (m.t === 'welcome') {
+        const sp = m.spawn;
+        resolve({
+          ws, id: m.id, team: m.team, inbox, yaw: sp.yaw, seq: 0,
+          body: { x: sp.x, y: sp.y, z: sp.z, vx: 0, vy: 0, vz: 0, height: STAND_HEIGHT, onGround: true },
+        });
+      }
     });
   });
 }
@@ -54,6 +65,35 @@ async function waitFor<T extends ServerMsg>(
   }
   return null;
 }
+/**
+ * Walk to (x, z) the way a browser would: one input frame per INPUT_DT, sent in real time, predicted
+ * locally with stepMovement. Stops and settles when close.
+ */
+async function walkTo(c: Client, x: number, z: number, sprint = false): Promise<void> {
+  const move: MoveInput = { forward: 0, right: 0, jump: false, sprint, crouch: false, yaw: c.yaw };
+  let settle = 0;
+  for (let n = 0; n < 120 * 15 && settle < 40; ) {
+    const batch: InputFrame[] = [];
+    for (let k = 0; k < 4; k++, n++) {
+      const dx = x - c.body.x;
+      const dz = z - c.body.z;
+      const d = Math.hypot(dx, dz);
+      // world direction → forward/right for our yaw (forward = (-sin, -cos), right = (cos, -sin))
+      const s = Math.sin(c.yaw);
+      const co = Math.cos(c.yaw);
+      const go = d > 0.12 ? Math.min(1, d / 0.6) : 0;
+      move.forward = go ? ((dx * -s + dz * -co) / d) * go : 0;
+      move.right = go ? ((dx * co + dz * -s) / d) * go : 0;
+      if (!go) settle++;
+      stepMovement(c.body, move, INPUT_DT);
+      batch.push([++c.seq, move.forward, move.right, sprint ? 2 : 0, c.yaw, 0]);
+    }
+    send(c.ws, { t: 'input', i: batch });
+    await wait(INPUT_DT * 4 * 1000);
+  }
+}
+const lastAck = (c: Client) => [...c.inbox].reverse().find((m): m is Ack => m.t === 'ack' && m.seq === c.seq);
+
 const snapWhere = (f: (m: Snap) => boolean) => (m: ServerMsg): m is Snap => m.t === 'snap' && f(m);
 const rosterWhere = (f: (m: Roster) => boolean) => (m: ServerMsg): m is Roster => m.t === 'roster' && f(m);
 
@@ -96,16 +136,28 @@ async function rulesTest(url: string) {
   // With one player per team the server starts a countdown, then the point goes live.
   const live = await waitFor(shooter.inbox, snapWhere((m) => m.round.phase === 'live'), 8000);
 
-  // Stand them 5 m apart with nothing in between.
-  send(shooter.ws, { t: 'state', x: -17, y: 0, z: -2.5, yaw: -Math.PI / 2, pitch: 0, c: false });
-  send(target.ws, { t: 'state', x: -12, y: 0, z: -2.5, yaw: Math.PI / 2, pitch: 0, c: false });
-  await wait(150);
+  // An old-style "I'm over here now" message must not move anyone any more.
+  const before = { x: target.body.x, z: target.body.z };
+  target.ws.send(JSON.stringify({ t: 'state', x: 0, y: 0, z: 0, yaw: 0, pitch: 0, c: false }));
 
-  const eyeY = STAND_HEIGHT - EYE_FROM_TOP;
-  const d = [5, 1.2 - eyeY, 0];
+  // Walk them (with real input frames, in real time) to 5 m apart with nothing in between.
+  await Promise.all([walkTo(shooter, -17, -2.5), walkTo(target, -12, -2.5, true)]);
+  await wait(200); // let the acks for the last frames arrive
+  const sAck = lastAck(shooter);
+  const tAck = lastAck(target);
+  const agree = (c: Client, a: Ack | undefined) =>
+    a !== undefined && Math.hypot(a.b[0] - c.body.x, a.b[1] - c.body.y, a.b[2] - c.body.z) < 1e-6;
+  const teleported = tAck !== undefined && Math.hypot(tAck.b[0], tAck.b[2]) < 1; // the fake 'state' put it at 0,0
+  check('server ignores an old-style position message', !teleported && Math.hypot(before.x - 21.5, before.z + 5.5) < 0.01);
+  check('server-run movement matches the client prediction exactly', agree(shooter, sAck) && agree(target, tAck));
+
+  const ex = shooter.body.x;
+  const ez = shooter.body.z;
+  const eyeY = shooter.body.y + shooter.body.height - EYE_FROM_TOP;
+  const d = [target.body.x - ex, 1.2 - eyeY, target.body.z - ez];
   const len = Math.hypot(d[0], d[1], d[2]);
   const dir: [number, number, number] = [d[0] / len, d[1] / len, d[2] / len];
-  send(shooter.ws, { t: 'fire', o: [-17 + dir[0] * 0.35, eyeY + dir[1] * 0.35, -2.5], d: dir });
+  send(shooter.ws, { t: 'fire', o: [ex + dir[0] * 0.35, eyeY + dir[1] * 0.35, ez + dir[2] * 0.35], d: dir });
 
   const hit = await waitFor(shooter.inbox, (m): m is Hit => m.t === 'hit', 1000);
   const sawBall = target.inbox.some((m) => m.t === 'ball');
@@ -136,6 +188,29 @@ async function rulesTest(url: string) {
   check('point 2 countdown started', next !== null);
   check(`names cleaned ("${EXPECTED}") and stats counted in the roster`, stats !== null && EXPECTED === 'Shooter<b>with a');
   check('server sent a latency probe', target.inbox.some((m) => m.t === 'ping'));
+}
+
+// ---- 1b. speed hack ------------------------------------------------------------------------
+
+async function speedTest(url: string) {
+  console.log('-- input rate limit');
+  const a = await join(url);
+  const b = await join(url);
+  const [cheat] = a.team === 0 ? [a, b] : [b, a];
+  await waitFor(cheat.inbox, snapWhere((m) => m.round.phase === 'live'), 8000);
+  await wait(300);
+  const start = { x: cheat.body.x, z: cheat.body.z };
+  // 3 seconds of sprinting forward, all sent at once
+  const frames: InputFrame[] = [];
+  for (let i = 0; i < 360; i++) frames.push([++cheat.seq, 1, 0, 2, cheat.yaw, 0]);
+  for (let i = 0; i < frames.length; i += 60) send(cheat.ws, { t: 'input', i: frames.slice(i, i + 60) });
+  await wait(250);
+  const ack = lastAck(cheat);
+  const moved = ack ? Math.hypot(ack.b[0] - start.x, ack.b[2] - start.z) : Infinity;
+  // honest: 3 s × 7.6 m/s ≈ 22 m. The server only accepts about a quarter second of backlog.
+  check(`a burst of 3 s of input moves you at most a few metres (moved ${moved.toFixed(1)} m)`, moved < 3.5);
+  a.ws.close();
+  b.ws.close();
 }
 
 // ---- 2. bots -------------------------------------------------------------------------------
@@ -197,6 +272,12 @@ try {
       await rulesTest(rules.url);
     } finally {
       rules.stop();
+    }
+    const speed = await startServer({ BOT_TEAM_SIZE: '0' });
+    try {
+      await speedTest(speed.url);
+    } finally {
+      speed.stop();
     }
     const bots = await startServer({ BOT_TEAM_SIZE: '2', BOT_SKILL: 'hard' });
     try {
