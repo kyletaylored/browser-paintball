@@ -32,17 +32,6 @@ jobs:
       - name: Build
         run: npm run build
 
+      # starts its own game servers (one without bots, one with) on spare ports
       - name: Server smoke test
-        run: |
-          npm run start:server > server.log 2>&1 &
-          for i in $(seq 1 30); do
-            grep -q "server on ws://" server.log && break
-            sleep 1
-          done
-          npm run test:server
-        env:
-          PORT: 8787
-
-      - name: Server log
-        if: always()
-        run: cat server.log || true
+        run: npm run test:server

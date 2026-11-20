@@ -60,6 +60,8 @@ export interface RosterEntry {
   d: number;
   /** round-trip time in ms */
   ping: number;
+  /** played by the server */
+  bot: boolean;
 }
 
 /** browser → server */
