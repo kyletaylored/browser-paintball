@@ -11,6 +11,8 @@
     "dev": "concurrently -k -n client,server -c cyan,magenta \"vite\" \"tsx watch server/index.ts\"",
     "dev:client": "vite",
     "dev:server": "tsx watch server/index.ts",
+    "assets": "tsx scripts/build-assets.ts",
+    "check:assets": "tsx scripts/check-assets.ts",
     "start:server": "tsx server/index.ts",
     "start": "node dist-server/index.js",
     "test:server": "tsx server/smoke-test.ts",
@@ -25,10 +27,13 @@
     "ws": "8.23.0"
   },
   "devDependencies": {
+    "@gltf-transform/core": "4.5.1",
+    "@gltf-transform/functions": "4.5.1",
     "@types/node": "26.6.6",
     "@types/three": "0.187.0",
     "@types/ws": "8.18.2",
     "concurrently": "10.0.7",
+    "meshoptimizer": "1.3.0",
     "postprocessing": "6.39.6",
     "three": "0.187.0",
     "tsx": "4.23.15",

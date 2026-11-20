@@ -3,12 +3,13 @@
 
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { BUNKERS, FIELD_LENGTH, FIELD_WIDTH, HALF_L, HALF_W, NET_MARGIN } from '../shared/field';
+import { BUNKERS, FIELD_LENGTH, FIELD_WIDTH, HALF_L, HALF_W, NET_MARGIN, bunkerKey } from '../shared/field';
+import { bunkerModel, type Models } from './models';
 import { TEAM_COLORS } from '../shared/protocol';
 
 const SKY = 0x8cc2f2;
 
-export function buildWorld(scene: THREE.Scene): void {
+export function buildWorld(scene: THREE.Scene, models: Models | null): void {
   scene.background = new THREE.Color(SKY);
   scene.fog = new THREE.Fog(SKY, 70, 190);
 
@@ -43,6 +44,14 @@ export function buildWorld(scene: THREE.Scene): void {
   buildNets(scene);
 
   for (const b of BUNKERS) {
+    const template = models ? bunkerModel(models, bunkerKey(b)) : undefined;
+    if (template) {
+      const g = template.clone(true);
+      g.position.set(b.x, 0, b.z);
+      scene.add(g);
+      continue;
+    }
+    // no model for this one: draw it from code
     const mat = new THREE.MeshPhysicalMaterial({ color: b.color, roughness: 0.5, clearcoat: 0.6, clearcoatRoughness: 0.35 });
     const band = new THREE.MeshStandardMaterial({ color: 0x23202a, roughness: 0.7 });
     const g = new THREE.Group();

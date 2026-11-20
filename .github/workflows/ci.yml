@@ -29,6 +29,10 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # the committed models must match what scripts/build-assets.ts produces
+      - name: Models are up to date
+        run: npm run check:assets
+
       - name: Build
         run: npm run build
 
