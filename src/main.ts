@@ -128,8 +128,13 @@ function clearRemotes() {
   remoteAvatars.clear();
 }
 
+// Where the game server is: VITE_SERVER_URL if the build set one (site and server on different hosts);
+// otherwise the dev server's port in development, or the same host that served this page in production
+// (one container serving both, see docs/DEPLOY.md).
+const wsProto = location.protocol === 'https:' ? 'wss' : 'ws';
 const serverUrl: string =
-  import.meta.env.VITE_SERVER_URL ?? `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.hostname}:${DEFAULT_PORT}`;
+  import.meta.env.VITE_SERVER_URL ??
+  (import.meta.env.DEV ? `${wsProto}://${location.hostname}:${DEFAULT_PORT}` : `${wsProto}://${location.host}`);
 
 const net = new Net(serverUrl, {
   welcome(_id, team, spawn) {
