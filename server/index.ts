@@ -5,14 +5,16 @@
 //  - Paintballs are simulated HERE. The server decides who got hit, so clients can't fake eliminations.
 //  - It sends everyone a snapshot 20 times a second; clients interpolate between them.
 //  - It runs the match: countdown, live point, point won, match over (see RoundPhase in shared/protocol.ts).
+//  - It fills empty slots with bots (server/bots.ts) so there's always someone to play against.
 
 import { WebSocketServer, type WebSocket } from 'ws';
 import { spawnPoint, HALF_L, HALF_W, NET_MARGIN } from '../shared/field';
 import {
-  advanceBall, traceWorld, segmentHitsCapsule, isOutOfBounds,
+  advanceBall, traceWorld, segmentHitsCapsule, isOutOfBounds, stepMovement,
   BALL_SPEED, BALL_LIFETIME, FIRE_INTERVAL, STAND_HEIGHT, CROUCH_HEIGHT, EYE_FROM_TOP,
-  RESPAWN_SECONDS, SERVER_TICK_HZ, SNAPSHOT_HZ, type Ball,
+  RESPAWN_SECONDS, SERVER_TICK_HZ, SNAPSHOT_HZ, type Ball, type Body,
 } from '../shared/sim';
+import { BotBrain, NavGrid, SKILLS, botName, type CoverSpot, type Seen } from './bots';
 import {
   DEFAULT_PORT, TEAM_NAMES, cleanName,
   type ClientMsg, type ServerMsg, type Team, type V3, type RoundPhase, type RoundState, type RosterEntry,
@@ -31,9 +33,14 @@ const ROUND_SECONDS = envNum('ROUND_SECONDS', 120);
 const COUNTDOWN_SECONDS = envNum('COUNTDOWN_SECONDS', 3);
 const POINT_PAUSE_SECONDS = envNum('POINT_PAUSE_SECONDS', 3);
 const MATCH_OVER_SECONDS = envNum('MATCH_OVER_SECONDS', 6);
+/** while anyone is connected, fill each team up to this many players with bots (0 turns bots off) */
+const BOT_TEAM_SIZE = Math.max(0, Math.min(6, Math.floor(Number(process.env.BOT_TEAM_SIZE ?? 3) || 0)));
+const BOT_SKILL = SKILLS[process.env.BOT_SKILL ?? 'normal'] ?? SKILLS.normal;
 
 interface Player {
-  ws: WebSocket;
+  /** null for bots */
+  ws: WebSocket | null;
+  bot: { brain: BotBrain; body: Body } | null;
   id: number;
   team: Team;
   slot: number;
@@ -68,18 +75,21 @@ const now = () => performance.now() / 1000;
 const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 const isV3 = (v: unknown): v is V3 => Array.isArray(v) && v.length === 3 && v.every(finite);
 
-function send(ws: WebSocket, msg: ServerMsg) {
-  if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
+function send(ws: WebSocket | null, msg: ServerMsg) {
+  if (ws && ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
 }
 function broadcast(msg: ServerMsg, exceptId = -1) {
   const data = JSON.stringify(msg);
-  for (const p of players.values()) if (p.id !== exceptId && p.ws.readyState === p.ws.OPEN) p.ws.send(data);
+  for (const p of players.values()) if (p.id !== exceptId && p.ws && p.ws.readyState === p.ws.OPEN) p.ws.send(data);
 }
 
+const humans = () => [...players.values()].filter((p) => !p.bot);
+
+/** humans go to the team with fewer humans; bots fill in around them */
 function pickTeam(): Team {
   let red = 0;
   let blue = 0;
-  for (const p of players.values()) p.team === 0 ? red++ : blue++;
+  for (const p of humans()) p.team === 0 ? red++ : blue++;
   return red <= blue ? 0 : 1;
 }
 function freeSlot(team: Team): number {
@@ -92,24 +102,26 @@ function freeSlot(team: Team): number {
 const wss = new WebSocketServer({ port: PORT, maxPayload: 4096 });
 
 wss.on('connection', (ws) => {
-  if (players.size >= MAX_PLAYERS) {
+  if (humans().length >= MAX_PLAYERS) {
     ws.close(4004, 'server full');
     return;
   }
   const id = nextId++;
   const team = pickTeam();
+  removeBotFrom(team); // make room: a human takes a bot's place
   const slot = freeSlot(team);
   const sp = spawnPoint(team, slot);
   // joining while a point is being played: sit out until the next one
   const alive = match.phase !== 'live';
   const p: Player = {
-    ws, id, team, slot, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw, pitch: 0,
+    ws, bot: null, id, team, slot, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw, pitch: 0,
     crouch: false, alive, outUntil: alive ? 0 : Infinity, lastFire: 0,
     name: `Player ${id}`, wantName: `Player ${id}`, lastRename: -Infinity, k: 0, d: 0, ping: 0,
   };
   players.set(id, p);
   send(ws, { t: 'welcome', id, team, spawn: sp, round: roundState() });
-  console.log(`+ player ${id} joined ${TEAM_NAMES[team]} (${players.size} online)`);
+  console.log(`+ player ${id} joined ${TEAM_NAMES[team]} (${humans().length} online)`);
+  balanceBots();
   updateMatch();
   sendRoster();
 
@@ -127,7 +139,8 @@ wss.on('connection', (ws) => {
   ws.on('close', () => {
     players.delete(id);
     broadcast({ t: 'leave', id });
-    console.log(`- player ${id} left (${players.size} online)`);
+    console.log(`- player ${id} left (${humans().length} online)`);
+    balanceBots();
     updateMatch();
     sendRoster();
   });
@@ -163,16 +176,94 @@ function handle(p: Player, msg: ClientMsg) {
     const len = Math.hypot(...msg.d);
     if (len < 0.5 || len > 1.5) return;
     p.lastFire = t;
-    const v: V3 = [(msg.d[0] / len) * BALL_SPEED, (msg.d[1] / len) * BALL_SPEED, (msg.d[2] / len) * BALL_SPEED];
-    if (balls.length < MAX_BALLS) {
-      balls.push({ x: msg.o[0], y: msg.o[1], z: msg.o[2], vx: v[0], vy: v[1], vz: v[2], age: 0, owner: p.id, team: p.team });
+    spawnBall(p, msg.o, [msg.d[0] / len, msg.d[1] / len, msg.d[2] / len]);
+  }
+}
+
+function spawnBall(p: Player, o: V3, dir: V3) {
+  const v: V3 = [dir[0] * BALL_SPEED, dir[1] * BALL_SPEED, dir[2] * BALL_SPEED];
+  if (balls.length < MAX_BALLS) {
+    balls.push({ x: o[0], y: o[1], z: o[2], vx: v[0], vy: v[1], vz: v[2], age: 0, owner: p.id, team: p.team });
+  }
+  // Everyone else draws the ball; a human shooter already drew it the moment they clicked.
+  broadcast({ t: 'ball', owner: p.id, team: p.team, o, v }, p.bot ? -1 : p.id);
+}
+
+// ---- bots ---------------------------------------------------------------------------------
+
+const nav = new NavGrid();
+const claimed: [Map<CoverSpot, number>, Map<CoverSpot, number>] = [new Map(), new Map()];
+let botCount = 0;
+
+function addBot(team: Team) {
+  const id = nextId++;
+  const slot = freeSlot(team);
+  const sp = spawnPoint(team, slot);
+  const name = botName(botCount++);
+  const body: Body = { x: sp.x, y: sp.y, z: sp.z, vx: 0, vy: 0, vz: 0, height: STAND_HEIGHT, onGround: true };
+  const brain = new BotBrain(nav, BOT_SKILL, claimed[team]);
+  brain.reset(sp.yaw);
+  const alive = match.phase !== 'live';
+  players.set(id, {
+    ws: null, bot: { brain, body }, id, team, slot, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw, pitch: 0,
+    crouch: false, alive, outUntil: alive ? 0 : Infinity, lastFire: 0,
+    name, wantName: name, lastRename: 0, k: 0, d: 0, ping: 0,
+  });
+}
+
+function removeBotFrom(team: Team): boolean {
+  // prefer one that's already out, so a live point isn't decided by a bot vanishing
+  const bots = [...players.values()].filter((p) => p.bot && p.team === team).sort((a, b) => +a.alive - +b.alive);
+  const b = bots[0];
+  if (!b) return false;
+  players.delete(b.id);
+  broadcast({ t: 'leave', id: b.id });
+  return true;
+}
+
+/** keep each team at BOT_TEAM_SIZE (or level with the bigger human team) while anyone is connected */
+function balanceBots() {
+  const hs = humans();
+  const human: [number, number] = [0, 0];
+  for (const p of hs) human[p.team]++;
+  // no humans → no bots (nobody to watch); otherwise level both teams up to the bigger of the two
+  const size = hs.length && BOT_TEAM_SIZE ? Math.max(BOT_TEAM_SIZE, ...human) : 0;
+  for (const team of [0, 1] as const) {
+    const bots = [...players.values()].filter((p) => p.bot && p.team === team).length;
+    const want = Math.max(0, size - human[team]);
+    for (let i = bots; i < want; i++) addBot(team);
+    for (let i = bots; i > want; i--) removeBotFrom(team);
+  }
+  sendRoster();
+}
+
+function updateBots(dt: number) {
+  const t = now();
+  const canMove = match.phase === 'live' || match.phase === 'waiting';
+  const seen: Seen[] = [];
+  for (const p of players.values()) seen.push({ id: p.id, team: p.team, x: p.x, y: p.y, z: p.z, crouch: p.crouch, alive: p.alive });
+  for (const p of players.values()) {
+    if (!p.bot || !p.alive || !canMove) continue;
+    const { brain, body } = p.bot;
+    const out = brain.update(t, dt, { id: p.id, team: p.team, x: body.x, y: body.y, z: body.z, height: body.height, speed: Math.hypot(body.vx, body.vz) }, seen, canMove);
+    stepMovement(body, out.move, dt);
+    p.x = body.x;
+    p.y = body.y;
+    p.z = body.z;
+    p.yaw = out.yaw;
+    p.pitch = out.pitch;
+    p.crouch = out.move.crouch;
+    if (out.fire && t - p.lastFire >= FIRE_INTERVAL * 0.95) {
+      p.lastFire = t;
+      const eyeY = body.y + body.height - EYE_FROM_TOP;
+      const d = out.fire;
+      spawnBall(p, [body.x + d[0] * 0.35, eyeY + d[1] * 0.35 - 0.04, body.z + d[2] * 0.35], d);
     }
-    // Everyone else draws the ball; the shooter already drew it the moment they clicked.
-    broadcast({ t: 'ball', owner: p.id, team: p.team, o: msg.o, v }, p.id);
   }
 }
 
 function tick(dt: number) {
+  updateBots(dt);
   for (let i = balls.length - 1; i >= 0; i--) {
     const b = balls[i];
     const x0 = b.x;
@@ -189,6 +280,11 @@ function tick(dt: number) {
         bestT = s;
         victim = p;
       }
+    }
+    // paint whizzing past makes bots duck
+    for (const p of players.values()) {
+      if (!p.bot || !p.alive || p.team === b.team) continue;
+      if (Math.hypot(b.x - p.x, b.y - (p.y + 1), b.z - p.z) < 1.4) p.bot.brain.underFire(now());
     }
     if (victim) {
       const hp: V3 = [x0 + (b.x - x0) * bestT, y0 + (b.y - y0) * bestT, z0 + (b.z - z0) * bestT];
@@ -220,6 +316,10 @@ function applyName(p: Player) {
 function respawn(p: Player) {
   const sp = spawnPoint(p.team, p.slot);
   Object.assign(p, { alive: true, outUntil: 0, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw, pitch: 0, crouch: false });
+  if (p.bot) {
+    Object.assign(p.bot.body, { x: sp.x, y: sp.y, z: sp.z, vx: 0, vy: 0, vz: 0, height: STAND_HEIGHT, onGround: true });
+    p.bot.brain.reset(sp.yaw);
+  }
   send(p.ws, { t: 'respawn', spawn: sp });
 }
 
@@ -237,7 +337,9 @@ function eliminate(victim: Player, ball: Ball, p: V3) {
 }
 
 function roster(): RosterEntry[] {
-  return [...players.values()].map((p) => ({ id: p.id, name: p.name, team: p.team, k: p.k, d: p.d, ping: Math.round(p.ping) }));
+  return [...players.values()].map((p) => ({
+    id: p.id, name: p.name, team: p.team, k: p.k, d: p.d, ping: Math.round(p.ping), bot: p.bot !== null,
+  }));
 }
 function sendRoster() {
   if (players.size) broadcast({ t: 'roster', players: roster() });
@@ -362,3 +464,4 @@ setInterval(() => {
 }, 2000);
 
 console.log(`Splat Arena server on ws://localhost:${PORT}`);
+console.log(`  bots: ${BOT_TEAM_SIZE ? `fill teams to ${BOT_TEAM_SIZE}, ${process.env.BOT_SKILL ?? 'normal'} skill` : 'off'}`);

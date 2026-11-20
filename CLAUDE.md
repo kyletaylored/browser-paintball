@@ -32,6 +32,6 @@ commit messages, branch names, issues, PRs and review comments. That includes na
 ## Workflow
 
 - Backlog lives in GitHub issues. Work one issue per branch (`feat/...`, `fix/...`), open a PR that says `Closes #N`.
-- Before opening a PR: `npm run typecheck`, `npm run build`, and with the server running, `npm run test:server`.
+- Before opening a PR: `npm run typecheck`, `npm run build` and `npm run test:server` (it starts its own servers).
 - Keep `shared/` free of DOM and Node-only APIs: both the browser and the server import it.
 - The server is the authority on hits and eliminations. Never let a client message decide a hit.

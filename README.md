@@ -22,9 +22,12 @@ Then the point is live: if you're hit you're out until the point ends. Eliminate
 First team to 5 points wins the match. While a team is empty it's warm-up: you respawn a few seconds after being hit.
 Pick a name on the start screen; it shows over your head, in the kill feed and on the scoreboard.
 
+- **Playing alone?** The server fills both teams with bots (3 a side by default), so you can play a match on your own.
+  A friend who joins takes a bot's place.
 - **No server running?** The game falls back to offline practice with three strafing dummies.
 - **Slow machine?** Add `?low` to the URL to turn off shadows, bloom and anti-aliasing.
-- **Check the server works:** with it running, `npm run test:server` connects two fake players, has one shoot the other, and checks the hit and respawn.
+- **Check the server works:** `npm run test:server` starts its own servers, plays a point between two fake players,
+  then checks that bots fill the teams, move, shoot and finish a point.
 
 | Controls | |
 |---|---|
@@ -43,8 +46,9 @@ shared/       code BOTH sides run, so they agree
   field.ts      bunker layout + spawn points
   sim.ts        movement, paintball flight, collision (no physics engine needed)
 server/
-  index.ts      authoritative game server: simulates paintballs, decides hits, sends snapshots
-  smoke-test.ts headless two-player test
+  index.ts      authoritative game server: simulates paintballs, decides hits, runs the match, sends snapshots
+  bots.ts       server-side bots: navigation grid + A*, cover spots, aim with reaction delay and error
+  smoke-test.ts headless end-to-end checks (starts its own servers)
 src/          the browser game
   main.ts       game loop (fixed 120 Hz physics step), shooting, wiring
   render.ts     WebGLRenderer + postprocessing (bloom, vignette, tone mapping, SMAA)
@@ -80,7 +84,6 @@ Roughly in order of payoff:
    when the shooter fired.
 5. **Binary messages.** Pack snapshots into an `ArrayBuffer` with `DataView` instead of JSON (often 5–10× smaller).
 6. **More modes.** Capture the flag, an attack/defend variant, and so on (rounds are already in).
-7. **Bots.** A grid over the field, A* pathfinding between bunkers, and aim with a reaction delay and some error.
 
 ## Deploying
 
@@ -88,4 +91,5 @@ Roughly in order of payoff:
 - **Server:** it's a long-running process, so it needs a VPS or an app platform that runs containers, not shared web hosting.
   Put it behind TLS (`wss://`) so HTTPS pages can connect.
 - **Server settings** (environment variables): `PORT` (default 8787), `POINTS_TO_WIN` (5), `ROUND_SECONDS` (120),
-  `COUNTDOWN_SECONDS` (3), `POINT_PAUSE_SECONDS` (3), `MATCH_OVER_SECONDS` (6).
+  `COUNTDOWN_SECONDS` (3), `POINT_PAUSE_SECONDS` (3), `MATCH_OVER_SECONDS` (6),
+  `BOT_TEAM_SIZE` (3; fill each team to this many with bots, `0` turns bots off), `BOT_SKILL` (`easy`, `normal`, `hard`).

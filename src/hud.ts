@@ -138,7 +138,7 @@ export class Hud {
         for (const r of mine) {
           const tr = table.insertRow();
           if (r.id === myId) tr.className = 'me';
-          for (const v of [r.name, String(r.k), String(r.d), String(r.ping)]) tr.insertCell().textContent = v;
+          for (const v of [r.name, String(r.k), String(r.d), r.bot ? 'BOT' : String(r.ping)]) tr.insertCell().textContent = v;
         }
         if (!mine.length) {
           const td = table.insertRow().insertCell();
