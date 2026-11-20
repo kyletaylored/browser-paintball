@@ -11,7 +11,8 @@ downloaded or third-party models, textures or sounds.
 | sound effects | synthesised at runtime | `src/audio.ts` |
 | turf texture, paint splats | drawn at runtime on a canvas | `src/world.ts`, `src/fx.ts` |
 
-Rebuild the models with `npm run assets`. CI fails if the committed files don't match the script.
+Rebuild the models with `npm run assets`. `npm run check:assets` (run in CI) fails if the committed files don't match
+the script.
 
 If you add third-party assets, list each one here with its source, author and license, and only use licenses that allow
 redistribution (for example CC0 or CC-BY with credit).

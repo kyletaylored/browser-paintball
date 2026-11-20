@@ -31,9 +31,7 @@ jobs:
 
       # the committed models must match what scripts/build-assets.ts produces
       - name: Models are up to date
-        run: |
-          npm run assets
-          git diff --exit-code --stat public/models || { echo "public/models is stale: run npm run assets and commit"; exit 1; }
+        run: npm run check:assets
 
       - name: Build
         run: npm run build

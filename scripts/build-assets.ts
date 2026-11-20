@@ -4,8 +4,8 @@
 //
 // Every model here is original and made in this file (no downloaded assets): shapes come from
 // three.js geometry builders, get merged per material, and are written with glTF tooling, then
-// welded, deduplicated and meshopt-compressed. The output is deterministic, so CI can rebuild it
-// and check the committed files are up to date. To use hand-made models instead, export .glb files
+// welded, deduplicated and meshopt-compressed. CI rebuilds them and compares against the committed
+// files (scripts/check-assets.ts), so they can't drift from this script. To use hand-made models instead, export .glb files
 // from Blender with the same node names and drop them in public/models/.
 //
 // Node names the game relies on:
@@ -26,7 +26,9 @@ import { mkdirSync, statSync } from 'node:fs';
 import { BUNKERS, bunkerKey, type Bunker } from '../shared/field';
 import { STAND_HEIGHT } from '../shared/sim';
 
-const OUT = 'public/models';
+/** output folder; `--out <dir>` overrides it (scripts/check-assets.ts builds into a temp folder) */
+const outArg = process.argv.indexOf('--out');
+const OUT = outArg > 0 ? process.argv[outArg + 1] : 'public/models';
 
 // ---- glTF helpers ------------------------------------------------------------------------------
 

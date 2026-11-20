@@ -12,6 +12,7 @@
     "dev:client": "vite",
     "dev:server": "tsx watch server/index.ts",
     "assets": "tsx scripts/build-assets.ts",
+    "check:assets": "tsx scripts/check-assets.ts",
     "start:server": "tsx server/index.ts",
     "start": "node dist-server/index.js",
     "test:server": "tsx server/smoke-test.ts",
