@@ -94,10 +94,14 @@ Roughly in order of payoff:
 
 ## Deploying
 
-- **Client:** `npm run build` produces static files in `dist/`. Any static host works. Set `VITE_SERVER_URL=wss://your-server.example.com` at build time.
-- **Server:** it's a long-running process, so it needs a VPS or an app platform that runs containers, not shared web hosting.
-  Put it behind TLS (`wss://`) so HTTPS pages can connect.
-- **Server settings** (environment variables): `PORT` (default 8787), `POINTS_TO_WIN` (5), `ROUND_SECONDS` (120),
-  `COUNTDOWN_SECONDS` (3), `POINT_PAUSE_SECONDS` (3), `MATCH_OVER_SECONDS` (6),
-  `BOT_TEAM_SIZE` (3; fill each team to this many with bots, `0` turns bots off), `BOT_SKILL` (`easy`, `normal`, `hard`),
-  `LAG_COMPENSATION` (`0` turns it off), `MAX_REWIND_MS` (300), `WIRE_FORMAT` (`json` to send everything as readable JSON).
+The `Dockerfile` builds one small image that runs the game server and serves the website on the same port:
+
+```powershell
+docker build -t splat-arena .
+docker run -p 8080:8080 splat-arena
+```
+
+Put it on a VPS or container platform behind TLS (WebSocket upgrades must pass through) and set `ALLOWED_ORIGINS` to
+your site's address. It has a `/healthz` endpoint and shuts down cleanly on `SIGTERM`. To host the website separately,
+build with `VITE_SERVER_URL=wss://your-server`. All settings are environment variables. The full guide is in
+[docs/DEPLOY.md](docs/DEPLOY.md), and every setting with its default is in `.env.example`.

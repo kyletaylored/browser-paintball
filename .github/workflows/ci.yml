@@ -38,3 +38,49 @@ jobs:
       # starts its own game servers (one without bots, one with) on spare ports
       - name: Server smoke test
         run: npm run test:server
+
+  # the production image: builds, serves the site, plays a point, and shuts down cleanly
+  docker:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      # for the test client only; the image installs its own
+      - run: npm ci
+
+      - name: Build image
+        run: docker build -t splat-arena:ci .
+
+      - name: Start container
+        run: docker run -d --name game -p 8080:8080 -e BOT_TEAM_SIZE=0 splat-arena:ci
+
+      - name: Health check answers
+        run: |
+          for i in $(seq 1 30); do curl -fsS http://localhost:8080/healthz && break; sleep 1; done
+          curl -fsS http://localhost:8080/healthz
+
+      - name: Website is served
+        run: |
+          curl -fsS http://localhost:8080/ | grep -q "<title>Splat Arena</title>"
+          asset=$(curl -fsS http://localhost:8080/ | grep -o '/assets/[^"]*\.js' | head -1)
+          curl -fsSI "http://localhost:8080$asset" | grep -qi "cache-control: public, max-age=31536000, immutable"
+
+      - name: A point plays out against the container
+        run: SERVER_URL=ws://localhost:8080 npm run test:server
+
+      - name: Stops cleanly on SIGTERM
+        run: |
+          docker stop -t 10 game
+          docker logs game 2>&1 | tail -3
+          docker logs game 2>&1 | grep -q "SIGTERM: shutting down"
+          test "$(docker inspect game --format '{{.State.ExitCode}}')" = "0"
+
+      - name: Container logs
+        if: always()
+        run: docker logs game 2>&1 || true

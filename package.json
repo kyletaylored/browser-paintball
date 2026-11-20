@@ -12,16 +12,16 @@
     "dev:client": "vite",
     "dev:server": "tsx watch server/index.ts",
     "start:server": "tsx server/index.ts",
+    "start": "node dist-server/index.js",
     "test:server": "tsx server/smoke-test.ts",
     "test:codec": "tsx server/codec-test.ts",
     "test": "npm run test:codec && npm run test:server",
     "typecheck": "tsc --noEmit",
-    "build": "tsc --noEmit && vite build",
+    "build": "tsc --noEmit && vite build && npm run build:server",
+    "build:server": "vite build --ssr server/index.ts --outDir dist-server --emptyOutDir",
     "preview": "vite preview"
   },
   "dependencies": {
-    "postprocessing": "6.39.6",
-    "three": "0.187.0",
     "ws": "8.23.0"
   },
   "devDependencies": {
@@ -29,6 +29,8 @@
     "@types/three": "0.187.0",
     "@types/ws": "8.18.2",
     "concurrently": "10.0.7",
+    "postprocessing": "6.39.6",
+    "three": "0.187.0",
     "tsx": "4.23.15",
     "typescript": "7.0.2",
     "vite": "8.3.8"

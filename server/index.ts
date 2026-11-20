@@ -10,7 +10,9 @@
 //  - Lag compensation: a human's paintballs are tested against where targets were on that shooter's
 //    screen (their ping + the interpolation delay ago), using a short history of everyone's positions.
 
+import { createServer } from 'node:http';
 import { WebSocketServer, type WebSocket } from 'ws';
+import { makeHttpHandler } from './http';
 import { spawnPoint } from '../shared/field';
 import {
   advanceBall, traceWorld, segmentHitsCapsule, isOutOfBounds, stepMovement,
@@ -30,6 +32,18 @@ const envNum = (name: string, fallback: number) => {
 };
 
 const PORT = Number(process.env.PORT ?? DEFAULT_PORT);
+/** interface to listen on (default: all) */
+const HOST = process.env.HOST || undefined;
+/** serve the built website from here too (one container for site + game); unset = game only */
+const STATIC_DIR = process.env.STATIC_DIR || null;
+/**
+ * comma-separated list of web origins allowed to open a game connection, e.g.
+ * https://play.example.com. Unset = any origin (fine for development).
+ */
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS ?? '').split(',').map((o) => o.trim()).filter(Boolean);
+
+/** one line per event, with a timestamp, to stdout (container platforms collect it from there) */
+const log = (...parts: unknown[]) => console.log(new Date().toISOString(), ...parts);
 const MAX_PLAYERS = 12;
 const MAX_BALLS = 2000;
 const POINTS_TO_WIN = envNum('POINTS_TO_WIN', 5);
@@ -134,7 +148,20 @@ function freeSlot(team: Team): number {
   return s;
 }
 
-const wss = new WebSocketServer({ port: PORT, maxPayload: 4096 });
+const startedAt = Date.now();
+const httpServer = createServer(
+  makeHttpHandler({
+    staticDir: STATIC_DIR,
+    health: () => ({ players: humans().length, bots: players.size - humans().length, phase: match.phase, uptime: Math.round((Date.now() - startedAt) / 1000) }),
+  }),
+);
+const wss = new WebSocketServer({
+  server: httpServer,
+  maxPayload: 4096,
+  // With ALLOWED_ORIGINS set, other websites can't open game connections from their visitors' browsers.
+  // Browsers always send Origin; a client without one isn't a browser (and could fake it anyway).
+  verifyClient: ({ origin }: { origin?: string }) => !ALLOWED_ORIGINS.length || !origin || ALLOWED_ORIGINS.includes(origin),
+});
 
 wss.on('connection', (ws) => {
   if (humans().length >= MAX_PLAYERS) {
@@ -155,7 +182,7 @@ wss.on('connection', (ws) => {
   };
   players.set(id, p);
   send(ws, { t: 'welcome', id, team, spawn: sp, round: roundState() });
-  console.log(`+ player ${id} joined ${TEAM_NAMES[team]} (${humans().length} online)`);
+  log(`+ player ${id} joined ${TEAM_NAMES[team]} (${humans().length} online)`);
   balanceBots();
   updateMatch();
   sendRoster();
@@ -173,7 +200,7 @@ wss.on('connection', (ws) => {
   ws.on('close', () => {
     players.delete(id);
     broadcast({ t: 'leave', id });
-    console.log(`- player ${id} left (${humans().length} online)`);
+    log(`- player ${id} left (${humans().length} online)`);
     balanceBots();
     updateMatch();
     sendRoster();
@@ -414,7 +441,7 @@ function applyName(p: Player) {
   if (p.wantName === p.name || t - p.lastRename < 1) return;
   p.lastRename = t;
   p.name = p.wantName;
-  console.log(`  player ${p.id} is now "${p.name}"`);
+  log(`  player ${p.id} is now "${p.name}"`);
   sendRoster();
 }
 
@@ -473,7 +500,7 @@ function setPhase(phase: RoundPhase, seconds: number, winner: Team | -1 = -1) {
   match.endsAt = now() + seconds;
   match.winner = winner;
   const who = winner !== -1 ? ` (${TEAM_NAMES[winner]})` : '';
-  console.log(`  match: ${phase}${who} · ${score[0]}-${score[1]} · point ${match.round}`);
+  log(`  match: ${phase}${who} · ${score[0]}-${score[1]} · point ${match.round}`);
 }
 
 /** reset everyone to their start box and start the countdown for the next point */
@@ -574,7 +601,24 @@ setInterval(() => {
   sendRoster();
 }, 2000);
 
-console.log(`Splat Arena server on ws://localhost:${PORT}`);
-console.log(`  wire format: ${BINARY ? 'binary' : 'json'}`);
-console.log(`  lag compensation: ${LAG_COMPENSATION ? `on, up to ${MAX_REWIND * 1000} ms` : 'off'}`);
-console.log(`  bots: ${BOT_TEAM_SIZE ? `fill teams to ${BOT_TEAM_SIZE}, ${process.env.BOT_SKILL ?? 'normal'} skill` : 'off'}`);
+httpServer.listen(PORT, HOST, () => {
+  log(`Splat Arena server on ws://localhost:${PORT}${STATIC_DIR ? ` (also serving the site from ${STATIC_DIR})` : ''}`);
+});
+log(`  allowed origins: ${ALLOWED_ORIGINS.length ? ALLOWED_ORIGINS.join(', ') : 'any'}`);
+log(`  wire format: ${BINARY ? 'binary' : 'json'}`);
+log(`  lag compensation: ${LAG_COMPENSATION ? `on, up to ${MAX_REWIND * 1000} ms` : 'off'}`);
+log(`  bots: ${BOT_TEAM_SIZE ? `fill teams to ${BOT_TEAM_SIZE}, ${process.env.BOT_SKILL ?? 'normal'} skill` : 'off'}`);
+
+// Graceful shutdown (deploys and restarts send SIGTERM): stop taking players, tell everyone we're
+// going away (their browsers reconnect on their own), then exit.
+let stopping = false;
+function shutdown(signal: string) {
+  if (stopping) return;
+  stopping = true;
+  log(`${signal}: shutting down (${humans().length} players connected)`);
+  httpServer.close();
+  for (const p of players.values()) p.ws?.close(1001, 'server restarting');
+  setTimeout(() => process.exit(0), 1500).unref();
+}
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
