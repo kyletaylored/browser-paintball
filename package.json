@@ -4,6 +4,9 @@
   "version": "0.1.0",
   "type": "module",
   "description": "A browser paintball starter: Vite + TypeScript + three.js + postprocessing, with a small WebSocket game server.",
+  "engines": {
+    "node": ">=20.19"
+  },
   "scripts": {
     "dev": "concurrently -k -n client,server -c cyan,magenta \"vite\" \"tsx watch server/index.ts\"",
     "dev:client": "vite",

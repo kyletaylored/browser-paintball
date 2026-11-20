@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Server smoke test
+        run: |
+          npm run start:server > server.log 2>&1 &
+          for i in $(seq 1 30); do
+            grep -q "server on ws://" server.log && break
+            sleep 1
+          done
+          npm run test:server
+        env:
+          PORT: 8787
+
+      - name: Server log
+        if: always()
+        run: cat server.log || true
