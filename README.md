@@ -20,6 +20,7 @@ Open a second browser window to play against yourself: the server puts the next 
 **How a match works:** once both teams have a player, everyone is put back in their start box for a 3-second countdown.
 Then the point is live: if you're hit you're out until the point ends. Eliminate the whole other team to win the point.
 First team to 5 points wins the match. While a team is empty it's warm-up: you respawn a few seconds after being hit.
+Pick a name on the start screen; it shows over your head, in the kill feed and on the scoreboard.
 
 - **No server running?** The game falls back to offline practice with three strafing dummies.
 - **Slow machine?** Add `?low` to the URL to turn off shadows, bloom and anti-aliasing.
@@ -31,6 +32,7 @@ First team to 5 points wins the match. While a team is empty it's warm-up: you r
 | WASD, Shift | move, sprint |
 | Space, C | jump (you can jump onto the low walls), crouch |
 | R | reload (200-ball hopper) |
+| Tab (hold) | scoreboard |
 | Esc | release the mouse |
 
 ## How it's put together

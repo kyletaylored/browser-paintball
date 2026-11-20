@@ -32,6 +32,8 @@ export function createComposer(renderer: THREE.WebGLRenderer, scene: THREE.Scene
   if (!LOW_QUALITY) composer.addPass(new EffectPass(camera, new SMAAEffect()));
 
   const resize = () => {
+    // a minimised or hidden window can report 0×0; keep the last good size instead of a NaN aspect
+    if (!window.innerWidth || !window.innerHeight) return;
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     composer.setSize(window.innerWidth, window.innerHeight);
