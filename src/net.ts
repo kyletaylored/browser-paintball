@@ -1,7 +1,7 @@
 // WebSocket client. Keeps a short history of snapshots for each other player so they can be
 // drawn slightly in the past, smoothly interpolated, instead of jumping 20 times a second.
 
-import type { ClientMsg, ServerMsg, PlayerSnap, RoundState, Spawn, Team } from '../shared/protocol';
+import type { ClientMsg, ServerMsg, PlayerSnap, RosterEntry, RoundState, Spawn, Team } from '../shared/protocol';
 
 export interface RemotePlayer {
   id: number;
@@ -28,11 +28,22 @@ export class Net {
   round: RoundState | null = null;
   roundAt = 0;
   readonly remotes = new Map<number, RemotePlayer>();
+  /** names and stats for everyone, including you */
+  readonly roster = new Map<number, RosterEntry>();
   private ws: WebSocket | null = null;
   private retryTimer = 0;
 
-  constructor(private url: string, private ev: NetEvents) {
+  constructor(private url: string, private ev: NetEvents, private getName: () => string) {
     this.connect();
+  }
+
+  /** tell the server our (new) name */
+  sendName(): void {
+    this.send({ t: 'hello', name: this.getName() });
+  }
+
+  nameOf(id: number): string {
+    return this.roster.get(id)?.name ?? `Player ${id}`;
   }
 
   send(m: ClientMsg): void {
@@ -66,6 +77,7 @@ export class Net {
       this.id = -1;
       this.round = null;
       this.remotes.clear();
+      this.roster.clear();
       if (wasOnline) this.ev.disconnected();
       this.retry();
     };
@@ -89,7 +101,15 @@ export class Net {
         this.team = m.team;
         this.round = m.round;
         this.roundAt = performance.now();
+        this.sendName();
         this.ev.welcome(m.id, m.team, m.spawn);
+        break;
+      case 'roster':
+        this.roster.clear();
+        for (const r of m.players) this.roster.set(r.id, r);
+        break;
+      case 'ping':
+        this.send({ t: 'pong', s: m.s });
         break;
       case 'snap': {
         const now = performance.now();

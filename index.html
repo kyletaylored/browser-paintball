@@ -88,6 +88,42 @@
       #play:hover { filter: brightness(1.08); }
       .keys { list-style: none; padding: 0; margin: 20px 0 0; color: var(--dim); font-size: 14px; line-height: 1.9; }
       .keys b { color: var(--ink); }
+      .name { display: block; margin: 0 0 14px; text-align: left; color: var(--dim); font-size: 13px; font-weight: 600; }
+      .name input {
+        display: block; width: 100%; margin-top: 6px; padding: 10px 12px; border-radius: 10px; border: 1px solid rgba(255, 255, 255, 0.18);
+        background: rgba(0, 0, 0, 0.35); color: var(--ink); font: inherit; font-size: 16px; font-weight: 700;
+      }
+      .name input:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+      #plates { position: absolute; inset: 0; overflow: hidden; }
+      .plate {
+        position: absolute; left: 0; top: 0; padding: 2px 6px; border-radius: 6px; background: rgba(10, 8, 14, 0.55);
+        font-size: 12px; font-weight: 800; white-space: nowrap; will-change: transform;
+      }
+      #feed { position: absolute; top: 16px; right: 16px; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+      #feed .row {
+        padding: 5px 10px; border-radius: 8px; background: var(--panel); font-size: 13px; font-weight: 700;
+        display: flex; gap: 8px; animation: feedin 0.2s ease-out;
+      }
+      #feed .row.mine { outline: 1px solid var(--accent); }
+      #feed .x { color: var(--dim); }
+      #feed .r { color: var(--red); } #feed .b { color: var(--blue); }
+      @keyframes feedin { from { opacity: 0; translate: 12px 0; } }
+      #board {
+        position: absolute; left: 50%; top: 50%; translate: -50% -50%; width: min(760px, calc(100vw - 32px));
+        display: grid; grid-template-columns: 1fr 1fr; gap: 12px; padding: 14px; border-radius: 16px; background: var(--panel);
+        backdrop-filter: blur(8px);
+      }
+      #board[hidden] { display: none; }
+      @media (max-width: 560px) { #board { grid-template-columns: 1fr; } }
+      #board h2 { margin: 0 0 8px; font-size: 16px; }
+      #board .r h2 { color: var(--red); } #board .b h2 { color: var(--blue); }
+      #board table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
+      #board th { text-align: right; color: var(--dim); font-size: 12px; font-weight: 600; padding: 4px 6px; }
+      #board td { text-align: right; padding: 5px 6px; border-top: 1px solid rgba(255, 255, 255, 0.08); }
+      #board th:first-child, #board td:first-child { text-align: left; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      #board tr.me td { color: var(--accent); font-weight: 800; }
+      #board td.empty { text-align: center; color: var(--dim); }
       .audio { display: flex; align-items: center; gap: 12px; margin-top: 18px; color: var(--dim); font-size: 14px; }
       .audio input[type='range'] { flex: 1; accent-color: var(--accent); }
       .audio label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
@@ -98,6 +134,7 @@
     <canvas id="view"></canvas>
 
     <div id="hud">
+      <div id="plates"></div>
       <div id="crosshair"></div>
       <div id="hitmarker"></div>
       <div id="score" class="chip"></div>
@@ -107,12 +144,17 @@
       <div id="flash"></div>
       <div id="out" hidden></div>
       <div id="banner" hidden></div>
+      <div id="feed"></div>
+      <div id="board" hidden></div>
     </div>
 
     <div id="overlay">
       <div class="card">
         <h1>SPLAT <span>ARENA</span></h1>
         <p class="sub">A three.js paintball starter</p>
+        <label class="name">Your name
+          <input id="name" type="text" maxlength="16" autocomplete="off" spellcheck="false" placeholder="Player" />
+        </label>
         <button id="play" type="button">Click to play</button>
         <div class="audio">
           <label for="volume">Volume</label>
@@ -123,7 +165,7 @@
           <li><b>Mouse</b> aim · <b>Click</b> fire</li>
           <li><b>WASD</b> move · <b>Shift</b> sprint</li>
           <li><b>Space</b> jump · <b>C</b> crouch</li>
-          <li><b>R</b> reload · <b>Esc</b> release mouse</li>
+          <li><b>R</b> reload · <b>Tab</b> scoreboard · <b>Esc</b> release mouse</li>
           <li>Eliminate the whole other team to win the point</li>
         </ul>
       </div>

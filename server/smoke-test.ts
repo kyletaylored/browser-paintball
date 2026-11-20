@@ -3,7 +3,7 @@
 // Run with the server already going:  npm run test:server
 
 import WebSocket from 'ws';
-import { DEFAULT_PORT, type ClientMsg, type ServerMsg, type Team } from '../shared/protocol';
+import { DEFAULT_PORT, cleanName, type ClientMsg, type ServerMsg, type Team } from '../shared/protocol';
 import { STAND_HEIGHT, EYE_FROM_TOP } from '../shared/sim';
 
 const URL = process.env.SERVER_URL ?? `ws://localhost:${DEFAULT_PORT}`;
@@ -40,6 +40,12 @@ console.log(`joined: player ${a.id} team ${a.team}, player ${b.id} team ${b.team
 if (a.team === b.team) throw new Error('expected the two players on opposite teams (is someone else connected?)');
 const [shooter, target] = a.team === 0 ? [a, b] : [b, a];
 
+// names: one ordinary, one full of control/zero-width characters and far too long
+const NASTY = '  \u0000Sh\u200booter\n\t<b>with a very long name</b>  ';
+const EXPECTED = cleanName(NASTY);
+send(shooter.ws, { t: 'hello', name: NASTY });
+send(target.ws, { t: 'hello', name: 'Target' });
+
 type Snap = Extract<ServerMsg, { t: 'snap' }>;
 const isSnap = (m: ServerMsg): m is Snap => m.t === 'snap';
 const snapWhere = (f: (m: Snap) => boolean) => (m: ServerMsg): m is Snap => isSnap(m) && f(m);
@@ -68,6 +74,14 @@ const point = await waitFor(
 );
 // the next point resets everyone to their start box
 const respawn = await waitFor(target.inbox, (m): m is Extract<ServerMsg, { t: 'respawn' }> => m.t === 'respawn', 6000, afterHit);
+type Roster = Extract<ServerMsg, { t: 'roster' }>;
+const stats = await waitFor(
+  target.inbox,
+  (m): m is Roster => m.t === 'roster' &&
+    m.players.some((p) => p.id === shooter.id && p.name === EXPECTED && p.k === 1) &&
+    m.players.some((p) => p.id === target.id && p.name === 'Target' && p.d === 1),
+  1000,
+);
 const next = await waitFor(target.inbox, snapWhere((m) => m.round.phase === 'countdown' && m.round.round === 2), 1000, afterHit);
 
 a.ws.close();
@@ -80,6 +94,8 @@ const checks = [
   ["shooter's team won the point", point !== null],
   ['target respawned for the next point', respawn !== null],
   ['point 2 countdown started', next !== null],
+  [`names cleaned ("${EXPECTED}") and stats counted in the roster`, stats !== null && EXPECTED === 'Shooter<b>with a'],
+  ['server sent a latency probe', target.inbox.some((m) => m.t === 'ping')],
 ] as const;
 for (const [name, ok] of checks) console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}`);
 process.exit(checks.every(([, ok]) => ok) ? 0 : 1);

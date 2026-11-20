@@ -11,10 +11,11 @@ import { Fx } from './fx';
 import { Avatar } from './avatars';
 import { Hud } from './hud';
 import { SoundSystem, Footsteps } from './audio';
+import { Nameplates, type PlateTarget } from './nameplates';
 import { Net, sampleRemote, phaseSecondsLeft } from './net';
 import { spawnPoint } from '../shared/field';
 import { BALL_SPEED, FIRE_INTERVAL, STAND_HEIGHT, CROUCH_HEIGHT, CLIENT_SEND_HZ, RESPAWN_SECONDS } from '../shared/sim';
-import { DEFAULT_PORT, TEAM_COLORS, TEAM_NAMES, type RoundPhase, type V3 } from '../shared/protocol';
+import { DEFAULT_PORT, TEAM_COLORS, TEAM_NAMES, cleanName, type RoundPhase, type V3 } from '../shared/protocol';
 
 const STEP = 1 / 120;
 const HOPPER = 200;
@@ -48,6 +49,26 @@ hud.bindAudio(sound);
 // mix levels (each synthesised sound is normalised, so these set the balance)
 const VOL = { beep: 0.4, horn: 0.35, shot: 0.5, remoteShot: 0.9, splat: 0.55, hit: 0.9, confirm: 0.5, out: 0.55, step: 0.22, remoteStep: 0.5, reload: 0.45, dry: 0.5 };
 const myFeet = new Footsteps();
+const plates = new Nameplates(document.getElementById('plates')!);
+
+// ---- your name ------------------------------------------------------------------------------
+
+const NAME_KEY = 'splat-arena.name';
+let myName = '';
+try {
+  myName = cleanName(localStorage.getItem(NAME_KEY));
+} catch {
+  // storage blocked: no remembered name
+}
+hud.bindName(myName, (typed) => {
+  myName = cleanName(typed);
+  try {
+    localStorage.setItem(NAME_KEY, myName);
+  } catch {
+    // ignore
+  }
+  net.sendName();
+});
 
 let hopper = HOPPER;
 let reloadLeft = 0;
@@ -107,7 +128,12 @@ const net = new Net(serverUrl, {
   },
   hit(m) {
     fx.burst(m.p[0], m.p[1], m.p[2], 0, 1, 0, TEAM_COLORS[m.team], 20);
+    const mine = m.victim === net.id || m.shooter === net.id;
+    const shooterTeam = net.roster.get(m.shooter)?.team ?? m.team;
+    const victimTeam = net.roster.get(m.victim)?.team ?? (m.team === 0 ? 1 : 0);
+    hud.killFeed(net.nameOf(m.shooter), shooterTeam, net.nameOf(m.victim), victimTeam, mine);
     if (m.victim === net.id) {
+      hud.toast(`${net.nameOf(m.shooter)} got you`);
       player.alive = false;
       outUntil = performance.now() + RESPAWN_SECONDS * 1000;
       hud.damageFlash();
@@ -116,7 +142,7 @@ const net = new Net(serverUrl, {
     if (m.shooter === net.id) {
       hud.hitMarker();
       sound.play('confirm', { volume: VOL.confirm, rate: 1 });
-      hud.toast('Eliminated!');
+      hud.toast(`You eliminated ${net.nameOf(m.victim)}`);
     }
   },
   respawn(sp) {
@@ -133,7 +159,7 @@ const net = new Net(serverUrl, {
     player.alive = true;
     hud.toast('Lost the server, back to practice');
   },
-});
+}, () => myName);
 
 function updateRemotes(now: number) {
   const at = now - INTERP_DELAY_MS;
@@ -272,6 +298,18 @@ function updateMatchCues(phase: RoundPhase | null, now: number) {
   }
 }
 
+const plateTargets: PlateTarget[] = [];
+function updatePlates(online: boolean) {
+  plateTargets.length = 0;
+  if (online) {
+    for (const [id, ra] of remoteAvatars) {
+      const t = ra.target;
+      plateTargets.push({ id, name: net.nameOf(id), team: t.team === 0 ? 0 : 1, x: t.x, y: t.y + t.height + 0.28, z: t.z, alive: t.alive });
+    }
+  }
+  plates.update(camera, plateTargets);
+}
+
 function startReload() {
   reloadLeft = RELOAD_SECONDS;
   sound.play('reload', { volume: VOL.reload, rate: 1 });
@@ -368,9 +406,11 @@ function frame(now: number) {
     hud.setScore(`Practice hits: ${practiceHits}`);
   }
   hud.setAmmo(hopper, HOPPER, reloadLeft > 0);
+  hud.setScoreboard(online && input.locked && input.isDown('Tab') ? [...net.roster.values()] : null, net.id, net.score);
   hud.showOut(player.alive ? null : outLine(phase, now));
 
   player.updateCamera(dt);
+  updatePlates(online);
   fx.update(dt);
   balls.sync();
   composer.render(dt);

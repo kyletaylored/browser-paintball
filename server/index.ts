@@ -14,7 +14,8 @@ import {
   RESPAWN_SECONDS, SERVER_TICK_HZ, SNAPSHOT_HZ, type Ball,
 } from '../shared/sim';
 import {
-  DEFAULT_PORT, TEAM_NAMES, type ClientMsg, type ServerMsg, type Team, type V3, type RoundPhase, type RoundState,
+  DEFAULT_PORT, TEAM_NAMES, cleanName,
+  type ClientMsg, type ServerMsg, type Team, type V3, type RoundPhase, type RoundState, type RosterEntry,
 } from '../shared/protocol';
 
 const envNum = (name: string, fallback: number) => {
@@ -45,6 +46,15 @@ interface Player {
   alive: boolean;
   outUntil: number;
   lastFire: number;
+  name: string;
+  /** latest name the player asked for; applied at most once a second */
+  wantName: string;
+  lastRename: number;
+  /** eliminations / times eliminated this match */
+  k: number;
+  d: number;
+  /** smoothed round-trip time, ms */
+  ping: number;
 }
 
 const players = new Map<number, Player>();
@@ -95,11 +105,13 @@ wss.on('connection', (ws) => {
   const p: Player = {
     ws, id, team, slot, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw, pitch: 0,
     crouch: false, alive, outUntil: alive ? 0 : Infinity, lastFire: 0,
+    name: `Player ${id}`, wantName: `Player ${id}`, lastRename: -Infinity, k: 0, d: 0, ping: 0,
   };
   players.set(id, p);
   send(ws, { t: 'welcome', id, team, spawn: sp, round: roundState() });
   console.log(`+ player ${id} joined ${TEAM_NAMES[team]} (${players.size} online)`);
   updateMatch();
+  sendRoster();
 
   ws.on('message', (data, isBinary) => {
     if (isBinary) return;
@@ -117,11 +129,20 @@ wss.on('connection', (ws) => {
     broadcast({ t: 'leave', id });
     console.log(`- player ${id} left (${players.size} online)`);
     updateMatch();
+    sendRoster();
   });
 });
 
 function handle(p: Player, msg: ClientMsg) {
-  if (msg.t === 'state') {
+  if (msg.t === 'hello') {
+    p.wantName = cleanName(msg.name) || `Player ${p.id}`;
+    applyName(p);
+  } else if (msg.t === 'pong') {
+    if (!finite(msg.s)) return;
+    const rtt = (now() - msg.s) * 1000;
+    if (rtt < 0 || rtt > 10000) return;
+    p.ping = p.ping ? p.ping * 0.7 + rtt * 0.3 : rtt;
+  } else if (msg.t === 'state') {
     if (!p.alive) return; // eliminated players are frozen until they respawn
     if (match.phase === 'countdown') return; // everyone stays in their start box
     if (![msg.x, msg.y, msg.z, msg.yaw, msg.pitch].every(finite)) return;
@@ -179,8 +200,21 @@ function tick(dt: number) {
   }
 
   const t = now();
-  for (const p of players.values()) if (!p.alive && t >= p.outUntil) respawn(p); // warm-up only: live points use Infinity
+  for (const p of players.values()) {
+    if (!p.alive && t >= p.outUntil) respawn(p); // warm-up only: live points use Infinity
+    if (p.wantName !== p.name) applyName(p);
+  }
   updateMatch();
+}
+
+/** take the player's requested name, at most once a second (the tick retries) */
+function applyName(p: Player) {
+  const t = now();
+  if (p.wantName === p.name || t - p.lastRename < 1) return;
+  p.lastRename = t;
+  p.name = p.wantName;
+  console.log(`  player ${p.id} is now "${p.name}"`);
+  sendRoster();
 }
 
 function respawn(p: Player) {
@@ -194,6 +228,27 @@ function eliminate(victim: Player, ball: Ball, p: V3) {
   // during warm-up you come back after a few seconds; during a point you're out until it ends
   victim.outUntil = match.phase === 'waiting' ? now() + RESPAWN_SECONDS : Infinity;
   broadcast({ t: 'hit', victim: victim.id, shooter: ball.owner, team: ball.team as Team, p });
+  if (match.phase !== 'waiting') {
+    victim.d++;
+    const shooter = players.get(ball.owner);
+    if (shooter) shooter.k++;
+    sendRoster();
+  }
+}
+
+function roster(): RosterEntry[] {
+  return [...players.values()].map((p) => ({ id: p.id, name: p.name, team: p.team, k: p.k, d: p.d, ping: Math.round(p.ping) }));
+}
+function sendRoster() {
+  if (players.size) broadcast({ t: 'roster', players: roster() });
+}
+
+/** new match: points and per-player stats back to zero */
+function resetMatch() {
+  score[0] = score[1] = 0;
+  match.round = 1;
+  for (const p of players.values()) p.k = p.d = 0;
+  sendRoster();
 }
 
 // ---- match flow ---------------------------------------------------------------------------
@@ -238,8 +293,7 @@ function updateMatch() {
 
   switch (match.phase) {
     case 'waiting':
-      score[0] = score[1] = 0;
-      match.round = 1;
+      resetMatch();
       startCountdown();
       break;
     case 'countdown':
@@ -264,8 +318,7 @@ function updateMatch() {
       break;
     case 'matchover':
       if (t >= match.endsAt) {
-        score[0] = score[1] = 0;
-        match.round = 1;
+        resetMatch();
         startCountdown();
       }
       break;
@@ -302,5 +355,10 @@ setInterval(() => {
   last = t;
 }, 1000 / SERVER_TICK_HZ);
 setInterval(snapshot, 1000 / SNAPSHOT_HZ);
+// latency probes + a roster refresh so pings on the scoreboard stay current
+setInterval(() => {
+  broadcast({ t: 'ping', s: now() });
+  sendRoster();
+}, 2000);
 
 console.log(`Splat Arena server on ws://localhost:${PORT}`);
