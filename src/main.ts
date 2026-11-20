@@ -15,14 +15,30 @@ import { Nameplates, type PlateTarget } from './nameplates';
 import { Prediction } from './prediction';
 import { Net, sampleRemote, phaseSecondsLeft } from './net';
 import { spawnPoint } from '../shared/field';
-import { BALL_SPEED, FIRE_INTERVAL, STAND_HEIGHT, CROUCH_HEIGHT, CLIENT_SEND_HZ, RESPAWN_SECONDS, INPUT_DT } from '../shared/sim';
+import { BALL_SPEED, FIRE_INTERVAL, STAND_HEIGHT, CROUCH_HEIGHT, CLIENT_SEND_HZ, RESPAWN_SECONDS, INPUT_DT, INTERP_DELAY } from '../shared/sim';
 import { DEFAULT_PORT, TEAM_COLORS, TEAM_NAMES, cleanName, type RoundPhase, type V3 } from '../shared/protocol';
 
 const STEP = INPUT_DT; // the server replays our movement in steps of exactly this
 const HOPPER = 200;
 const RELOAD_SECONDS = 1.6;
 const SPREAD = 0.012;
-const INTERP_DELAY_MS = 100;
+const INTERP_DELAY_MS = INTERP_DELAY * 1000; // the server's lag compensation assumes this exact delay
+
+/** development only: ?hitboxes shows where the server tested each hit (after rewinding for lag) */
+const SHOW_HITBOXES = import.meta.env.DEV && new URLSearchParams(location.search).has('hitboxes');
+const hitboxMat = new THREE.MeshBasicMaterial({ color: 0xffff00, wireframe: true, transparent: true, opacity: 0.8, depthTest: false });
+function showHitbox(tp: [number, number, number, number]) {
+  const [x, y, z, h] = tp;
+  const r = 0.32;
+  const m = new THREE.Mesh(new THREE.CapsuleGeometry(r, Math.max(0.01, h - 2 * r), 4, 10), hitboxMat);
+  m.position.set(x, y + h / 2, z);
+  m.renderOrder = 10;
+  scene.add(m);
+  setTimeout(() => {
+    scene.remove(m);
+    m.geometry.dispose();
+  }, 2000);
+}
 
 // ---- setup --------------------------------------------------------------------------------
 
@@ -130,6 +146,7 @@ const net = new Net(serverUrl, {
     sound.playAt('shot', m.o[0], m.o[1], m.o[2], { volume: VOL.remoteShot });
   },
   hit(m) {
+    if (SHOW_HITBOXES) showHitbox(m.tp);
     fx.burst(m.p[0], m.p[1], m.p[2], 0, 1, 0, TEAM_COLORS[m.team], 20);
     const mine = m.victim === net.id || m.shooter === net.id;
     const shooterTeam = net.roster.get(m.shooter)?.team ?? m.team;
