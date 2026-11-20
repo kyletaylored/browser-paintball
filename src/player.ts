@@ -20,6 +20,8 @@ export class LocalPlayer {
   private bobPhase = 0;
   private move: MoveInput = { forward: 0, right: 0, jump: false, sprint: false, crouch: false, yaw: 0 };
   private euler = new THREE.Euler(0, 0, 0, 'YXZ');
+  /** visual-only offset left over from a server correction; decays to zero so fixes don't look like teleports */
+  private smooth = { x: 0, y: 0, z: 0 };
 
   constructor(private camera: THREE.PerspectiveCamera) {
     camera.rotation.order = 'YXZ';
@@ -37,6 +39,18 @@ export class LocalPlayer {
     Object.assign(this.body, { x: sp.x, y: sp.y, z: sp.z, vx: 0, vy: 0, vz: 0, height: STAND_HEIGHT, onGround: true });
     this.yaw = sp.yaw;
     this.pitch = 0;
+    this.smooth = { x: 0, y: 0, z: 0 };
+  }
+
+  /** the server moved us by (-dx, -dy, -dz): show it gradually */
+  addCorrection(dx: number, dy: number, dz: number): void {
+    this.smooth.x += dx;
+    this.smooth.y += dy;
+    this.smooth.z += dz;
+  }
+
+  clearCorrection(): void {
+    this.smooth = { x: 0, y: 0, z: 0 };
   }
 
   look(dx: number, dy: number): void {
@@ -44,8 +58,8 @@ export class LocalPlayer {
     this.pitch = Math.max(-1.5, Math.min(1.5, this.pitch - dy * SENSITIVITY));
   }
 
-  /** fixed-timestep update; pass null input to stand still (menu open, or eliminated) */
-  step(dt: number, input: Input | null): void {
+  /** read the keys into this step's movement input; null input = stand still (menu open, eliminated, countdown) */
+  sample(input: Input | null): MoveInput {
     const m = this.move;
     const on = input !== null && this.alive;
     m.forward = on ? +input.isDown('KeyW') - +input.isDown('KeyS') : 0;
@@ -54,7 +68,12 @@ export class LocalPlayer {
     m.sprint = on && (input.isDown('ShiftLeft') || input.isDown('ShiftRight'));
     m.crouch = on && input.isDown('KeyC');
     m.yaw = this.yaw;
-    stepMovement(this.body, m, dt);
+    return m;
+  }
+
+  /** run one fixed movement step with what sample() read */
+  apply(dt: number): void {
+    stepMovement(this.body, this.move, dt);
   }
 
   get crouching(): boolean {
@@ -74,7 +93,14 @@ export class LocalPlayer {
   }
 
   updateCamera(dt: number): void {
+    const k = Math.exp(-dt * 10);
+    this.smooth.x *= k;
+    this.smooth.y *= k;
+    this.smooth.z *= k;
     this.eye(this.camera.position);
+    this.camera.position.x += this.smooth.x;
+    this.camera.position.y += this.smooth.y;
+    this.camera.position.z += this.smooth.z;
     const speed = Math.hypot(this.body.vx, this.body.vz);
     if (this.body.onGround && speed > 0.5) this.bobPhase += dt * speed * 1.6;
     const bob = this.body.onGround ? Math.sin(this.bobPhase * 2) * 0.018 * Math.min(1, speed / 5) : 0;

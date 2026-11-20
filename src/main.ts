@@ -12,12 +12,13 @@ import { Avatar } from './avatars';
 import { Hud } from './hud';
 import { SoundSystem, Footsteps } from './audio';
 import { Nameplates, type PlateTarget } from './nameplates';
+import { Prediction } from './prediction';
 import { Net, sampleRemote, phaseSecondsLeft } from './net';
 import { spawnPoint } from '../shared/field';
-import { BALL_SPEED, FIRE_INTERVAL, STAND_HEIGHT, CROUCH_HEIGHT, CLIENT_SEND_HZ, RESPAWN_SECONDS } from '../shared/sim';
+import { BALL_SPEED, FIRE_INTERVAL, STAND_HEIGHT, CROUCH_HEIGHT, CLIENT_SEND_HZ, RESPAWN_SECONDS, INPUT_DT } from '../shared/sim';
 import { DEFAULT_PORT, TEAM_COLORS, TEAM_NAMES, cleanName, type RoundPhase, type V3 } from '../shared/protocol';
 
-const STEP = 1 / 120;
+const STEP = INPUT_DT; // the server replays our movement in steps of exactly this
 const HOPPER = 200;
 const RELOAD_SECONDS = 1.6;
 const SPREAD = 0.012;
@@ -50,6 +51,7 @@ hud.bindAudio(sound);
 const VOL = { beep: 0.4, horn: 0.35, shot: 0.5, remoteShot: 0.9, splat: 0.55, hit: 0.9, confirm: 0.5, out: 0.55, step: 0.22, remoteStep: 0.5, reload: 0.45, dry: 0.5 };
 const myFeet = new Footsteps();
 const plates = new Nameplates(document.getElementById('plates')!);
+const prediction = new Prediction();
 
 // ---- your name ------------------------------------------------------------------------------
 
@@ -115,6 +117,7 @@ const serverUrl: string =
 
 const net = new Net(serverUrl, {
   welcome(_id, team, spawn) {
+    prediction.reset();
     player.setTeam(team);
     player.placeAt(spawn);
     player.alive = true;
@@ -144,6 +147,12 @@ const net = new Net(serverUrl, {
       sound.play('confirm', { volume: VOL.confirm, rate: 1 });
       hud.toast(`You eliminated ${net.nameOf(m.victim)}`);
     }
+  },
+  ack(m) {
+    // the server's word on where we are; replay what it hasn't seen yet on top
+    const fix = prediction.reconcile(player.body, m.seq, m.b);
+    if (fix.snap) player.clearCorrection();
+    else player.addCorrection(fix.dx, fix.dy, fix.dz);
   },
   respawn(sp) {
     player.placeAt(sp);
@@ -209,6 +218,7 @@ function fire() {
   const o: V3 = [eye.x + dir.x * 0.35, eye.y + dir.y * 0.35 - 0.04, eye.z + dir.z * 0.35];
   const online = net.status === 'online';
   const team = online ? net.team : 0;
+  if (online) flushInputs(); // so the server has moved us to where we're shooting from
   // Draw the ball right away (no waiting for the server), then tell the server.
   balls.spawn(o, [dir.x * BALL_SPEED, dir.y * BALL_SPEED, dir.z * BALL_SPEED], online ? net.id : 0, team, TEAM_COLORS[team], true);
   if (online) net.send({ t: 'fire', o, d: [dir.x, dir.y, dir.z] });
@@ -310,6 +320,11 @@ function updatePlates(online: boolean) {
   plates.update(camera, plateTargets);
 }
 
+function flushInputs() {
+  const frames = prediction.takeOutbox();
+  if (frames) net.send({ t: 'input', i: frames });
+}
+
 function startReload() {
   reloadLeft = RELOAD_SECONDS;
   sound.play('reload', { volume: VOL.reload, rate: 1 });
@@ -350,7 +365,9 @@ function frame(now: number) {
   acc += dt;
   let steps = 0;
   while (acc >= STEP && steps < 12) {
-    player.step(STEP, input.locked && !frozen ? input : null);
+    const move = player.sample(input.locked && !frozen ? input : null);
+    if (online) prediction.record(move, player.pitch);
+    player.apply(STEP);
     balls.update(STEP, targets, ballEvents);
     acc -= STEP;
     steps++;
@@ -386,12 +403,12 @@ function frame(now: number) {
   if (fireCooldown < 0) fireCooldown = 0;
 
   // tell the server where we are
-  if (online && player.alive && !frozen) {
+  // send our input frames (the server moves us with them)
+  if (online) {
     sendAcc += dt;
     if (sendAcc >= 1 / CLIENT_SEND_HZ) {
       sendAcc = 0;
-      const b = player.body;
-      net.send({ t: 'state', x: b.x, y: b.y, z: b.z, yaw: player.yaw, pitch: player.pitch, c: player.crouching });
+      flushInputs();
     }
   }
 
@@ -421,4 +438,4 @@ requestAnimationFrame(frame);
 
 // Poke at the game from the browser console while developing, e.g. __game.player.body.
 // import.meta.env.DEV is false in `npm run build`, so this is stripped from production.
-if (import.meta.env.DEV) Object.assign(window, { __game: { THREE, scene, camera, renderer, input, player, net, balls, fx, dummies, sound, hud, frame } });
+if (import.meta.env.DEV) Object.assign(window, { __game: { THREE, scene, camera, renderer, input, player, net, balls, fx, dummies, sound, hud, frame, prediction } });

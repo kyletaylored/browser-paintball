@@ -30,7 +30,9 @@ export const PLAYER_GRAVITY = 18;
 export const RESPAWN_SECONDS = 3;
 export const SERVER_TICK_HZ = 60;
 export const SNAPSHOT_HZ = 20;
-export const CLIENT_SEND_HZ = 20;
+export const CLIENT_SEND_HZ = 60;
+/** length of one movement step; the browser predicts and the server replays in steps of exactly this */
+export const INPUT_DT = 1 / 120;
 
 const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
 const clamp01 = (v: number) => clamp(v, 0, 1);
@@ -60,8 +62,9 @@ export interface MoveInput {
 }
 
 /**
- * One fixed step of player movement. The client runs this for its own player. To add
- * client-side prediction later, the server runs the same function on the inputs it receives.
+ * One fixed step of player movement. The browser runs it to predict its own player, and the server
+ * runs it on the same input frames to decide where everyone really is. Keep it deterministic: same
+ * body + same input must give the same result on both sides.
  */
 export function stepMovement(b: Body, inp: MoveInput, dt: number): void {
   const targetH = inp.crouch ? CROUCH_HEIGHT : STAND_HEIGHT;
