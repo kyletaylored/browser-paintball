@@ -11,10 +11,10 @@ import { Fx } from './fx';
 import { Avatar } from './avatars';
 import { Hud } from './hud';
 import { SoundSystem, Footsteps } from './audio';
-import { Net, sampleRemote } from './net';
+import { Net, sampleRemote, phaseSecondsLeft } from './net';
 import { spawnPoint } from '../shared/field';
 import { BALL_SPEED, FIRE_INTERVAL, STAND_HEIGHT, CROUCH_HEIGHT, CLIENT_SEND_HZ, RESPAWN_SECONDS } from '../shared/sim';
-import { DEFAULT_PORT, TEAM_COLORS, TEAM_NAMES, type V3 } from '../shared/protocol';
+import { DEFAULT_PORT, TEAM_COLORS, TEAM_NAMES, type RoundPhase, type V3 } from '../shared/protocol';
 
 const STEP = 1 / 120;
 const HOPPER = 200;
@@ -46,7 +46,7 @@ canvas.addEventListener('click', () => sound.unlock());
 hud.bindAudio(sound);
 
 // mix levels (each synthesised sound is normalised, so these set the balance)
-const VOL = { shot: 0.5, remoteShot: 0.9, splat: 0.55, hit: 0.9, confirm: 0.5, out: 0.55, step: 0.22, remoteStep: 0.5, reload: 0.45, dry: 0.5 };
+const VOL = { beep: 0.4, horn: 0.35, shot: 0.5, remoteShot: 0.9, splat: 0.55, hit: 0.9, confirm: 0.5, out: 0.55, step: 0.22, remoteStep: 0.5, reload: 0.45, dry: 0.5 };
 const myFeet = new Footsteps();
 
 let hopper = HOPPER;
@@ -214,6 +214,64 @@ const ballEvents: BallEvents = {
   },
 };
 
+// ---- match flow (online) ------------------------------------------------------------------
+
+let lastPhase: RoundPhase | null = null;
+let lastCount = 0;
+
+const teamClass = (t: number) => (t === 0 ? 'r' : 'b');
+const clock = (sec: number) => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
+
+function scoreHtml(now: number): string {
+  const r = net.round;
+  const left = phaseSecondsLeft(net, now);
+  const extra = r?.phase === 'live' ? clock(left) : r ? `first to ${r.toWin}` : '';
+  return `<span class="r">RED ${net.score[0]}</span><span>–</span><span class="b">${net.score[1]} BLUE</span>` +
+    (extra ? `<span class="clock">${extra}</span>` : '');
+}
+
+function outLine(phase: RoundPhase | null, now: number): string {
+  if (phase === 'live') return 'spectating until the point ends';
+  if (phase === 'point' || phase === 'matchover' || phase === 'countdown') return 'next point coming up';
+  return `back in ${Math.max(1, Math.ceil((outUntil - now) / 1000))}…`;
+}
+
+/** banner, sounds and toasts when the match changes phase */
+function updateMatchCues(phase: RoundPhase | null, now: number) {
+  const r = net.round;
+  if (phase !== lastPhase) {
+    if (phase === 'live' && lastPhase === 'countdown') sound.play('go', { volume: VOL.beep, rate: 1 });
+    if (phase === 'point' || phase === 'matchover') sound.play('horn', { volume: VOL.horn, rate: 1 });
+    if (phase === 'live' && r) hud.toast(`Point ${r.round} · eliminate the other team`);
+    lastPhase = phase;
+    lastCount = 0;
+  }
+  if (!r || !phase) return hud.setBanner(null);
+  const left = phaseSecondsLeft(net, now);
+  switch (phase) {
+    case 'countdown': {
+      const n = Math.max(1, Math.ceil(left));
+      if (n !== lastCount) {
+        lastCount = n;
+        sound.play('beep', { volume: VOL.beep, rate: 1 });
+      }
+      hud.setBanner(`${n}<small>Point ${r.round} · first to ${r.toWin}</small>`, 'count');
+      break;
+    }
+    case 'point':
+    case 'matchover': {
+      const w = r.winner;
+      const tally = `${net.score[0]} – ${net.score[1]}`;
+      if (w === -1) hud.setBanner(`TIME<small>no one wins the point · ${tally}</small>`);
+      else if (phase === 'point') hud.setBanner(`${TEAM_NAMES[w].toUpperCase()} WINS THE POINT<small>${tally}</small>`, teamClass(w));
+      else hud.setBanner(`${TEAM_NAMES[w].toUpperCase()} WINS THE MATCH<small>${tally} · new match soon</small>`, teamClass(w));
+      break;
+    }
+    default:
+      hud.setBanner(null);
+  }
+}
+
 function startReload() {
   reloadLeft = RELOAD_SECONDS;
   sound.play('reload', { volume: VOL.reload, rate: 1 });
@@ -246,10 +304,15 @@ function frame(now: number) {
 
   const px = player.body.x;
   const pz = player.body.z;
+  const phase: RoundPhase | null = online ? net.round?.phase ?? null : null;
+  const frozen = phase === 'countdown'; // everyone holds still in their start box
+  const holdFire = phase === 'countdown' || phase === 'point' || phase === 'matchover';
+  updateMatchCues(phase, now);
+
   acc += dt;
   let steps = 0;
   while (acc >= STEP && steps < 12) {
-    player.step(STEP, input.locked ? input : null);
+    player.step(STEP, input.locked && !frozen ? input : null);
     balls.update(STEP, targets, ballEvents);
     acc -= STEP;
     steps++;
@@ -273,8 +336,8 @@ function frame(now: number) {
   fireCooldown -= dt;
   const firePressed = input.fireHeld && !wasFireHeld;
   wasFireHeld = input.fireHeld;
-  const canFire = input.locked && player.alive && reloadLeft <= 0;
-  if (firePressed && input.locked && player.alive && (reloadLeft > 0 || hopper <= 0)) sound.play('dry', { volume: VOL.dry });
+  const canFire = input.locked && player.alive && reloadLeft <= 0 && !holdFire;
+  if (firePressed && input.locked && player.alive && !holdFire && (reloadLeft > 0 || hopper <= 0)) sound.play('dry', { volume: VOL.dry });
   if (canFire && input.fireHeld) {
     if (hopper <= 0) startReload();
     while (fireCooldown <= 0 && hopper > 0) {
@@ -285,7 +348,7 @@ function frame(now: number) {
   if (fireCooldown < 0) fireCooldown = 0;
 
   // tell the server where we are
-  if (online && player.alive) {
+  if (online && player.alive && !frozen) {
     sendAcc += dt;
     if (sendAcc >= 1 / CLIENT_SEND_HZ) {
       sendAcc = 0;
@@ -297,14 +360,15 @@ function frame(now: number) {
   // HUD
   if (online) {
     const others = net.remotes.size;
-    hud.setStatus('online', `Online · ${TEAM_NAMES[net.team]} team · ${others} other player${others === 1 ? '' : 's'}`);
-    hud.setScore(`<span class="r">RED ${net.score[0]}</span><span>–</span><span class="b">${net.score[1]} BLUE</span>`);
+    const waiting = phase === 'waiting' ? ' · warm-up, waiting for the other team' : '';
+    hud.setStatus('online', `Online · ${TEAM_NAMES[net.team]} team · ${others} other player${others === 1 ? '' : 's'}${waiting}`);
+    hud.setScore(scoreHtml(now));
   } else {
     hud.setStatus(net.status, net.status === 'connecting' ? 'Connecting…' : `Offline practice · no server at ${serverUrl}`);
     hud.setScore(`Practice hits: ${practiceHits}`);
   }
   hud.setAmmo(hopper, HOPPER, reloadLeft > 0);
-  hud.showOut(!player.alive ? Math.max(1, Math.ceil((outUntil - now) / 1000)) : null);
+  hud.showOut(player.alive ? null : outLine(phase, now));
 
   player.updateCamera(dt);
   fx.update(dt);
@@ -317,4 +381,4 @@ requestAnimationFrame(frame);
 
 // Poke at the game from the browser console while developing, e.g. __game.player.body.
 // import.meta.env.DEV is false in `npm run build`, so this is stripped from production.
-if (import.meta.env.DEV) Object.assign(window, { __game: { THREE, scene, camera, renderer, input, player, net, balls, fx, dummies, sound } });
+if (import.meta.env.DEV) Object.assign(window, { __game: { THREE, scene, camera, renderer, input, player, net, balls, fx, dummies, sound, hud, frame } });

@@ -17,6 +17,10 @@ npm run dev
 Open http://localhost:5173. `npm run dev` starts both the client (Vite, port 5173) and the game server (port 8787).
 Open a second browser window to play against yourself: the server puts the next player on the other team.
 
+**How a match works:** once both teams have a player, everyone is put back in their start box for a 3-second countdown.
+Then the point is live: if you're hit you're out until the point ends. Eliminate the whole other team to win the point.
+First team to 5 points wins the match. While a team is empty it's warm-up: you respawn a few seconds after being hit.
+
 - **No server running?** The game falls back to offline practice with three strafing dummies.
 - **Slow machine?** Add `?low` to the URL to turn off shadows, bloom and anti-aliasing.
 - **Check the server works:** with it running, `npm run test:server` connects two fake players, has one shoot the other, and checks the hit and respawn.
@@ -73,11 +77,13 @@ Roughly in order of payoff:
 4. **Lag compensation.** Keep a short history of player positions on the server and test hits against where the target was
    when the shooter fired.
 5. **Binary messages.** Pack snapshots into an `ArrayBuffer` with `DataView` instead of JSON (often 5–10× smaller).
-6. **Rounds and modes.** Eliminate the whole team to win the point, hang the flag, and so on.
+6. **More modes.** Capture the flag, an attack/defend variant, and so on (rounds are already in).
 7. **Bots.** A grid over the field, A* pathfinding between bunkers, and aim with a reaction delay and some error.
 
 ## Deploying
 
 - **Client:** `npm run build` produces static files in `dist/`. Any static host works. Set `VITE_SERVER_URL=wss://your-server.example.com` at build time.
 - **Server:** it's a long-running process, so it needs a VPS or an app platform that runs containers, not shared web hosting.
-  Put it behind TLS (`wss://`) so HTTPS pages can connect. `PORT` sets the port.
+  Put it behind TLS (`wss://`) so HTTPS pages can connect.
+- **Server settings** (environment variables): `PORT` (default 8787), `POINTS_TO_WIN` (5), `ROUND_SECONDS` (120),
+  `COUNTDOWN_SECONDS` (3), `POINT_PAUSE_SECONDS` (3), `MATCH_OVER_SECONDS` (6).

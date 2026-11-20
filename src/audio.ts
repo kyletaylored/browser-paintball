@@ -9,7 +9,8 @@
 
 import * as THREE from 'three';
 
-export type SoundName = 'shot' | 'splat' | 'hit' | 'confirm' | 'out' | 'step' | 'reload' | 'reloadDone' | 'dry';
+export type SoundName =
+  | 'shot' | 'splat' | 'hit' | 'confirm' | 'out' | 'step' | 'reload' | 'reloadDone' | 'dry' | 'beep' | 'go' | 'horn';
 
 interface PlayOpts {
   /** 0..1+, multiplied with the master volume */
@@ -254,7 +255,30 @@ function buildSounds(ctx: BaseAudioContext): Record<SoundName, AudioBuffer> {
 
     // trigger pulled with nothing to fire
     dry: make(0.06, (d, sr) => addClicks(d, sr, [[0, 1]])),
+
+    // countdown: three short beeps, then a longer higher one
+    beep: make(0.16, (d, sr) => tone(d, sr, 880, 0.12)),
+    go: make(0.5, (d, sr) => tone(d, sr, 1320, 0.42)),
+
+    // point over: a buzzy two-note horn
+    horn: make(0.9, (d, sr) => {
+      for (let i = 0; i < d.length; i++) {
+        const t = i / sr;
+        const env = Math.min(1, t / 0.02) * Math.min(1, (0.85 - t) / 0.15);
+        let s = 0;
+        for (const f of [220, 277.2]) for (let h = 1; h <= 5; h++) s += Math.sin(TAU * f * h * t) / h;
+        d[i] = s * Math.max(0, env);
+      }
+    }),
   };
+}
+
+function tone(d: Float32Array, sr: number, f: number, len: number): void {
+  for (let i = 0; i < d.length; i++) {
+    const t = i / sr;
+    const env = Math.min(1, t / 0.005) * Math.max(0, Math.min(1, (len - t) / 0.03));
+    d[i] = (Math.sin(TAU * f * t) + Math.sin(TAU * f * 2 * t) * 0.2) * env;
+  }
 }
 
 function addClicks(d: Float32Array, sr: number, clicks: [number, number][]): void {

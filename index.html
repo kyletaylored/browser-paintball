@@ -62,6 +62,14 @@
         position: absolute; left: 50%; top: 38%; translate: -50% -50%; text-align: center;
         font-size: 44px; font-weight: 900; letter-spacing: 0.04em; text-shadow: 0 3px 18px #000;
       }
+      #banner {
+        position: absolute; left: 50%; top: 30%; translate: -50% -50%; text-align: center; white-space: nowrap;
+        font-size: 64px; font-weight: 900; letter-spacing: 0.04em; text-shadow: 0 4px 24px rgba(0, 0, 0, 0.7);
+      }
+      #banner small { display: block; font-size: 18px; font-weight: 700; color: var(--dim); letter-spacing: 0.02em; }
+      #banner.r { color: var(--red); } #banner.b { color: var(--blue); }
+      #banner.count { font-size: 96px; color: var(--accent); }
+      #score .clock { font-size: 14px; color: var(--dim); font-variant-numeric: tabular-nums; }
       #out small { display: block; font-size: 16px; font-weight: 600; color: var(--dim); letter-spacing: 0; }
 
       #overlay {
@@ -98,6 +106,7 @@
       <div id="toast" class="chip"></div>
       <div id="flash"></div>
       <div id="out" hidden></div>
+      <div id="banner" hidden></div>
     </div>
 
     <div id="overlay">
@@ -115,6 +124,7 @@
           <li><b>WASD</b> move · <b>Shift</b> sprint</li>
           <li><b>Space</b> jump · <b>C</b> crouch</li>
           <li><b>R</b> reload · <b>Esc</b> release mouse</li>
+          <li>Eliminate the whole other team to win the point</li>
         </ul>
       </div>
     </div>
