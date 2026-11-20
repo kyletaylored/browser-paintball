@@ -2,6 +2,7 @@
 // drawn slightly in the past, smoothly interpolated, instead of jumping 20 times a second.
 
 import type { ClientMsg, ServerMsg, PlayerSnap, RosterEntry, RoundState, Spawn, Team } from '../shared/protocol';
+import { decodeServer, encodeInput } from '../shared/codec';
 
 export interface RemotePlayer {
   id: number;
@@ -53,8 +54,14 @@ export class Net {
     return this.roster.get(id)?.name ?? `Player ${id}`;
   }
 
+  /** bytes received so far (for the dev stats) */
+  bytesIn = 0;
+  bytesOut = 0;
+
   send(m: ClientMsg): void {
-    const data = JSON.stringify(m);
+    // input frames go 60 times a second: binary; the rest is rare, so JSON
+    const data = m.t === 'input' ? encodeInput(m.i) : JSON.stringify(m);
+    this.bytesOut += typeof data === 'string' ? data.length : data.byteLength;
     if (FAKE_LAG_MS) {
       const ws = this.ws;
       setTimeout(() => ws?.readyState === WebSocket.OPEN && ws.send(data), FAKE_LAG_MS / 2);
@@ -71,11 +78,17 @@ export class Net {
       return;
     }
     this.ws = ws;
+    ws.binaryType = 'arraybuffer';
     ws.onmessage = (e) => {
-      if (typeof e.data !== 'string') return;
       let m: ServerMsg;
       try {
-        m = JSON.parse(e.data);
+        if (typeof e.data === 'string') {
+          this.bytesIn += e.data.length;
+          m = JSON.parse(e.data);
+        } else {
+          this.bytesIn += (e.data as ArrayBuffer).byteLength;
+          m = decodeServer(e.data as ArrayBuffer);
+        }
       } catch {
         return;
       }

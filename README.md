@@ -26,7 +26,7 @@ Pick a name on the start screen; it shows over your head, in the kill feed and o
   A friend who joins takes a bot's place.
 - **No server running?** The game falls back to offline practice with three strafing dummies.
 - **Slow machine?** Add `?low` to the URL to turn off shadows, bloom and anti-aliasing.
-- **Check the server works:** `npm run test:server` starts its own servers, plays a point between two fake players,
+- **Check the server works:** `npm test` runs the wire-format round-trip checks, then `npm run test:server`, which starts its own servers, plays a point between two fake players,
   checks lag compensation with a fake 150 ms player, then checks that bots fill the teams, move, shoot and finish a point.
 
 | Controls | |
@@ -43,12 +43,14 @@ Pick a name on the start screen; it shows over your head, in the kill feed and o
 ```
 shared/       code BOTH sides run, so they agree
   protocol.ts   every network message, typed
+  codec.ts      compact binary encoding for snapshots, acks, paintballs and input frames
   field.ts      bunker layout + spawn points
   sim.ts        movement, paintball flight, collision (no physics engine needed)
 server/
   index.ts      authoritative game server: simulates paintballs, decides hits, runs the match, sends snapshots
   bots.ts       server-side bots: navigation grid + A*, cover spots, aim with reaction delay and error
   smoke-test.ts headless end-to-end checks (starts its own servers)
+  codec-test.ts round-trip checks for the binary wire format
 src/          the browser game
   main.ts       game loop (fixed 120 Hz physics step), shooting, wiring
   render.ts     WebGLRenderer + postprocessing (bloom, vignette, tone mapping, SMAA)
@@ -69,6 +71,10 @@ src/          the browser game
   disagrees (`src/prediction.ts`).
 - **Paintballs:** your browser draws them the instant you click. The server *also* flies them using the same `shared/sim.ts` code and is the only one that decides eliminations.
 - **Other players:** drawn 100 ms in the past, blended between the server's snapshots, so they move smoothly instead of jumping 20 times a second.
+- **On the wire:** the messages sent many times a second (snapshots, your position acks, paintballs, your input) are
+  packed into small binary frames (`shared/codec.ts`): positions to the centimetre, angles to a few thousandths of a
+  degree. In a 6-on-6 match that's about 5 KB/s down and 2 KB/s up per player, versus about 32 and 5.5 as JSON.
+  Everything else (joining, names, eliminations) stays JSON so it's easy to read in the browser's network tab.
 - **Lag compensation:** because of that, and your ping, you're aiming at where people *were*. The server keeps a second
   of everyone's positions and tests your paintballs against targets as they were on your screen (your ping + 100 ms
   ago, at most 300 ms), so a shot that hits on your screen hits on the server too.
@@ -84,8 +90,7 @@ Roughly in order of payoff:
 1. **Real art.** Model bunkers, a marker and a player in Blender and export `.glb`. Compress with
    [`gltf-transform`](https://gltf-transform.dev) (`gltf-transform optimize in.glb out.glb --compress meshopt`), then load with
    `GLTFLoader` + `MeshoptDecoder`. Animate the player with `AnimationMixer`.
-2. **Binary messages.** Pack snapshots into an `ArrayBuffer` with `DataView` instead of JSON (often 5–10× smaller).
-3. **More modes.** Capture the flag, an attack/defend variant, and so on (rounds are already in).
+2. **More modes.** Capture the flag, an attack/defend variant, and so on (rounds are already in).
 
 ## Deploying
 
@@ -95,4 +100,4 @@ Roughly in order of payoff:
 - **Server settings** (environment variables): `PORT` (default 8787), `POINTS_TO_WIN` (5), `ROUND_SECONDS` (120),
   `COUNTDOWN_SECONDS` (3), `POINT_PAUSE_SECONDS` (3), `MATCH_OVER_SECONDS` (6),
   `BOT_TEAM_SIZE` (3; fill each team to this many with bots, `0` turns bots off), `BOT_SKILL` (`easy`, `normal`, `hard`),
-  `LAG_COMPENSATION` (`0` turns it off), `MAX_REWIND_MS` (300).
+  `LAG_COMPENSATION` (`0` turns it off), `MAX_REWIND_MS` (300), `WIRE_FORMAT` (`json` to send everything as readable JSON).
