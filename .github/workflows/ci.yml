@@ -32,6 +32,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Wire format round-trip tests
+        run: npm run test:codec
+
       # starts its own game servers (one without bots, one with) on spare ports
       - name: Server smoke test
         run: npm run test:server

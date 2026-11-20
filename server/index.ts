@@ -18,6 +18,7 @@ import {
   RESPAWN_SECONDS, SERVER_TICK_HZ, SNAPSHOT_HZ, INPUT_DT, INTERP_DELAY, type Ball, type Body, type MoveInput,
 } from '../shared/sim';
 import { BotBrain, NavGrid, SKILLS, botName, type CoverSpot, type Seen } from './bots';
+import { decodeClient, encodeAck, encodeBall, encodeSnap } from '../shared/codec';
 import {
   DEFAULT_PORT, TEAM_NAMES, cleanName, INPUT_JUMP, INPUT_SPRINT, INPUT_CROUCH,
   type ClientMsg, type ServerMsg, type Team, type V3, type RoundPhase, type RoundState, type RosterEntry,
@@ -45,6 +46,8 @@ const LAG_COMPENSATION = process.env.LAG_COMPENSATION !== '0';
 const MAX_REWIND = envNum('MAX_REWIND_MS', 300) / 1000;
 /** how much position history to keep */
 const HISTORY_SECONDS = 1;
+/** WIRE_FORMAT=json sends snapshots, acks and balls as JSON instead of binary (for debugging / comparing) */
+const BINARY = process.env.WIRE_FORMAT !== 'json';
 
 interface Player {
   /** null for bots */
@@ -107,11 +110,11 @@ const newBody = (x: number, y: number, z: number): Body => ({ x, y, z, vx: 0, vy
 const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 const isV3 = (v: unknown): v is V3 => Array.isArray(v) && v.length === 3 && v.every(finite);
 
-function send(ws: WebSocket | null, msg: ServerMsg) {
-  if (ws && ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
+function send(ws: WebSocket | null, msg: ServerMsg | Uint8Array) {
+  if (ws && ws.readyState === ws.OPEN) ws.send(msg instanceof Uint8Array ? msg : JSON.stringify(msg));
 }
-function broadcast(msg: ServerMsg, exceptId = -1) {
-  const data = JSON.stringify(msg);
+function broadcast(msg: ServerMsg | Uint8Array, exceptId = -1) {
+  const data = msg instanceof Uint8Array ? msg : JSON.stringify(msg);
   for (const p of players.values()) if (p.id !== exceptId && p.ws && p.ws.readyState === p.ws.OPEN) p.ws.send(data);
 }
 
@@ -158,12 +161,11 @@ wss.on('connection', (ws) => {
   sendRoster();
 
   ws.on('message', (data, isBinary) => {
-    if (isBinary) return;
     let msg: ClientMsg;
     try {
-      msg = JSON.parse(data.toString());
+      msg = isBinary ? decodeClient(data as Buffer) : JSON.parse(data.toString());
     } catch {
-      return;
+      return; // malformed: ignore
     }
     handle(p, msg);
   });
@@ -240,7 +242,8 @@ function spawnBall(p: Player, o: V3, dir: V3) {
     balls.push({ x: o[0], y: o[1], z: o[2], vx: v[0], vy: v[1], vz: v[2], age: 0, owner: p.id, team: p.team, rewind: rewindFor(p) });
   }
   // Everyone else draws the ball; a human shooter already drew it the moment they clicked.
-  broadcast({ t: 'ball', owner: p.id, team: p.team, o, v }, p.bot ? -1 : p.id);
+  const ball: ServerMsg = { t: 'ball', owner: p.id, team: p.team, o, v };
+  broadcast(BINARY ? encodeBall(ball) : ball, p.bot ? -1 : p.id);
 }
 
 // ---- lag compensation -----------------------------------------------------------------------
@@ -539,7 +542,7 @@ function roundState(): RoundState {
 
 function snapshot() {
   if (!players.size) return;
-  broadcast({
+  const snap: Extract<ServerMsg, { t: 'snap' }> = {
     t: 'snap',
     time: now(),
     score,
@@ -547,12 +550,14 @@ function snapshot() {
     players: [...players.values()].map((p) => ({
       id: p.id, team: p.team, x: p.x, y: p.y, z: p.z, yaw: p.yaw, pitch: p.pitch, c: p.crouch, alive: p.alive,
     })),
-  });
+  };
+  broadcast(BINARY ? encodeSnap(snap) : snap);
   // and tell each browser where the server has *them*, so it can correct its prediction
   for (const p of players.values()) {
     if (!p.ws) continue;
     const b = p.body;
-    send(p.ws, { t: 'ack', seq: p.lastSeq, b: [b.x, b.y, b.z, b.vx, b.vy, b.vz, b.height, b.onGround ? 1 : 0] });
+    const ack: Extract<ServerMsg, { t: 'ack' }> = { t: 'ack', seq: p.lastSeq, b: [b.x, b.y, b.z, b.vx, b.vy, b.vz, b.height, b.onGround ? 1 : 0] };
+    send(p.ws, BINARY ? encodeAck(ack) : ack);
   }
 }
 
@@ -570,5 +575,6 @@ setInterval(() => {
 }, 2000);
 
 console.log(`Splat Arena server on ws://localhost:${PORT}`);
+console.log(`  wire format: ${BINARY ? 'binary' : 'json'}`);
 console.log(`  lag compensation: ${LAG_COMPENSATION ? `on, up to ${MAX_REWIND * 1000} ms` : 'off'}`);
 console.log(`  bots: ${BOT_TEAM_SIZE ? `fill teams to ${BOT_TEAM_SIZE}, ${process.env.BOT_SKILL ?? 'normal'} skill` : 'off'}`);

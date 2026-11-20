@@ -1,8 +1,8 @@
 // Messages between the browser and the game server. Both sides import this file,
 // so a change here shows up as a type error on whichever side you forgot to update.
 //
-// Everything is JSON for readability. Packing per-tick traffic as binary
-// (ArrayBuffer + DataView) is a good optimisation once this works.
+// The high-frequency messages (snapshots, acks, paintballs, input frames) travel as compact binary
+// frames, see shared/codec.ts; everything else is JSON. Both decode to these same shapes.
 
 export type Team = 0 | 1;
 export type V3 = [number, number, number];

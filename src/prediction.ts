@@ -10,6 +10,7 @@
 
 import { stepMovement, INPUT_DT, type Body, type MoveInput } from '../shared/sim';
 import { INPUT_CROUCH, INPUT_JUMP, INPUT_SPRINT, type BodyState, type InputFrame } from '../shared/protocol';
+import { quantizeInput } from '../shared/codec';
 
 /** corrections bigger than this snap instead of smoothing (respawns, being frozen) */
 const SNAP_DISTANCE = 1.5;
@@ -21,8 +22,16 @@ export class Prediction {
   /** how far the last correction moved you, for stats/debugging */
   lastError = 0;
 
-  /** call once per fixed step, with the input you're about to apply locally */
+  /**
+   * Call once per fixed step, with the input you're about to apply locally. Rounds `move` in place
+   * to what the binary wire format carries, so the local step and the server's replay of it match.
+   */
   record(move: MoveInput, pitch: number): void {
+    const q = quantizeInput(move.forward, move.right, move.yaw, pitch);
+    move.forward = q.forward;
+    move.right = q.right;
+    move.yaw = q.yaw;
+    pitch = q.pitch;
     const seq = ++this.seq;
     this.pending.push({ seq, move: { ...move } });
     if (this.pending.length > 600) this.pending.shift(); // 5 s without an ack: something's very wrong; don't grow forever

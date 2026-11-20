@@ -14,6 +14,7 @@
 import WebSocket from 'ws';
 import { spawn, type ChildProcess } from 'node:child_process';
 import { cleanName, type ClientMsg, type ServerMsg, type Team, type InputFrame } from '../shared/protocol';
+import { decodeServer, encodeInput, quantizeInput } from '../shared/codec';
 import { EYE_FROM_TOP, INPUT_DT, STAND_HEIGHT, stepMovement, type Body, type MoveInput } from '../shared/sim';
 
 type Snap = Extract<ServerMsg, { t: 'snap' }>;
@@ -61,15 +62,16 @@ function join(url: string, lagMs = 0): Promise<Client> {
         });
       }
     };
-    ws.on('message', (data) => {
-      const m = JSON.parse(data.toString()) as ServerMsg;
+    ws.on('message', (data, isBinary) => {
+      // snapshots, acks and balls arrive as binary frames, the rest as JSON, just like in the browser
+      const m = isBinary ? decodeServer(data as Buffer) : (JSON.parse(data.toString()) as ServerMsg);
       if (lagMs) setTimeout(() => handle(m), lagMs / 2);
       else handle(m);
     });
   });
 }
 function send(ws: WebSocket, m: ClientMsg) {
-  const data = JSON.stringify(m);
+  const data = m.t === 'input' ? encodeInput(m.i) : JSON.stringify(m);
   const lag = lagOf.get(ws) ?? 0;
   if (lag) setTimeout(() => ws.readyState === ws.OPEN && ws.send(data), lag / 2);
   else ws.send(data);
@@ -116,11 +118,14 @@ async function walkTo(c: Client, x: number, z: number, sprint = false): Promise<
       const s = Math.sin(c.yaw);
       const co = Math.cos(c.yaw);
       const go = d > 0.12 ? Math.min(1, d / 0.6) : 0;
-      move.forward = go ? ((dx * -s + dz * -co) / d) * go : 0;
-      move.right = go ? ((dx * co + dz * -s) / d) * go : 0;
+      // round to what the wire carries before predicting, exactly like the browser does
+      const q = quantizeInput(go ? ((dx * -s + dz * -co) / d) * go : 0, go ? ((dx * co + dz * -s) / d) * go : 0, c.yaw, 0);
+      move.forward = q.forward;
+      move.right = q.right;
+      move.yaw = q.yaw;
       if (!go) settle++;
       stepMovement(c.body, move, INPUT_DT);
-      batch.push([++c.seq, move.forward, move.right, sprint ? 2 : 0, c.yaw, 0]);
+      batch.push([++c.seq, move.forward, move.right, sprint ? 2 : 0, move.yaw, 0]);
     }
     send(c.ws, { t: 'input', i: batch });
     await wait(INPUT_DT * 4 * 1000);
