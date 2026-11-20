@@ -90,7 +90,8 @@ export type ServerMsg =
   /** score is points won this match */
   | { t: 'snap'; time: number; players: PlayerSnap[]; score: [number, number]; round: RoundState }
   | { t: 'ball'; owner: number; team: Team; o: V3; v: V3 }
-  | { t: 'hit'; victim: number; shooter: number; team: Team; p: V3 }
+  /** tp: where the victim's hitbox was tested [x, y, z, height] (after lag compensation) */
+  | { t: 'hit'; victim: number; shooter: number; team: Team; p: V3; tp: [number, number, number, number] }
   | { t: 'respawn'; spawn: Spawn }
   | { t: 'leave'; id: number }
   /** names and stats; sent when they change and every couple of seconds (for ping) */

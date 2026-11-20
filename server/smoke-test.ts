@@ -3,7 +3,10 @@
 //
 //  1. Rules (bots off): two fake players join, the countdown runs, Red shoots Blue, the server
 //     reports the hit, Red wins the point, the next point starts; names get cleaned; stats count.
-//  2. Bots: one fake player joins, bots fill both teams, move off their start box and play the
+//  2. Lag compensation: a shooter with 150 ms of round trip shoots a target walking across in
+//     front of them, aiming where their (interpolated, delayed) view shows it. With compensation it
+//     hits; with LAG_COMPENSATION=0 the same shot misses.
+//  3. Bots: one fake player joins, bots fill both teams, move off their start box and play the
 //     point out; a second player takes a bot's place.
 //
 // Set SERVER_URL to run only the rules check against a server you started yourself (bots off).
@@ -25,6 +28,8 @@ interface Client {
   body: Body;
   yaw: number;
   seq: number;
+  /** snapshots with the (local) time they arrived, for drawing others like a browser does */
+  snaps: { at: number; m: Snap }[];
 }
 type Ack = Extract<ServerMsg, { t: 'ack' }>;
 
@@ -34,26 +39,55 @@ const check = (name: string, ok: boolean) => {
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}`);
 };
 
-function join(url: string): Promise<Client> {
+/** fake round-trip latency per socket (half each way), like the browser's ?lag= */
+const lagOf = new WeakMap<WebSocket, number>();
+
+function join(url: string, lagMs = 0): Promise<Client> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url);
+    lagOf.set(ws, lagMs);
     const inbox: ServerMsg[] = [];
+    const snaps: { at: number; m: Snap }[] = [];
     ws.on('error', reject);
-    ws.on('message', (data) => {
-      const m = JSON.parse(data.toString()) as ServerMsg;
+    const handle = (m: ServerMsg) => {
       inbox.push(m);
-      if (m.t === 'ping') ws.send(JSON.stringify({ t: 'pong', s: m.s }));
+      if (m.t === 'snap') snaps.push({ at: performance.now(), m });
+      if (m.t === 'ping') send(ws, { t: 'pong', s: m.s });
       if (m.t === 'welcome') {
         const sp = m.spawn;
         resolve({
-          ws, id: m.id, team: m.team, inbox, yaw: sp.yaw, seq: 0,
+          ws, id: m.id, team: m.team, inbox, snaps, yaw: sp.yaw, seq: 0,
           body: { x: sp.x, y: sp.y, z: sp.z, vx: 0, vy: 0, vz: 0, height: STAND_HEIGHT, onGround: true },
         });
       }
+    };
+    ws.on('message', (data) => {
+      const m = JSON.parse(data.toString()) as ServerMsg;
+      if (lagMs) setTimeout(() => handle(m), lagMs / 2);
+      else handle(m);
     });
   });
 }
-const send = (ws: WebSocket, m: ClientMsg) => ws.send(JSON.stringify(m));
+function send(ws: WebSocket, m: ClientMsg) {
+  const data = JSON.stringify(m);
+  const lag = lagOf.get(ws) ?? 0;
+  if (lag) setTimeout(() => ws.readyState === ws.OPEN && ws.send(data), lag / 2);
+  else ws.send(data);
+}
+
+/** where `c` sees player `id` at local time `at`: blended between snapshots, exactly like the browser */
+function viewOf(c: Client, id: number, at: number): { x: number; z: number } | null {
+  const s = c.snaps;
+  for (let i = s.length - 1; i > 0; i--) {
+    if (s[i - 1].at > at) continue;
+    const a = s[i - 1].m.players.find((p) => p.id === id);
+    const b = s[i].m.players.find((p) => p.id === id);
+    if (!a || !b) return null;
+    const k = Math.min(1, (at - s[i - 1].at) / (s[i].at - s[i - 1].at));
+    return { x: a.x + (b.x - a.x) * k, z: a.z + (b.z - a.z) * k };
+  }
+  return null;
+}
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function waitFor<T extends ServerMsg>(
   inbox: ServerMsg[], pred: (m: ServerMsg) => m is T, ms: number, from = 0,
@@ -190,6 +224,54 @@ async function rulesTest(url: string) {
   check('server sent a latency probe', target.inbox.some((m) => m.t === 'ping'));
 }
 
+// ---- 2. lag compensation -------------------------------------------------------------------
+
+async function lagTest(url: string, compensated: boolean) {
+  console.log(`-- 150 ms shooter vs a moving target, lag compensation ${compensated ? 'on' : 'off'}`);
+  const shooter = await join(url, 150);
+  const target = await join(url);
+  if (shooter.team === target.team) throw new Error('expected opposite teams');
+  await waitFor(shooter.inbox, snapWhere((m) => m.round.phase === 'live'), 8000);
+  // shooter steps out beside their start; target runs over and lines up to cross in front of them
+  await Promise.all([
+    walkTo(shooter, -15, -1.5),
+    (async () => {
+      await walkTo(target, -10.5, -2.5, true);
+      await walkTo(target, -10.5, -7);
+    })(),
+  ]);
+  // make sure the server has measured the shooter's ping
+  await waitFor(shooter.inbox, rosterWhere((m) => (m.players.find((p) => p.id === shooter.id)?.ping ?? 0) > 120), 5000);
+
+  const crossing = walkTo(target, -10.5, 8); // 15 m at walking pace, straight across the shooter's view
+  let fired = false;
+  const end = performance.now() + 6000;
+  while (!fired && performance.now() < end) {
+    await wait(5);
+    const at = performance.now() - 100; // INTERP_DELAY: what the shooter's screen shows right now
+    const v = viewOf(shooter, target.id, at);
+    const v0 = viewOf(shooter, target.id, at - 50);
+    if (!v || !v0 || v.z < -1.2) continue;
+    // aim at the chest, leading by the ball's flight time like a player would
+    const eyeY = shooter.body.y + shooter.body.height - EYE_FROM_TOP;
+    const dist = Math.hypot(v.x - shooter.body.x, v.z - shooter.body.z);
+    const flight = dist / 85;
+    const vz = (v.z - v0.z) / 0.05;
+    const aim = [v.x - shooter.body.x, 1.2 - eyeY, v.z + vz * flight - shooter.body.z];
+    const len = Math.hypot(aim[0], aim[1], aim[2]);
+    const dir: [number, number, number] = [aim[0] / len, aim[1] / len, aim[2] / len];
+    send(shooter.ws, { t: 'fire', o: [shooter.body.x + dir[0] * 0.35, eyeY + dir[1] * 0.35, shooter.body.z + dir[2] * 0.35], d: dir });
+    fired = true;
+  }
+  const hit = await waitFor(shooter.inbox, (m): m is Hit => m.t === 'hit' && m.victim === target.id, 1500);
+  await crossing;
+  shooter.ws.close();
+  target.ws.close();
+  if (!fired) check('shooter got a shot off', false);
+  else if (compensated) check('the shot that hits on the lagged screen hits on the server', hit !== null);
+  else check('without compensation the same shot misses (so the test means something)', hit === null);
+}
+
 // ---- 1b. speed hack ------------------------------------------------------------------------
 
 async function speedTest(url: string) {
@@ -278,6 +360,14 @@ try {
       await speedTest(speed.url);
     } finally {
       speed.stop();
+    }
+    for (const compensated of [true, false]) {
+      const lag = await startServer({ BOT_TEAM_SIZE: '0', LAG_COMPENSATION: compensated ? '1' : '0' });
+      try {
+        await lagTest(lag.url, compensated);
+      } finally {
+        lag.stop();
+      }
     }
     const bots = await startServer({ BOT_TEAM_SIZE: '2', BOT_SKILL: 'hard' });
     try {

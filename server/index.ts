@@ -7,13 +7,15 @@
 //  - It sends everyone a snapshot 20 times a second; clients interpolate between them.
 //  - It runs the match: countdown, live point, point won, match over (see RoundPhase in shared/protocol.ts).
 //  - It fills empty slots with bots (server/bots.ts) so there's always someone to play against.
+//  - Lag compensation: a human's paintballs are tested against where targets were on that shooter's
+//    screen (their ping + the interpolation delay ago), using a short history of everyone's positions.
 
 import { WebSocketServer, type WebSocket } from 'ws';
 import { spawnPoint } from '../shared/field';
 import {
   advanceBall, traceWorld, segmentHitsCapsule, isOutOfBounds, stepMovement,
   BALL_SPEED, BALL_LIFETIME, FIRE_INTERVAL, STAND_HEIGHT, CROUCH_HEIGHT, EYE_FROM_TOP,
-  RESPAWN_SECONDS, SERVER_TICK_HZ, SNAPSHOT_HZ, INPUT_DT, type Ball, type Body, type MoveInput,
+  RESPAWN_SECONDS, SERVER_TICK_HZ, SNAPSHOT_HZ, INPUT_DT, INTERP_DELAY, type Ball, type Body, type MoveInput,
 } from '../shared/sim';
 import { BotBrain, NavGrid, SKILLS, botName, type CoverSpot, type Seen } from './bots';
 import {
@@ -37,6 +39,12 @@ const MATCH_OVER_SECONDS = envNum('MATCH_OVER_SECONDS', 6);
 /** while anyone is connected, fill each team up to this many players with bots (0 turns bots off) */
 const BOT_TEAM_SIZE = Math.max(0, Math.min(6, Math.floor(Number(process.env.BOT_TEAM_SIZE ?? 3) || 0)));
 const BOT_SKILL = SKILLS[process.env.BOT_SKILL ?? 'normal'] ?? SKILLS.normal;
+/** LAG_COMPENSATION=0 turns it off (for comparison) */
+const LAG_COMPENSATION = process.env.LAG_COMPENSATION !== '0';
+/** never rewind further than this: past it, high-ping players would hit people who are long behind cover */
+const MAX_REWIND = envNum('MAX_REWIND_MS', 300) / 1000;
+/** how much position history to keep */
+const HISTORY_SECONDS = 1;
 
 interface Player {
   /** null for bots */
@@ -48,6 +56,8 @@ interface Player {
   lastSeq: number;
   /** seconds of input we'll still accept; refills in real time, so nobody can move faster than the clock */
   budget: number;
+  /** where this player was over the last second (for lag compensation), oldest first */
+  history: Pose[];
   id: number;
   team: Team;
   slot: number;
@@ -71,8 +81,20 @@ interface Player {
   ping: number;
 }
 
+interface Pose {
+  t: number;
+  x: number;
+  y: number;
+  z: number;
+  height: number;
+  alive: boolean;
+}
+
+/** a paintball plus how far back in time to test it against targets */
+type ServerBall = Ball & { rewind: number };
+
 const players = new Map<number, Player>();
-const balls: Ball[] = [];
+const balls: ServerBall[] = [];
 const score: [number, number] = [0, 0];
 let nextId = 1;
 
@@ -124,7 +146,7 @@ wss.on('connection', (ws) => {
   // joining while a point is being played: sit out until the next one
   const alive = match.phase !== 'live';
   const p: Player = {
-    ws, bot: null, body: newBody(sp.x, sp.y, sp.z), lastSeq: -1, budget: 0.1, id, team, slot, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw, pitch: 0,
+    ws, bot: null, body: newBody(sp.x, sp.y, sp.z), lastSeq: -1, budget: 0.1, history: [], id, team, slot, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw, pitch: 0,
     crouch: false, alive, outUntil: alive ? 0 : Infinity, lastFire: 0,
     name: `Player ${id}`, wantName: `Player ${id}`, lastRename: -Infinity, k: 0, d: 0, ping: 0,
   };
@@ -215,10 +237,50 @@ function applyInput(p: Player, f: unknown) {
 function spawnBall(p: Player, o: V3, dir: V3) {
   const v: V3 = [dir[0] * BALL_SPEED, dir[1] * BALL_SPEED, dir[2] * BALL_SPEED];
   if (balls.length < MAX_BALLS) {
-    balls.push({ x: o[0], y: o[1], z: o[2], vx: v[0], vy: v[1], vz: v[2], age: 0, owner: p.id, team: p.team });
+    balls.push({ x: o[0], y: o[1], z: o[2], vx: v[0], vy: v[1], vz: v[2], age: 0, owner: p.id, team: p.team, rewind: rewindFor(p) });
   }
   // Everyone else draws the ball; a human shooter already drew it the moment they clicked.
   broadcast({ t: 'ball', owner: p.id, team: p.team, o, v }, p.bot ? -1 : p.id);
+}
+
+// ---- lag compensation -----------------------------------------------------------------------
+//
+// A human aims at other players as their browser draws them: one snapshot trip old (half the round
+// trip) plus INTERP_DELAY of blending, and their shot reaches us another half trip later. So while
+// one of their balls flies, we test it against targets as they were (round trip + INTERP_DELAY) ago.
+// Bots see the live server state, so their balls aren't rewound.
+
+function rewindFor(p: Player): number {
+  if (!LAG_COMPENSATION || p.bot || !p.ping) return 0;
+  return Math.min(MAX_REWIND, p.ping / 1000 + INTERP_DELAY);
+}
+
+function recordHistory(t: number) {
+  for (const p of players.values()) {
+    const h = p.history;
+    h.push({ t, x: p.x, y: p.y, z: p.z, height: p.crouch ? CROUCH_HEIGHT : STAND_HEIGHT, alive: p.alive });
+    while (h.length && h[0].t < t - HISTORY_SECONDS) h.shift();
+  }
+}
+
+const livePose: Pose = { t: 0, x: 0, y: 0, z: 0, height: 0, alive: false };
+/** where `p` was at time `t`, blended between the recorded ticks around it */
+function poseAt(p: Player, t: number): Pose {
+  const h = p.history;
+  if (!h.length || t >= h[h.length - 1].t) {
+    return Object.assign(livePose, { t, x: p.x, y: p.y, z: p.z, height: p.crouch ? CROUCH_HEIGHT : STAND_HEIGHT, alive: p.alive });
+  }
+  if (t <= h[0].t) return h[0];
+  let i = h.length - 1;
+  while (i > 0 && h[i - 1].t > t) i--;
+  const a = h[i - 1];
+  const b = h[i];
+  const k = (t - a.t) / (b.t - a.t);
+  if (Math.hypot(b.x - a.x, b.z - a.z) > 3) return k < 0.5 ? a : b; // a respawn in between: don't blend across the field
+  return {
+    t, x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k, z: a.z + (b.z - a.z) * k,
+    height: k < 0.5 ? a.height : b.height, alive: a.alive && b.alive,
+  };
 }
 
 // ---- bots ---------------------------------------------------------------------------------
@@ -236,7 +298,7 @@ function addBot(team: Team) {
   brain.reset(sp.yaw);
   const alive = match.phase !== 'live';
   players.set(id, {
-    ws: null, bot: { brain }, body: newBody(sp.x, sp.y, sp.z), lastSeq: -1, budget: 0, id, team, slot, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw, pitch: 0,
+    ws: null, bot: { brain }, body: newBody(sp.x, sp.y, sp.z), lastSeq: -1, budget: 0, history: [], id, team, slot, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw, pitch: 0,
     crouch: false, alive, outUntil: alive ? 0 : Infinity, lastFire: 0,
     name, wantName: name, lastRename: 0, k: 0, d: 0, ping: 0,
   });
@@ -297,6 +359,7 @@ function updateBots(dt: number) {
 function tick(dt: number) {
   for (const p of players.values()) if (!p.bot) p.budget = Math.min(MAX_INPUT_BACKLOG, p.budget + dt);
   updateBots(dt);
+  recordHistory(now());
   for (let i = balls.length - 1; i >= 0; i--) {
     const b = balls[i];
     const x0 = b.x;
@@ -306,12 +369,18 @@ function tick(dt: number) {
     const world = traceWorld(x0, y0, z0, b.x, b.y, b.z);
     let bestT = world ? world.t : Infinity;
     let victim: Player | null = null;
+    let victimPose: Pose | null = null;
+    const tNow = now();
     for (const p of players.values()) {
-      if (!p.alive || p.team === b.team) continue; // no friendly fire
-      const s = segmentHitsCapsule(x0, y0, z0, b.x, b.y, b.z, p.x, p.y, p.z, p.crouch ? CROUCH_HEIGHT : STAND_HEIGHT);
+      if (!p.alive || p.team === b.team) continue; // no friendly fire; already out can't be hit again
+      // where this target was on the shooter's screen (just "now" for bots and with compensation off)
+      const pose = b.rewind ? poseAt(p, tNow - b.rewind) : poseAt(p, Infinity);
+      if (!pose.alive) continue;
+      const s = segmentHitsCapsule(x0, y0, z0, b.x, b.y, b.z, pose.x, pose.y, pose.z, pose.height);
       if (s !== null && s < bestT) {
         bestT = s;
         victim = p;
+        victimPose = { ...pose };
       }
     }
     // paint whizzing past makes bots duck
@@ -321,7 +390,7 @@ function tick(dt: number) {
     }
     if (victim) {
       const hp: V3 = [x0 + (b.x - x0) * bestT, y0 + (b.y - y0) * bestT, z0 + (b.z - z0) * bestT];
-      eliminate(victim, b, hp);
+      eliminate(victim, b, hp, victimPose!);
       balls.splice(i, 1);
     } else if (world || b.age > BALL_LIFETIME || isOutOfBounds(b.x, b.y, b.z)) {
       balls.splice(i, 1);
@@ -354,11 +423,11 @@ function respawn(p: Player) {
   send(p.ws, { t: 'respawn', spawn: sp });
 }
 
-function eliminate(victim: Player, ball: Ball, p: V3) {
+function eliminate(victim: Player, ball: Ball, p: V3, pose: Pose) {
   victim.alive = false;
   // during warm-up you come back after a few seconds; during a point you're out until it ends
   victim.outUntil = match.phase === 'waiting' ? now() + RESPAWN_SECONDS : Infinity;
-  broadcast({ t: 'hit', victim: victim.id, shooter: ball.owner, team: ball.team as Team, p });
+  broadcast({ t: 'hit', victim: victim.id, shooter: ball.owner, team: ball.team as Team, p, tp: [pose.x, pose.y, pose.z, pose.height] });
   if (match.phase !== 'waiting') {
     victim.d++;
     const shooter = players.get(ball.owner);
@@ -501,4 +570,5 @@ setInterval(() => {
 }, 2000);
 
 console.log(`Splat Arena server on ws://localhost:${PORT}`);
+console.log(`  lag compensation: ${LAG_COMPENSATION ? `on, up to ${MAX_REWIND * 1000} ms` : 'off'}`);
 console.log(`  bots: ${BOT_TEAM_SIZE ? `fill teams to ${BOT_TEAM_SIZE}, ${process.env.BOT_SKILL ?? 'normal'} skill` : 'off'}`);

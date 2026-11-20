@@ -33,6 +33,11 @@ export const SNAPSHOT_HZ = 20;
 export const CLIENT_SEND_HZ = 60;
 /** length of one movement step; the browser predicts and the server replays in steps of exactly this */
 export const INPUT_DT = 1 / 120;
+/**
+ * Browsers draw other players this far in the past (seconds), blending between snapshots. The server
+ * uses the same number when it rewinds targets for lag compensation, so the two must agree.
+ */
+export const INTERP_DELAY = 0.1;
 
 const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
 const clamp01 = (v: number) => clamp(v, 0, 1);

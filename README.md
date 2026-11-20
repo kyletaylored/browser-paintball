@@ -27,7 +27,7 @@ Pick a name on the start screen; it shows over your head, in the kill feed and o
 - **No server running?** The game falls back to offline practice with three strafing dummies.
 - **Slow machine?** Add `?low` to the URL to turn off shadows, bloom and anti-aliasing.
 - **Check the server works:** `npm run test:server` starts its own servers, plays a point between two fake players,
-  then checks that bots fill the teams, move, shoot and finish a point.
+  checks lag compensation with a fake 150 ms player, then checks that bots fill the teams, move, shoot and finish a point.
 
 | Controls | |
 |---|---|
@@ -69,9 +69,13 @@ src/          the browser game
   disagrees (`src/prediction.ts`).
 - **Paintballs:** your browser draws them the instant you click. The server *also* flies them using the same `shared/sim.ts` code and is the only one that decides eliminations.
 - **Other players:** drawn 100 ms in the past, blended between the server's snapshots, so they move smoothly instead of jumping 20 times a second.
+- **Lag compensation:** because of that, and your ping, you're aiming at where people *were*. The server keeps a second
+  of everyone's positions and tests your paintballs against targets as they were on your screen (your ping + 100 ms
+  ago, at most 300 ms), so a shot that hits on your screen hits on the server too.
 
 In development, `window.__game` in the browser console exposes the player, network, scene and so on, and adding
-`?lag=150` to the URL fakes 150 ms of network latency so you can see how prediction copes.
+`?lag=150` to the URL fakes 150 ms of network latency so you can see how prediction copes. `?hitboxes` outlines where
+the server tested each hit (after rewinding for lag).
 
 ## Where to take it next
 
@@ -80,10 +84,8 @@ Roughly in order of payoff:
 1. **Real art.** Model bunkers, a marker and a player in Blender and export `.glb`. Compress with
    [`gltf-transform`](https://gltf-transform.dev) (`gltf-transform optimize in.glb out.glb --compress meshopt`), then load with
    `GLTFLoader` + `MeshoptDecoder`. Animate the player with `AnimationMixer`.
-2. **Lag compensation.** Keep a short history of player positions on the server and test hits against where the target was
-   when the shooter fired.
-3. **Binary messages.** Pack snapshots into an `ArrayBuffer` with `DataView` instead of JSON (often 5–10× smaller).
-4. **More modes.** Capture the flag, an attack/defend variant, and so on (rounds are already in).
+2. **Binary messages.** Pack snapshots into an `ArrayBuffer` with `DataView` instead of JSON (often 5–10× smaller).
+3. **More modes.** Capture the flag, an attack/defend variant, and so on (rounds are already in).
 
 ## Deploying
 
@@ -92,4 +94,5 @@ Roughly in order of payoff:
   Put it behind TLS (`wss://`) so HTTPS pages can connect.
 - **Server settings** (environment variables): `PORT` (default 8787), `POINTS_TO_WIN` (5), `ROUND_SECONDS` (120),
   `COUNTDOWN_SECONDS` (3), `POINT_PAUSE_SECONDS` (3), `MATCH_OVER_SECONDS` (6),
-  `BOT_TEAM_SIZE` (3; fill each team to this many with bots, `0` turns bots off), `BOT_SKILL` (`easy`, `normal`, `hard`).
+  `BOT_TEAM_SIZE` (3; fill each team to this many with bots, `0` turns bots off), `BOT_SKILL` (`easy`, `normal`, `hard`),
+  `LAG_COMPENSATION` (`0` turns it off), `MAX_REWIND_MS` (300).
