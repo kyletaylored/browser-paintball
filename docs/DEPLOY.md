@@ -33,6 +33,29 @@ To put it online:
 4. Point the platform's health check at `GET /healthz`. It returns `{"ok":true,"players":…,"bots":…,"phase":…,"uptime":…}`.
    The image also has a container `HEALTHCHECK` built in.
 
+### On Fly.io
+
+The live game runs this way: `fly.toml` in the repo root deploys the same image to one Fly machine.
+
+```sh
+fly auth login
+fly apps create <app-name>      # once; then set app (and ALLOWED_ORIGINS) in fly.toml to match
+fly deploy --ha=false           # --ha=false: one machine; two would split players into separate rooms
+fly status                      # machine state and health check
+fly logs                        # server log lines
+```
+
+- **TLS and WebSockets:** Fly's proxy gives you `https://<app-name>.fly.dev` and passes WebSocket upgrades through.
+  The shared IPv4 address is enough; a dedicated one isn't needed.
+- **Idle stop:** `auto_stop_machines = "stop"` stops the machine when nobody is connected and starts it again on the
+  next visit, so an unused game costs almost nothing. The first page load after idle takes a few seconds. An open game
+  connection counts as in use, so a match is never stopped halfway.
+- **Health:** Fly polls `GET /healthz` every 30 s.
+- **Deploys:** Fly stops the old machine with `SIGTERM`, which ends the current match (see "Restarts and deploys").
+- **More regions:** each machine is its own 12-player room, and Fly sends each player to the nearest running machine.
+  `fly scale count 1 --region <code>` adds one machine in another region. Keep one machine per region until the server
+  supports several rooms: a full server turns new players away ("server full") instead of sending them elsewhere.
+
 ## Option B: website on a static host, server elsewhere
 
 1. Build the website with the server's public address baked in:
