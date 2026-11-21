@@ -28,8 +28,12 @@ Pick a name on the start screen; it shows over your head, in the kill feed and o
 - **Playing alone?** The server fills both teams with bots (3 a side by default), so you can play a match on your own.
   A friend who joins takes a bot's place.
 - **No server running?** The game falls back to offline practice with three strafing dummies.
-- **Slow machine?** Add `?low` to the URL to turn off shadows, bloom and anti-aliasing.
-- **Check the server works:** `npm test` runs the wire-format round-trip checks, then `npm run test:server`, which starts its own servers, plays a point between two fake players,
+- **Slow machine?** Add `?low` to the URL to turn off shadows, bloom and anti-aliasing. Phones and tablets start
+  that way; add `?high` to turn it back on.
+- **Controller?** Connect one (Bluetooth or USB) and press any button: the start screen says when it's found, and A
+  starts. On a phone, clip it on or pair it, open the game in the phone's browser, turn the phone sideways and tap
+  Play. "Add to home screen" opens it fullscreen like an app.
+- **Check the server works:** `npm test` runs the wire-format round-trip checks and the controller checks, then `npm run test:server`, which starts its own servers, plays a point between two fake players,
   checks lag compensation with a fake 150 ms player, then checks that bots fill the teams, move, shoot and finish a point.
 
 | Controls | |
@@ -40,6 +44,19 @@ Pick a name on the start screen; it shows over your head, in the kill feed and o
 | R | reload (200-ball hopper) |
 | Tab (hold) | scoreboard |
 | Esc | release the mouse |
+
+| Controller | |
+|---|---|
+| Left stick | move (how far you push sets your speed); click it to sprint until you stop |
+| Right stick | aim, slowed a little while your crosshair is on an opponent |
+| RT (or RB) | fire |
+| A / B / X | jump / crouch (toggles) / reload |
+| LB (hold) | sprint |
+| Select (hold) | scoreboard |
+| Start | menu; on a phone without a controller there's a Menu button |
+
+Look speed, invert Y and vibration are on the start screen and saved in your browser. `npm run test:input` checks
+the deadzones, response curve and buttons.
 
 ## How it's put together
 
@@ -62,6 +79,8 @@ src/          the browser game
   render.ts     WebGLRenderer + postprocessing (bloom, vignette, tone mapping, SMAA)
   world.ts      sky, lights, turf texture, nets, bunkers
   player.ts     first-person controller + the gun on screen
+  input.ts      keyboard + mouse (pointer lock) and controllers, combined into actions; phone start
+  gamepad.ts    controllers: deadzones, aim curve, buttons, rumble (gamepad-test.ts checks it)
   paintballs.ts all balls in flight as one InstancedMesh
   fx.ts         paint splat decals + droplet bursts
   models.ts     loads the models (with a loading bar); falls back to code-drawn shapes if they fail

@@ -1,6 +1,8 @@
 // The HTML overlay on top of the canvas. Plain DOM, no framework.
 
 import type { SoundSystem } from './audio';
+import type { PadSettings } from './gamepad';
+import type { Device } from './input';
 import { TEAM_NAMES, type RosterEntry, type Team } from '../shared/protocol';
 
 const FEED_SECONDS = 5;
@@ -26,7 +28,8 @@ export class Hud {
   private loading = $('loading');
   private loadingBar = this.loading.querySelector('.bar') as HTMLElement;
   private toastTimer = 0;
-  private last = { status: '', ammo: '', score: '', out: '', banner: '' };
+  private last = { status: '', ammo: '', score: '', out: '', banner: '', controls: '' };
+  private playLabel = 'Click to play';
 
   /** model download progress (0..1), or null when done: the play button waits for it */
   setLoading(fraction: number | null): void {
@@ -34,7 +37,7 @@ export class Hud {
     if (fraction === null) {
       this.loading.hidden = true;
       btn.disabled = false;
-      btn.textContent = 'Click to play';
+      btn.textContent = this.playLabel;
       return;
     }
     this.loading.hidden = false;
@@ -66,6 +69,59 @@ export class Hud {
 
   setLocked(locked: boolean): void {
     this.overlay.hidden = locked;
+  }
+
+  /**
+   * Hints for what you're playing with: keyboard or controller key lists, the Play button's wording,
+   * whether a controller was found, controller settings, and the menu button on touch screens.
+   */
+  setControls(device: Device, padId: string | null, touch: boolean, playing: boolean): void {
+    const key = [device, padId, touch, playing].join('|');
+    if (this.last.controls === key) return;
+    this.last.controls = key;
+    const pad = padId !== null;
+    const padHints = device === 'pad' || touch;
+    $('keys-kb').hidden = padHints;
+    $('keys-pad').hidden = !padHints;
+    $('padset').hidden = !pad && !touch;
+    $('menubtn').hidden = !(touch && playing);
+    const line = $('padline');
+    line.className = pad ? 'padline ok' : 'padline';
+    line.textContent = pad
+      ? `Controller ready: ${padName(padId)}`
+      : touch
+        ? 'Connect a controller (Bluetooth or clip-on), then press any button on it'
+        : 'Got a controller? Connect it and press any button';
+    this.playLabel = touch ? (pad ? 'Tap or press A to play' : 'Tap to play') : pad ? 'Click or press A to play' : 'Click to play';
+    const btn = this.playButton as HTMLButtonElement;
+    if (!btn.disabled) btn.textContent = this.playLabel;
+  }
+
+  /** controller settings on the start screen; `onChange` runs after `settings` is updated */
+  bindPadSettings(settings: PadSettings, onChange: () => void): void {
+    const sens = $('padsens') as HTMLInputElement;
+    const inv = $('padinv') as HTMLInputElement;
+    const vib = $('padvib') as HTMLInputElement;
+    sens.value = String(settings.sensitivity);
+    inv.checked = settings.invertY;
+    vib.checked = settings.vibration;
+    sens.addEventListener('input', () => {
+      settings.sensitivity = Number(sens.value);
+      onChange();
+    });
+    inv.addEventListener('change', () => {
+      settings.invertY = inv.checked;
+      onChange();
+    });
+    vib.addEventListener('change', () => {
+      settings.vibration = vib.checked;
+      onChange();
+    });
+  }
+
+  /** the on-screen pause button (touch screens, where there's no Esc key) */
+  bindMenuButton(onPress: () => void): void {
+    $('menubtn').addEventListener('click', onPress);
   }
 
   setStatus(kind: 'connecting' | 'online' | 'offline', text: string): void {
@@ -193,6 +249,12 @@ export class Hud {
     clearTimeout(this.toastTimer);
     this.toastTimer = window.setTimeout(() => this.toastEl.classList.remove('show'), 1800);
   }
+}
+
+/** "Wireless Controller (STANDARD GAMEPAD Vendor: 045e …)" → "Wireless Controller" */
+function padName(id: string): string {
+  const name = id.replace(/\(.*\)/g, '').replace(/STANDARD GAMEPAD/gi, '').replace(/\s+/g, ' ').trim();
+  return (name || 'gamepad').slice(0, 40);
 }
 
 /** replay a CSS animation */

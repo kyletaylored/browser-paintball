@@ -69,20 +69,26 @@ export class LocalPlayer {
     this.smooth = { x: 0, y: 0, z: 0 };
   }
 
+  /** mouse movement, in pixels */
   look(dx: number, dy: number): void {
-    this.yaw -= dx * SENSITIVITY;
-    this.pitch = Math.max(-1.5, Math.min(1.5, this.pitch - dy * SENSITIVITY));
+    this.turn(-dx * SENSITIVITY, -dy * SENSITIVITY);
   }
 
-  /** read the keys into this step's movement input; null input = stand still (menu open, eliminated, countdown) */
+  /** turn by angles (radians): + yaw turns left, + pitch looks up (controller sticks) */
+  turn(dyaw: number, dpitch: number): void {
+    this.yaw += dyaw;
+    this.pitch = Math.max(-1.5, Math.min(1.5, this.pitch + dpitch));
+  }
+
+  /** read the controls into this step's movement input; null input = stand still (menu open, eliminated, countdown) */
   sample(input: Input | null): MoveInput {
     const m = this.move;
     const on = input !== null && this.alive;
-    m.forward = on ? +input.isDown('KeyW') - +input.isDown('KeyS') : 0;
-    m.right = on ? +input.isDown('KeyD') - +input.isDown('KeyA') : 0;
-    m.jump = on && input.isDown('Space');
-    m.sprint = on && (input.isDown('ShiftLeft') || input.isDown('ShiftRight'));
-    m.crouch = on && input.isDown('KeyC');
+    m.forward = on ? input.forward : 0;
+    m.right = on ? input.right : 0;
+    m.jump = on && input.jump;
+    m.sprint = on && input.sprint;
+    m.crouch = on && input.crouch;
     m.yaw = this.yaw;
     return m;
   }

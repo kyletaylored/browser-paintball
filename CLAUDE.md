@@ -33,6 +33,6 @@ imitate the game this project was inspired by either.
 ## Workflow
 
 - Backlog lives in GitHub issues. Work one issue per branch (`feat/...`, `fix/...`), open a PR that says `Closes #N`.
-- Before opening a PR: `npm run typecheck`, `npm run build` and `npm test` (codec round-trips + server smoke test, which starts its own servers).
+- Before opening a PR: `npm run typecheck`, `npm run build` and `npm test` (codec round-trips, controller input checks, and a server smoke test that starts its own servers).
 - Keep `shared/` free of DOM and Node-only APIs: both the browser and the server import it.
 - The server is the authority on hits and eliminations. Never let a client message decide a hit.
