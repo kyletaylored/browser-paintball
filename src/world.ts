@@ -3,7 +3,7 @@
 
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { BUNKERS, FIELD_LENGTH, FIELD_WIDTH, HALF_L, HALF_W, NET_MARGIN, bunkerKey } from '../shared/field';
+import { BUNKERS, FIELD_LENGTH, FIELD_WIDTH, HALF_L, HALF_W, NET_MARGIN, bunkerKey, type Bunker } from '../shared/field';
 import { bunkerModel, type Models } from './models';
 import { TEAM_COLORS } from '../shared/protocol';
 
@@ -46,9 +46,14 @@ export function buildWorld(scene: THREE.Scene, models: Models | null): void {
   for (const b of BUNKERS) {
     const template = models ? bunkerModel(models, bunkerKey(b)) : undefined;
     if (template) {
-      const g = template.clone(true);
+      // place a wrapper, not the model itself: the model's own transform isn't empty (mesh compression
+      // stores a dequantizing offset and scale on it), so overwriting its position would sink it
+      const g = new THREE.Group();
+      g.name = template.name;
+      g.add(template.clone(true));
       g.position.set(b.x, 0, b.z);
       scene.add(g);
+      if (import.meta.env.DEV) checkFit(g, b);
       continue;
     }
     // no model for this one: draw it from code
@@ -74,6 +79,22 @@ export function buildWorld(scene: THREE.Scene, models: Models | null): void {
       o.receiveShadow = true;
     });
     scene.add(g);
+  }
+}
+
+/**
+ * Development only: warn if a placed bunker model doesn't fill the shape paintballs collide with
+ * (shared/field.ts). A mismatch shows up in game as paint splatting on thin air.
+ */
+function checkFit(g: THREE.Object3D, b: Bunker): void {
+  const box = new THREE.Box3().setFromObject(g);
+  const w = b.kind === 'box' ? b.w : b.r * 2;
+  const d = b.kind === 'box' ? b.d : b.r * 2;
+  // 0.2 m of slack: seams, the valve and the flared base skirt stick out a little past the shape
+  const off = (got: number, want: number) => Math.abs(got - want) > 0.2;
+  if (off(box.min.y, 0) || off(box.max.y, b.h) || off(box.max.x - box.min.x, w) || off(box.max.z - box.min.z, d) ||
+      off((box.min.x + box.max.x) / 2, b.x) || off((box.min.z + box.max.z) / 2, b.z)) {
+    console.warn(`bunker model ${bunkerKey(b)} at (${b.x}, ${b.z}) doesn't match its collision shape`, box);
   }
 }
 
