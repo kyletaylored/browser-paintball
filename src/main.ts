@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { createRenderer, createComposer } from './render';
 import { buildWorld } from './world';
 import { Input, TOUCH } from './input';
+import { Menu, type MenuAction } from './menu';
 import type { PadSettings } from './gamepad';
 import { LocalPlayer } from './player';
 import { Paintballs, type Target, type BallEvents } from './paintballs';
@@ -74,7 +75,7 @@ function pickPadSettings(v: unknown): Partial<PadSettings> {
   return out;
 }
 
-const input = new Input(canvas, hud.playButton, padSettings);
+const input = new Input(canvas, padSettings);
 hud.bindPadSettings(padSettings, () => {
   try {
     localStorage.setItem(PAD_KEY, JSON.stringify(padSettings));
@@ -83,9 +84,7 @@ hud.bindPadSettings(padSettings, () => {
   }
 });
 hud.bindMenuButton(() => input.stop());
-input.onChange = () => {
-  if (input.active) sound.unlock(); // works after a click or tap; a controller press alone may not count
-};
+hud.bindQuality();
 input.onPadLost = () => hud.toast('Controller disconnected · paused');
 const player = new LocalPlayer(camera, models?.marker ?? null);
 const balls = new Paintballs(scene);
@@ -93,9 +92,9 @@ const fx = new Fx(scene);
 const sound = new SoundSystem(camera);
 player.placeAt(spawnPoint(0, 2));
 
-// browsers only let audio start from a click or key press
-hud.playButton.addEventListener('click', () => sound.unlock());
+// browsers only let audio start from a click or key press (the menu buttons count)
 canvas.addEventListener('click', () => sound.unlock());
+document.getElementById('menu')!.addEventListener('click', () => sound.unlock());
 hud.bindAudio(sound);
 
 // mix levels (each synthesised sound is normalised, so these set the balance)
@@ -222,7 +221,6 @@ const net = new Net(serverUrl, {
   },
   disconnected() {
     clearRemotes();
-    setDummiesVisible(true);
     player.setTeam(0);
     player.placeAt(spawnPoint(0, 2));
     player.alive = true;
@@ -261,6 +259,101 @@ function updateRemotes(now: number) {
     ra.avatar.dispose();
     remoteAvatars.delete(id);
   }
+}
+
+// ---- menus ----------------------------------------------------------------------------------
+//
+// The page opens on the main menu, flying slowly around the field. You join the match only when
+// you pick Play online; Practice plays offline against targets. Pausing (Esc, Start, or the Menu
+// button on a phone) opens the pause menu; online, you're still in the match while it's open.
+
+type Mode = 'menu' | 'online' | 'practice';
+let mode: Mode = 'menu';
+
+const menu = new Menu((action: MenuAction, viaPad: boolean) => {
+  switch (action) {
+    case 'online':
+      if (mode !== 'online') {
+        resetLocal();
+        mode = 'online';
+        net.start();
+      }
+      play(viaPad);
+      break;
+    case 'practice':
+      net.stop();
+      clearRemotes();
+      resetLocal();
+      practiceHits = 0;
+      mode = 'practice';
+      play(viaPad);
+      break;
+    case 'resume':
+      play(viaPad);
+      break;
+    case 'leave':
+      net.stop();
+      clearRemotes();
+      mode = 'menu';
+      menu.show('main');
+      refreshField();
+      break;
+  }
+});
+
+/** start (or resume) playing; the menu closes once the mouse is locked or controller play begins */
+function play(viaPad: boolean) {
+  sound.unlock();
+  input.start(viaPad);
+}
+
+/** fresh start for practice or a new online session */
+function resetLocal() {
+  player.setTeam(0);
+  player.placeAt(spawnPoint(0, 2));
+  player.alive = true;
+  hopper = HOPPER;
+  reloadLeft = 0;
+  outUntil = 0;
+}
+
+input.onChange = () => {
+  if (input.active) {
+    sound.unlock(); // works after a click or tap; a controller press alone may not count
+    menu.show(null);
+  } else if (mode !== 'menu' && (menu.screen === null || menu.screen === 'main')) {
+    // stopped playing (Esc, Start, Menu button, lost the controller) or the mouse lock was refused
+    hud.setPause(mode === 'online');
+    menu.show('pause');
+  }
+};
+
+// the main menu says how busy the field is (the server's public health check)
+const httpBase = serverUrl.replace(/^ws/, 'http');
+let fieldBusy = false;
+async function refreshField() {
+  if (menu.screen !== 'main' || fieldBusy) return;
+  fieldBusy = true;
+  try {
+    const r = await fetch(`${httpBase}/healthz`, { cache: 'no-store' });
+    const j = (await r.json()) as { players?: unknown; bots?: unknown };
+    hud.setFieldInfo({ players: Number(j.players) || 0, bots: Number(j.bots) || 0 });
+  } catch {
+    hud.setFieldInfo(null);
+  } finally {
+    fieldBusy = false;
+  }
+}
+hud.setFieldInfo('checking');
+refreshField();
+setInterval(refreshField, 10_000);
+
+/** main menu camera: a slow lap of the field */
+let orbit = 0.6;
+function flyAround(dt: number) {
+  orbit += dt * 0.05;
+  camera.position.set(Math.cos(orbit) * 27, 8.5 + Math.sin(orbit * 0.7) * 1.5, Math.sin(orbit) * 17);
+  camera.lookAt(0, 0.8, 0);
 }
 
 // ---- shooting -----------------------------------------------------------------------------
@@ -423,8 +516,9 @@ function frame(now: number) {
   const online = net.status === 'online';
 
   input.poll(dt);
-  hud.setLocked(input.active);
+  if (menu.open) menu.pad(input.pad.state);
   hud.setControls(input.device, input.pad.state.connected ? input.pad.state.id : null, TOUCH, input.active);
+  setDummiesVisible(mode === 'practice' || (mode === 'online' && !online));
   const look = input.takeLook();
   if (input.locked) player.look(look.dx, look.dy);
 
@@ -510,14 +604,19 @@ function frame(now: number) {
     hud.setStatus('online', `Online · ${TEAM_NAMES[net.team]} team · ${others} other player${others === 1 ? '' : 's'}${waiting}`);
     hud.setScore(scoreHtml(now));
   } else {
-    hud.setStatus(net.status, net.status === 'connecting' ? 'Connecting…' : `Offline practice · no server at ${serverUrl}`);
+    if (mode === 'practice') hud.setStatus('offline', 'Practice · hit the targets');
+    else if (net.status === 'connecting') hud.setStatus('connecting', 'Joining the match…');
+    else hud.setStatus('offline', "Can't reach the game server · practising until it's back");
     hud.setScore(`Practice hits: ${practiceHits}`);
   }
   hud.setAmmo(hopper, HOPPER, reloadLeft > 0);
   hud.setScoreboard(online && input.active && input.scoreboardHeld ? [...net.roster.values()] : null, net.id, net.score);
   hud.showOut(player.alive ? null : outLine(phase, now));
 
-  player.updateCamera(dt);
+  if (menu.screen === 'main') {
+    flyAround(dt);
+    player.showGun(false);
+  } else player.updateCamera(dt);
   updatePlates(online);
   fx.update(dt);
   balls.sync();
@@ -529,4 +628,4 @@ requestAnimationFrame(frame);
 
 // Poke at the game from the browser console while developing, e.g. __game.player.body.
 // import.meta.env.DEV is false in `npm run build`, so this is stripped from production.
-if (import.meta.env.DEV) Object.assign(window, { __game: { THREE, scene, camera, renderer, composer, input, player, net, balls, fx, dummies, sound, hud, frame, prediction, models, remoteAvatars } });
+if (import.meta.env.DEV) Object.assign(window, { __game: { THREE, scene, camera, renderer, composer, input, player, net, balls, fx, dummies, sound, hud, frame, prediction, models, remoteAvatars, menu, get mode() { return mode; } } });

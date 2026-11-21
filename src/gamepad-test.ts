@@ -83,6 +83,26 @@ check('sprint ends when you stop', !s.sprint);
 s.update(pad([BTN.LB], [0, -1, 0, 0]), 1 / 60);
 check('holding LB sprints too', s.sprint);
 
+// ---- menu navigation --------------------------------------------------------------------------
+
+s.update(pad(), 1 / 60);
+s.update(pad([BTN.DOWN]), 1 / 60);
+const navFirst = s.nav;
+s.update(pad([BTN.DOWN]), 0.1);
+check('d-pad down moves once per press in menus', navFirst === 'down' && s.nav === null);
+let repeats = 0;
+for (let i = 0; i < 10; i++) {
+  s.update(pad([BTN.DOWN]), 0.1);
+  if (s.nav === 'down') repeats++;
+}
+check('holding d-pad down repeats after a moment', repeats >= 4 && repeats <= 8, `${repeats} repeats in 1 s`);
+s.update(pad([], [0, -0.9, 0, 0]), 1 / 60);
+check('the left stick navigates menus too', s.nav === 'up');
+s.update(pad(), 1 / 60);
+s.update(pad([BTN.B]), 1 / 60);
+check('B is reported for "back"', s.bPressed);
+s.update(pad(), 1 / 60);
+
 s.update(pad([BTN.START]), 1 / 60);
 check('Start is reported once', s.startPressed);
 s.update(null, 1 / 60);

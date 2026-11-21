@@ -19,7 +19,8 @@ export interface NetEvents {
   disconnected(): void;
 }
 
-export type NetStatus = 'connecting' | 'online' | 'offline';
+/** idle: not trying (main menu, practice); connecting / online / offline: playing online */
+export type NetStatus = 'idle' | 'connecting' | 'online' | 'offline';
 
 /**
  * Development only: add ?lag=150 to the URL to fake 150 ms of round-trip latency (half each way),
@@ -28,7 +29,7 @@ export type NetStatus = 'connecting' | 'online' | 'offline';
 const FAKE_LAG_MS = import.meta.env.DEV ? Math.max(0, Number(new URLSearchParams(location.search).get('lag')) || 0) : 0;
 
 export class Net {
-  status: NetStatus = 'connecting';
+  status: NetStatus = 'idle';
   id = -1;
   team: Team = 0;
   score: [number, number] = [0, 0];
@@ -40,9 +41,29 @@ export class Net {
   readonly roster = new Map<number, RosterEntry>();
   private ws: WebSocket | null = null;
   private retryTimer = 0;
+  /** we want to be connected (Play online); false after stop() */
+  private wanted = false;
 
-  constructor(private url: string, private ev: NetEvents, private getName: () => string) {
+  constructor(private url: string, private ev: NetEvents, private getName: () => string) {}
+
+  /** join the match (and keep reconnecting if the connection drops) */
+  start(): void {
+    if (this.wanted) return;
+    this.wanted = true;
+    this.retryDelay = 3000;
+    this.status = 'connecting';
     this.connect();
+  }
+
+  /** leave the match: close the connection and stop retrying */
+  stop(): void {
+    this.wanted = false;
+    clearTimeout(this.retryTimer);
+    const ws = this.ws;
+    this.ws = null;
+    this.reset();
+    this.status = 'idle';
+    ws?.close(1000, 'left');
   }
 
   /** tell the server our (new) name */
@@ -68,7 +89,16 @@ export class Net {
     } else if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(data);
   }
 
+  private reset(): void {
+    this.id = -1;
+    this.round = null;
+    this.score = [0, 0];
+    this.remotes.clear();
+    this.roster.clear();
+  }
+
   private connect(): void {
+    if (!this.wanted) return;
     let ws: WebSocket;
     try {
       ws = new WebSocket(this.url);
@@ -96,13 +126,11 @@ export class Net {
       else this.handle(m);
     };
     ws.onclose = () => {
+      if (this.ws !== ws) return; // we closed it on purpose (stop())
       const wasOnline = this.status === 'online';
       this.ws = null;
       this.status = 'offline';
-      this.id = -1;
-      this.round = null;
-      this.remotes.clear();
-      this.roster.clear();
+      this.reset();
       if (wasOnline) this.ev.disconnected();
       this.retry();
     };
@@ -113,11 +141,13 @@ export class Net {
   /** keep trying, backing off to every 15 s so a missing server doesn't flood the console */
   private retry(): void {
     clearTimeout(this.retryTimer);
+    if (!this.wanted) return;
     this.retryTimer = window.setTimeout(() => this.connect(), this.retryDelay);
     this.retryDelay = Math.min(15000, this.retryDelay * 1.5);
   }
 
   private handle(m: ServerMsg): void {
+    if (!this.wanted) return;
     switch (m.t) {
       case 'welcome':
         this.status = 'online';

@@ -32,7 +32,7 @@ export class Input {
   private dx = 0;
   private dy = 0;
 
-  constructor(private canvas: HTMLCanvasElement, playButton: HTMLElement, padSettings: PadSettings) {
+  constructor(private canvas: HTMLCanvasElement, padSettings: PadSettings) {
     this.pad = new Gamepads(padSettings);
     this.pad.onChange = (connected) => {
       if (connected) this.device = 'pad';
@@ -43,9 +43,9 @@ export class Input {
       this.onChange();
     };
 
-    playButton.addEventListener('click', () => this.start());
+    // clicking the game while it's paused waiting for the mouse (say the lock was refused) grabs it
     canvas.addEventListener('click', () => {
-      if (!TOUCH) this.lock();
+      if (!TOUCH && this.wantPlay && !this.active) this.lock();
     });
 
     document.addEventListener('pointerlockchange', () => {
@@ -54,6 +54,8 @@ export class Input {
       else this.releaseAll();
       this.onChange();
     });
+    // the browser refused to lock the mouse (too soon after Esc, or not from a click): stay in the menu
+    document.addEventListener('pointerlockerror', () => this.onChange());
     document.addEventListener('mousemove', (e) => {
       if (!this.locked) return;
       this.dx += e.movementX;
@@ -92,10 +94,20 @@ export class Input {
     return this.locked || this.padPlaying;
   }
 
-  /** the Play button (or the canvas): lock the mouse, or on a phone go fullscreen and start */
-  start(): void {
-    if (TOUCH || !('requestPointerLock' in this.canvas)) {
+  /** the menu asked to play and hasn't been told to stop: lets a canvas click grab the mouse */
+  private wantPlay = false;
+
+  /**
+   * Start playing (from a menu button). With the mouse: lock it. From a controller press, or on a
+   * phone: play without pointer lock (a controller press can't lock the mouse anyway: browsers only
+   * allow that from a click or key). Phones also go fullscreen and sideways where allowed.
+   */
+  start(fromPad = false): void {
+    this.wantPlay = true;
+    this.pad.state.clearToggles(); // B in the menus flips crouch; start standing up
+    if (fromPad || TOUCH || !('requestPointerLock' in this.canvas)) {
       this.padPlaying = true;
+      this.holdA = fromPad && this.pad.state.jump;
       if (TOUCH) goFullscreenLandscape();
       this.onChange();
       return;
@@ -105,6 +117,7 @@ export class Input {
 
   /** back to the menu */
   stop(): void {
+    this.wantPlay = false;
     this.padPlaying = false;
     this.pad.state.clearToggles();
     if (this.locked) document.exitPointerLock();
@@ -124,15 +137,9 @@ export class Input {
     const p = this.pad.state;
     if (p.touched) this.device = 'pad';
     if (!p.jump) this.holdA = false;
-    if (!this.active) {
-      // from the menu, A or Start begins (with the controller: there's no mouse to lock without a click)
-      if (p.aPressed || p.startPressed) {
-        this.padPlaying = true;
-        this.holdA = p.jump;
-        this.onChange();
-      }
-    } else if (p.startPressed) {
-      this.stop();
+    if (this.active && p.startPressed) {
+      this.stop(); // Start pauses (the menu takes it from there)
+      p.startPressed = false; // used up: the pause menu mustn't see it and resume straight away
     }
   }
 

@@ -70,6 +70,11 @@ export interface PadSettings {
   vibration: boolean;
 }
 
+export type NavDir = 'up' | 'down' | 'left' | 'right';
+/** holding a direction in a menu repeats after this long, then this often */
+const NAV_DELAY = 0.4;
+const NAV_REPEAT = 0.14;
+
 export type Rumble = 'fire' | 'hit' | 'out';
 const RUMBLES: Record<Rumble, { duration: number; strongMagnitude: number; weakMagnitude: number }> = {
   fire: { duration: 40, strongMagnitude: 0, weakMagnitude: 0.35 },
@@ -102,12 +107,17 @@ export class PadState {
   reloadPressed = false;
   startPressed = false;
   aPressed = false;
+  bPressed = false;
+  /** menu navigation from the d-pad or left stick: set once per press, then repeating while held */
+  nav: NavDir | null = null;
 
   private held: boolean[] = [];
   private prev: boolean[] = [];
   private lastStamp = -1;
   private edgeTime = 0;
   private sprintOn = false;
+  private navDir: NavDir | null = null;
+  private navNext = 0;
 
   constructor(public settings: PadSettings) {}
 
@@ -164,6 +174,25 @@ export class PadState {
     this.reloadPressed = this.pressed(BTN.X);
     this.startPressed = this.pressed(BTN.START);
     this.aPressed = this.pressed(BTN.A);
+    this.bPressed = this.pressed(BTN.B);
+    this.updateNav(pad.axes[0] ?? 0, pad.axes[1] ?? 0, dt);
+  }
+
+  private updateNav(x: number, y: number, dt: number): void {
+    let dir: NavDir | null = this.down(BTN.UP) ? 'up' : this.down(BTN.DOWN) ? 'down' : this.down(BTN.LEFT) ? 'left' : this.down(BTN.RIGHT) ? 'right' : null;
+    if (!dir && Math.max(Math.abs(x), Math.abs(y)) > 0.6) dir = Math.abs(y) >= Math.abs(x) ? (y < 0 ? 'up' : 'down') : x < 0 ? 'left' : 'right';
+    this.nav = null;
+    if (dir !== this.navDir) {
+      this.navDir = dir;
+      this.nav = dir;
+      this.navNext = NAV_DELAY;
+    } else if (dir) {
+      this.navNext -= dt;
+      if (this.navNext <= 0) {
+        this.nav = dir;
+        this.navNext += NAV_REPEAT;
+      }
+    }
   }
 
   /** drop toggles (crouch, sprint) when play stops, so you don't come back crouched */
@@ -185,7 +214,8 @@ export class PadState {
     this.id = '';
     this.moveX = this.moveY = this.yawRate = this.pitchRate = 0;
     this.fire = this.jump = this.sprint = this.crouch = this.scoreboard = false;
-    this.reloadPressed = this.startPressed = this.aPressed = false;
+    this.reloadPressed = this.startPressed = this.aPressed = this.bPressed = false;
+    this.nav = this.navDir = null;
     this.held = [];
     this.prev = [];
     this.lastStamp = -1;
