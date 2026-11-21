@@ -4,7 +4,8 @@
 import * as THREE from 'three';
 import { createRenderer, createComposer } from './render';
 import { buildWorld } from './world';
-import { Input } from './input';
+import { Input, TOUCH } from './input';
+import type { PadSettings } from './gamepad';
 import { LocalPlayer } from './player';
 import { Paintballs, type Target, type BallEvents } from './paintballs';
 import { Fx } from './fx';
@@ -55,7 +56,37 @@ hud.setLoading(null);
 buildWorld(scene, models);
 const composer = createComposer(renderer, scene, camera);
 
-const input = new Input(canvas, hud.playButton);
+// controller settings live in this browser (start screen: sensitivity, invert Y, vibration)
+const PAD_KEY = 'splat-arena.pad';
+const padSettings: PadSettings = { sensitivity: 1, invertY: false, vibration: true };
+try {
+  Object.assign(padSettings, pickPadSettings(JSON.parse(localStorage.getItem(PAD_KEY) ?? '{}')));
+} catch {
+  // storage blocked or garbled: defaults
+}
+function pickPadSettings(v: unknown): Partial<PadSettings> {
+  if (!v || typeof v !== 'object') return {};
+  const o = v as Record<string, unknown>;
+  const out: Partial<PadSettings> = {};
+  if (typeof o.sensitivity === 'number' && o.sensitivity >= 0.3 && o.sensitivity <= 3) out.sensitivity = o.sensitivity;
+  if (typeof o.invertY === 'boolean') out.invertY = o.invertY;
+  if (typeof o.vibration === 'boolean') out.vibration = o.vibration;
+  return out;
+}
+
+const input = new Input(canvas, hud.playButton, padSettings);
+hud.bindPadSettings(padSettings, () => {
+  try {
+    localStorage.setItem(PAD_KEY, JSON.stringify(padSettings));
+  } catch {
+    // ignore
+  }
+});
+hud.bindMenuButton(() => input.stop());
+input.onChange = () => {
+  if (input.active) sound.unlock(); // works after a click or tap; a controller press alone may not count
+};
+input.onPadLost = () => hud.toast('Controller disconnected · paused');
 const player = new LocalPlayer(camera, models?.marker ?? null);
 const balls = new Paintballs(scene);
 const fx = new Fx(scene);
@@ -167,10 +198,12 @@ const net = new Net(serverUrl, {
       player.alive = false;
       outUntil = performance.now() + RESPAWN_SECONDS * 1000;
       hud.damageFlash();
+      input.pad.rumble('out');
       sound.play('out', { volume: VOL.out, rate: 1 });
     }
     if (m.shooter === net.id) {
       hud.hitMarker();
+      input.pad.rumble('hit');
       sound.play('confirm', { volume: VOL.confirm, rate: 1 });
       hud.toast(`You eliminated ${net.nameOf(m.victim)}`);
     }
@@ -234,6 +267,22 @@ function updateRemotes(now: number) {
 
 const eye = new THREE.Vector3();
 const dir = new THREE.Vector3();
+const toTarget = new THREE.Vector3();
+
+/** 0.55 while the crosshair is on (or just beside) an opponent's body, else 1 */
+function aimSlowdown(myTeam: number): number {
+  player.eye(eye);
+  player.aimDir(dir);
+  for (const t of targets) {
+    if (!t.alive || t.team === myTeam) continue;
+    toTarget.set(t.x - eye.x, t.y + t.height * 0.55 - eye.y, t.z - eye.z);
+    const d = toTarget.length();
+    if (d < 0.5 || d > 70) continue;
+    const angle = Math.acos(Math.max(-1, Math.min(1, toTarget.dot(dir) / d)));
+    if (angle < Math.atan2(0.7, d)) return 0.55;
+  }
+  return 1;
+}
 
 function fire() {
   player.eye(eye);
@@ -251,6 +300,7 @@ function fire() {
   if (online) net.send({ t: 'fire', o, d: [dir.x, dir.y, dir.z] });
   hopper--;
   player.kick();
+  input.pad.rumble('fire');
   sound.play('shot', { volume: VOL.shot });
 }
 
@@ -271,6 +321,7 @@ const ballEvents: BallEvents = {
         d.downUntil = performance.now() + RESPAWN_SECONDS * 1000;
         practiceHits++;
         hud.hitMarker();
+        input.pad.rumble('hit');
         sound.play('confirm', { volume: VOL.confirm, rate: 1 });
       }
     }
@@ -371,7 +422,9 @@ function frame(now: number) {
   last = now;
   const online = net.status === 'online';
 
-  hud.setLocked(input.locked);
+  input.poll(dt);
+  hud.setLocked(input.active);
+  hud.setControls(input.device, input.pad.state.connected ? input.pad.state.id : null, TOUCH, input.active);
   const look = input.takeLook();
   if (input.locked) player.look(look.dx, look.dy);
 
@@ -381,6 +434,16 @@ function frame(now: number) {
   targets.length = 0;
   if (online) for (const ra of remoteAvatars.values()) targets.push(ra.target);
   else targets.push(...dummies);
+
+  // controller aim, a little slower while the crosshair is on an opponent (only the feel: the server
+  // still decides every hit)
+  if (input.active && player.alive) {
+    const p = input.pad.state;
+    if (p.yawRate || p.pitchRate) {
+      const k = aimSlowdown(online ? net.team : 0) * dt;
+      player.turn(p.yawRate * k, p.pitchRate * k);
+    }
+  }
 
   const px = player.body.x;
   const pz = player.body.z;
@@ -392,7 +455,7 @@ function frame(now: number) {
   acc += dt;
   let steps = 0;
   while (acc >= STEP && steps < 12) {
-    const move = player.sample(input.locked && !frozen ? input : null);
+    const move = player.sample(input.active && !frozen ? input : null);
     if (online) prediction.record(move, player.pitch);
     player.apply(STEP);
     balls.update(STEP, targets, ballEvents);
@@ -412,15 +475,16 @@ function frame(now: number) {
       hopper = HOPPER;
       sound.play('reloadDone', { volume: VOL.reload });
     }
-  } else if (input.wasPressed('KeyR') && hopper < HOPPER && player.alive) {
+  } else if (input.reloadPressed && hopper < HOPPER && player.alive) {
     startReload();
   }
   fireCooldown -= dt;
-  const firePressed = input.fireHeld && !wasFireHeld;
-  wasFireHeld = input.fireHeld;
-  const canFire = input.locked && player.alive && reloadLeft <= 0 && !holdFire;
-  if (firePressed && input.locked && player.alive && !holdFire && (reloadLeft > 0 || hopper <= 0)) sound.play('dry', { volume: VOL.dry });
-  if (canFire && input.fireHeld) {
+  const fireHeld = input.fireHeld;
+  const firePressed = fireHeld && !wasFireHeld;
+  wasFireHeld = fireHeld;
+  const canFire = input.active && player.alive && reloadLeft <= 0 && !holdFire;
+  if (firePressed && input.active && player.alive && !holdFire && (reloadLeft > 0 || hopper <= 0)) sound.play('dry', { volume: VOL.dry });
+  if (canFire && fireHeld) {
     if (hopper <= 0) startReload();
     while (fireCooldown <= 0 && hopper > 0) {
       fire();
@@ -450,7 +514,7 @@ function frame(now: number) {
     hud.setScore(`Practice hits: ${practiceHits}`);
   }
   hud.setAmmo(hopper, HOPPER, reloadLeft > 0);
-  hud.setScoreboard(online && input.locked && input.isDown('Tab') ? [...net.roster.values()] : null, net.id, net.score);
+  hud.setScoreboard(online && input.active && input.scoreboardHeld ? [...net.roster.values()] : null, net.id, net.score);
   hud.showOut(player.alive ? null : outLine(phase, now));
 
   player.updateCamera(dt);

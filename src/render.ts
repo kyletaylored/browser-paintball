@@ -3,13 +3,20 @@ import {
   EffectComposer, RenderPass, EffectPass, BloomEffect, SMAAEffect, ToneMappingEffect, ToneMappingMode, VignetteEffect,
 } from 'postprocessing';
 
-/** Add ?low to the URL to turn off shadows, bloom and anti-aliasing (for weak laptops / no GPU). */
-export const LOW_QUALITY = new URLSearchParams(location.search).has('low');
+/**
+ * Add ?low to the URL to turn off shadows, bloom and anti-aliasing (for weak laptops / no GPU).
+ * Phones and tablets start low (add ?high to override): a big screen to fill on a phone's GPU and
+ * battery.
+ */
+const params = new URLSearchParams(location.search);
+const TOUCH_DEVICE = matchMedia('(pointer: coarse)').matches && !matchMedia('(pointer: fine)').matches;
+export const LOW_QUALITY = params.has('low') || (TOUCH_DEVICE && !params.has('high'));
 
 export function createRenderer(canvas: HTMLCanvasElement): THREE.WebGLRenderer {
   // postprocessing recommends turning these off on the renderer: the composer has its own buffers and does AA itself.
   const renderer = new THREE.WebGLRenderer({ canvas, powerPreference: 'high-performance', antialias: false, stencil: false, depth: false });
-  renderer.setPixelRatio(LOW_QUALITY ? 1 : Math.min(window.devicePixelRatio, 2));
+  // phone screens are dense enough that 1.25 still looks sharp, and it's far cheaper than their native 3
+  renderer.setPixelRatio(LOW_QUALITY ? (TOUCH_DEVICE ? Math.min(window.devicePixelRatio, 1.25) : 1) : Math.min(window.devicePixelRatio, 2));
   renderer.shadowMap.enabled = !LOW_QUALITY;
   renderer.shadowMap.type = THREE.PCFShadowMap;
   return renderer;

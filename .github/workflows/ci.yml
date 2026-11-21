@@ -39,6 +39,9 @@ jobs:
       - name: Wire format round-trip tests
         run: npm run test:codec
 
+      - name: Controller input tests
+        run: npm run test:input
+
       # starts its own game servers (one without bots, one with) on spare ports
       - name: Server smoke test
         run: npm run test:server

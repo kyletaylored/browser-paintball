@@ -2,8 +2,16 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Splat Arena</title>
+    <meta name="theme-color" content="#0e0c12" />
+    <!-- "add to home screen" opens it fullscreen and sideways, like an app -->
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" href="/icon.svg" type="image/svg+xml" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Splat Arena" />
     <style>
       :root {
         --ink: #f6f3ee;
@@ -13,10 +21,15 @@
         --red: #ff3b3b;
         --blue: #3b8bff;
         font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+        /* keep the HUD clear of notches and rounded corners on phones */
+        --sl: env(safe-area-inset-left, 0px);
+        --sr: env(safe-area-inset-right, 0px);
+        --st: env(safe-area-inset-top, 0px);
+        --sb: env(safe-area-inset-bottom, 0px);
       }
       * { box-sizing: border-box; }
-      html, body { margin: 0; height: 100%; overflow: hidden; background: #0e0c12; color: var(--ink); }
-      #view { display: block; width: 100vw; height: 100vh; }
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #0e0c12; color: var(--ink); overscroll-behavior: none; }
+      #view { display: block; width: 100vw; height: 100vh; height: 100dvh; touch-action: none; }
 
       #hud { position: fixed; inset: 0; pointer-events: none; user-select: none; }
       #crosshair {
@@ -44,12 +57,12 @@
         position: absolute; padding: 8px 12px; border-radius: 10px; background: var(--panel);
         font-weight: 700; letter-spacing: 0.02em; backdrop-filter: blur(6px);
       }
-      #score { top: 16px; left: 50%; translate: -50% 0; font-size: 18px; display: flex; gap: 14px; align-items: center; }
+      #score { top: calc(16px + var(--st)); left: 50%; translate: -50% 0; font-size: 18px; display: flex; gap: 14px; align-items: center; }
       #score .r { color: var(--red); } #score .b { color: var(--blue); }
-      #status { top: 16px; left: 16px; font-size: 13px; font-weight: 600; color: var(--dim); max-width: min(420px, 60vw); }
+      #status { top: calc(16px + var(--st)); left: calc(16px + var(--sl)); font-size: 13px; font-weight: 600; color: var(--dim); max-width: min(420px, 60vw); }
       #status .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; background: #888; }
       #status.online .dot { background: #5ee07a; } #status.offline .dot { background: var(--accent); }
-      #ammo { right: 16px; bottom: 16px; font-size: 28px; font-variant-numeric: tabular-nums; }
+      #ammo { right: calc(16px + var(--sr)); bottom: calc(16px + var(--sb)); font-size: 28px; font-variant-numeric: tabular-nums; }
       #ammo small { font-size: 13px; color: var(--dim); margin-left: 6px; }
       #toast {
         top: 64px; left: 50%; translate: -50% 0; font-size: 15px; opacity: 0; transition: opacity 0.3s;
@@ -73,7 +86,8 @@
       #out small { display: block; font-size: 16px; font-weight: 600; color: var(--dim); letter-spacing: 0; }
 
       #overlay {
-        position: fixed; inset: 0; display: grid; place-items: center; padding: 16px;
+        position: fixed; inset: 0; display: grid; place-items: center; overflow-y: auto;
+        padding: max(16px, var(--st)) max(16px, var(--sr)) max(16px, var(--sb)) max(16px, var(--sl));
         background: radial-gradient(ellipse at center, rgba(14, 12, 18, 0.55), rgba(14, 12, 18, 0.88));
       }
       #overlay[hidden] { display: none; }
@@ -104,7 +118,7 @@
         position: absolute; left: 0; top: 0; padding: 2px 6px; border-radius: 6px; background: rgba(10, 8, 14, 0.55);
         font-size: 12px; font-weight: 800; white-space: nowrap; will-change: transform;
       }
-      #feed { position: absolute; top: 16px; right: 16px; display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
+      #feed { position: absolute; top: calc(16px + var(--st)); right: calc(16px + var(--sr)); display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
       #feed .row {
         padding: 5px 10px; border-radius: 8px; background: var(--panel); font-size: 13px; font-weight: 700;
         display: flex; gap: 8px; animation: feedin 0.2s ease-out;
@@ -132,6 +146,48 @@
       .audio input[type='range'] { flex: 1; accent-color: var(--accent); }
       .audio label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
       .audio input[type='checkbox'] { accent-color: var(--accent); }
+
+      /* controllers */
+      .padline { margin: 16px 0 0; font-size: 13px; color: var(--dim); }
+      .padline.ok { color: #5ee07a; font-weight: 700; }
+      .padset { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px; margin-top: 10px; color: var(--dim); font-size: 14px; }
+      .padset[hidden] { display: none; }
+      .padset label { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+      .padset .sens { flex: 1 1 100%; }
+      .padset input[type='range'] { flex: 1; accent-color: var(--accent); }
+      .padset input[type='checkbox'] { accent-color: var(--accent); }
+      .keys[hidden] { display: none; }
+      #menubtn {
+        left: calc(16px + var(--sl)); bottom: calc(16px + var(--sb)); pointer-events: auto; border: 0; color: var(--ink);
+        font: inherit; font-size: 15px; cursor: pointer; padding: 10px 14px;
+      }
+      #menubtn[hidden] { display: none; }
+      #rotate {
+        position: fixed; inset: 0; z-index: 10; display: none; place-items: center; padding: 24px; text-align: center;
+        background: #0e0c12; font-size: 22px; font-weight: 800;
+      }
+      #rotate small { display: block; margin-top: 8px; font-size: 15px; font-weight: 600; color: var(--dim); }
+      @media (pointer: coarse) and (orientation: portrait) { #rotate { display: grid; } }
+
+      /* a phone on its side: everything a bit smaller so the start screen and banners fit */
+      @media (max-height: 520px) {
+        .card {
+          padding: 16px 20px; width: min(760px, 100%);
+          display: grid; grid-template-columns: 1fr 1.15fr; gap: 0 22px; align-items: center;
+        }
+        .card .col:last-child { text-align: left; }
+        .card .col:last-child .audio { margin-top: 0; }
+        #status { max-width: calc(50% - 150px); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+        .card h1 { font-size: 28px; }
+        .card .sub { margin: 2px 0 10px; }
+        .keys { margin-top: 10px; font-size: 12.5px; line-height: 1.55; }
+        .audio { margin-top: 10px; }
+        .padline { margin-top: 10px; }
+        #banner { font-size: 40px; }
+        #banner.count { font-size: 64px; }
+        #out { font-size: 32px; }
+        #score { font-size: 15px; }
+      }
     </style>
   </head>
   <body>
@@ -150,10 +206,14 @@
       <div id="banner" hidden></div>
       <div id="feed"></div>
       <div id="board" hidden></div>
+      <button id="menubtn" class="chip" type="button" hidden aria-label="Menu">Menu</button>
     </div>
+
+    <div id="rotate"><div>Turn your phone sideways<small>Splat Arena plays in landscape</small></div></div>
 
     <div id="overlay">
       <div class="card">
+        <div class="col">
         <h1>SPLAT <span>ARENA</span></h1>
         <p class="sub">A three.js paintball starter</p>
         <label class="name">Your name
@@ -161,18 +221,33 @@
         </label>
         <div id="loading"><div class="bar"></div></div>
         <button id="play" type="button" disabled>Loading…</button>
+        </div>
+        <div class="col">
         <div class="audio">
           <label for="volume">Volume</label>
           <input id="volume" type="range" min="0" max="100" step="1" value="80" aria-label="Volume" />
           <label><input id="mute" type="checkbox" /> Mute</label>
         </div>
-        <ul class="keys">
+        <p id="padline" class="padline"></p>
+        <div id="padset" class="padset" hidden>
+          <label class="sens" for="padsens">Look speed <input id="padsens" type="range" min="0.4" max="2" step="0.05" value="1" aria-label="Controller look speed" /></label>
+          <label><input id="padinv" type="checkbox" /> Invert Y</label>
+          <label><input id="padvib" type="checkbox" checked /> Vibration</label>
+        </div>
+        <ul id="keys-pad" class="keys" hidden>
+          <li><b>Left stick</b> move (click to sprint) · <b>Right stick</b> aim</li>
+          <li><b>RT</b> fire · <b>A</b> jump · <b>B</b> crouch · <b>X</b> reload</li>
+          <li><b>LB</b> sprint · <b>Select</b> scoreboard · <b>Start</b> menu</li>
+          <li>Eliminate the whole other team to win the point</li>
+        </ul>
+        <ul id="keys-kb" class="keys">
           <li><b>Mouse</b> aim · <b>Click</b> fire</li>
           <li><b>WASD</b> move · <b>Shift</b> sprint</li>
           <li><b>Space</b> jump · <b>C</b> crouch</li>
           <li><b>R</b> reload · <b>Tab</b> scoreboard · <b>Esc</b> release mouse</li>
           <li>Eliminate the whole other team to win the point</li>
         </ul>
+        </div>
       </div>
     </div>
 
