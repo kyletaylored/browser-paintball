@@ -17,17 +17,18 @@ This repository is **public**. Before every commit and push, check `git diff --c
 Config that needs secrets reads them from environment variables; commit only a `.env.example` with placeholder values.
 If something sensitive is ever committed, stop and tell the user before pushing. Do not try to quietly rewrite public history.
 
-### Never use industry names
+### Never use real paintball names
 
-Do not use the name of any real company, brand, product line, league, team, event, venue, player or other game from the
-paintball or video-game industry anywhere in this repo or its GitHub activity: code, comments, docs, asset and file names,
-commit messages, branch names, issues, PRs and review comments. That includes naming any game this project was inspired by.
+For IP reasons, do not use the name, logo or look of any real paintball company, brand, product or product line
+(markers, hoppers, tanks, masks, paint, bunkers), league, team, event, field or venue, or player. This applies to the
+game itself (in-game text, models, textures, sounds) and to everything else in the repo and its GitHub activity: code,
+comments, docs, asset and file names, commit messages, branch names, issues, PRs and review comments. Do not name or
+imitate the game this project was inspired by either.
 
 - Use generic terms instead: marker, hopper, tank, bunker, field, team, league, tournament.
 - Invented names for in-game things are fine as long as they are original and do not imitate a real brand.
-- Do not name hosting providers, asset stores or other vendors in docs either; describe the kind of service
-  ("a static host", "a VPS"). The open-source libraries and tools the project actually uses (three.js, Vite, postprocessing,
-  ws, TypeScript, Node, glTF tooling, Blender) may be named, since the code depends on them.
+- This rule is about paintball IP only. Infrastructure vendors and tools (hosting providers, CDNs, libraries, services
+  the project deploys to) may be named in docs, config and code.
 
 ## Workflow
 
