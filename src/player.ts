@@ -114,6 +114,11 @@ export class LocalPlayer {
     this.recoil = 1;
   }
 
+  /** the marker in front of the camera (hidden while the main menu shows the field) */
+  showGun(v: boolean): void {
+    this.gun.visible = v && this.alive;
+  }
+
   updateCamera(dt: number): void {
     const k = Math.exp(-dt * 10);
     this.smooth.x *= k;

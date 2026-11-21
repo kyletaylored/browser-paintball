@@ -3,6 +3,7 @@
 import type { SoundSystem } from './audio';
 import type { PadSettings } from './gamepad';
 import type { Device } from './input';
+import { QUALITY_KEY, savedQuality, type Quality } from './render';
 import { TEAM_NAMES, type RosterEntry, type Team } from '../shared/protocol';
 
 const FEED_SECONDS = 5;
@@ -12,7 +13,6 @@ const $ = (id: string) => document.getElementById(id)!;
 
 export class Hud {
   readonly playButton = $('play');
-  private overlay = $('overlay');
   private status = $('status');
   private statusText = this.status.querySelector('.txt')!;
   private ammo = $('ammo');
@@ -29,7 +29,7 @@ export class Hud {
   private loadingBar = this.loading.querySelector('.bar') as HTMLElement;
   private toastTimer = 0;
   private last = { status: '', ammo: '', score: '', out: '', banner: '', controls: '' };
-  private playLabel = 'Click to play';
+  private playLabel = 'Play online';
 
   /** model download progress (0..1), or null when done: the play button waits for it */
   setLoading(fraction: number | null): void {
@@ -67,34 +67,62 @@ export class Hud {
     });
   }
 
-  setLocked(locked: boolean): void {
-    this.overlay.hidden = locked;
-  }
-
   /**
-   * Hints for what you're playing with: keyboard or controller key lists, the Play button's wording,
-   * whether a controller was found, controller settings, and the menu button on touch screens.
+   * What you're playing with: whether a controller was found (main menu) and the on-screen pause
+   * button on touch screens, which have no Esc key.
    */
-  setControls(device: Device, padId: string | null, touch: boolean, playing: boolean): void {
-    const key = [device, padId, touch, playing].join('|');
+  setControls(_device: Device, padId: string | null, touch: boolean, playing: boolean): void {
+    const key = [padId, touch, playing].join('|');
     if (this.last.controls === key) return;
     this.last.controls = key;
-    const pad = padId !== null;
-    const padHints = device === 'pad' || touch;
-    $('keys-kb').hidden = padHints;
-    $('keys-pad').hidden = !padHints;
-    $('padset').hidden = !pad && !touch;
     $('menubtn').hidden = !(touch && playing);
     const line = $('padline');
-    line.className = pad ? 'padline ok' : 'padline';
-    line.textContent = pad
+    line.className = padId !== null ? 'padline ok' : 'padline';
+    line.textContent = padId !== null
       ? `Controller ready: ${padName(padId)}`
       : touch
         ? 'Connect a controller (Bluetooth or clip-on), then press any button on it'
         : 'Got a controller? Connect it and press any button';
-    this.playLabel = touch ? (pad ? 'Tap or press A to play' : 'Tap to play') : pad ? 'Click or press A to play' : 'Click to play';
-    const btn = this.playButton as HTMLButtonElement;
-    if (!btn.disabled) btn.textContent = this.playLabel;
+  }
+
+  /** how many are on the field (main menu); null = couldn't reach the server */
+  setFieldInfo(info: { players: number; bots: number } | null | 'checking'): void {
+    const el = $('field-info');
+    if (info === 'checking') {
+      el.className = 'info';
+      el.textContent = 'Checking the field…';
+    } else if (info === null) {
+      el.className = 'info';
+      el.textContent = "Can't reach the game server right now. Practice works offline.";
+    } else if (info.players > 0) {
+      el.className = 'info live';
+      el.textContent = `${info.players} playing now${info.bots ? `, plus ${info.bots} bot${info.bots === 1 ? '' : 's'}` : ''}`;
+    } else {
+      el.className = 'info';
+      el.textContent = 'Nobody on the field yet: bots fill the teams until others join';
+    }
+  }
+
+  /** the pause screen's note and whether it offers "Leave match" or "Back to main menu" */
+  setPause(online: boolean): void {
+    $('pause-note').textContent = online ? "You're still in the match: other players can see and hit you." : 'Practice is paused.';
+    $('leave').textContent = online ? 'Leave match' : 'Main menu';
+  }
+
+  /** graphics quality picker; it takes effect after a reload, so say so when it changes */
+  bindQuality(): void {
+    const sel = $('quality') as HTMLSelectElement;
+    const note = $('quality-note');
+    const start = savedQuality();
+    sel.value = start;
+    sel.addEventListener('change', () => {
+      try {
+        localStorage.setItem(QUALITY_KEY, sel.value as Quality);
+      } catch {
+        // storage blocked: it just won't stick
+      }
+      note.textContent = sel.value === start ? 'Auto is high on computers and low on phones.' : 'Reload the page to switch.';
+    });
   }
 
   /** controller settings on the start screen; `onChange` runs after `settings` is updated */

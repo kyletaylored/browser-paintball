@@ -10,7 +10,18 @@ import {
  */
 const params = new URLSearchParams(location.search);
 const TOUCH_DEVICE = matchMedia('(pointer: coarse)').matches && !matchMedia('(pointer: fine)').matches;
-export const LOW_QUALITY = params.has('low') || (TOUCH_DEVICE && !params.has('high'));
+export const QUALITY_KEY = 'splat-arena.quality';
+export type Quality = 'auto' | 'low' | 'high';
+export function savedQuality(): Quality {
+  try {
+    const q = localStorage.getItem(QUALITY_KEY);
+    return q === 'low' || q === 'high' ? q : 'auto';
+  } catch {
+    return 'auto';
+  }
+}
+const chosen = params.has('low') ? 'low' : params.has('high') ? 'high' : savedQuality();
+export const LOW_QUALITY = chosen === 'low' || (chosen === 'auto' && TOUCH_DEVICE);
 
 export function createRenderer(canvas: HTMLCanvasElement): THREE.WebGLRenderer {
   // postprocessing recommends turning these off on the renderer: the composer has its own buffers and does AA itself.

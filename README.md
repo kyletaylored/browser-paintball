@@ -23,16 +23,19 @@ Open a second browser window to play against yourself: the server puts the next 
 **How a match works:** once both teams have a player, everyone is put back in their start box for a 3-second countdown.
 Then the point is live: if you're hit you're out until the point ends. Eliminate the whole other team to win the point.
 First team to 5 points wins the match. While a team is empty it's warm-up: you respawn a few seconds after being hit.
-Pick a name on the start screen; it shows over your head, in the kill feed and on the scoreboard.
+The game opens on the main menu, flying slowly around the field. Pick a name (it shows over your head, in the kill
+feed and on the scoreboard), then **Play online** to join the match. The menu shows how many are playing. **Practice**
+plays offline against three strafing targets. Esc (or Start on a controller) pauses: Resume, Settings, Controls, or
+Leave match. Online, you're still in the match while paused.
 
 - **Playing alone?** The server fills both teams with bots (3 a side by default), so you can play a match on your own.
   A friend who joins takes a bot's place.
-- **No server running?** The game falls back to offline practice with three strafing dummies.
+- **No server running?** Practice works without one, and if the server drops mid-match you practise until it's back.
 - **Slow machine?** Add `?low` to the URL to turn off shadows, bloom and anti-aliasing. Phones and tablets start
   that way; add `?high` to turn it back on.
-- **Controller?** Connect one (Bluetooth or USB) and press any button: the start screen says when it's found, and A
-  starts. On a phone, clip it on or pair it, open the game in the phone's browser, turn the phone sideways and tap
-  Play. "Add to home screen" opens it fullscreen like an app.
+- **Controller?** Connect one (Bluetooth or USB) and press any button: the main menu says when it's found. The d-pad
+  or left stick moves through the menus, A picks and B goes back. On a phone, clip it on or pair it, open the game in
+  the phone's browser, turn the phone sideways and pick Play online. "Add to home screen" opens it fullscreen like an app.
 - **Check the server works:** `npm test` runs the wire-format round-trip checks and the controller checks, then `npm run test:server`, which starts its own servers, plays a point between two fake players,
   checks lag compensation with a fake 150 ms player, then checks that bots fill the teams, move, shoot and finish a point.
 
@@ -43,7 +46,7 @@ Pick a name on the start screen; it shows over your head, in the kill feed and o
 | Space, C | jump (you can jump onto the low walls), crouch |
 | R | reload (200-ball hopper) |
 | Tab (hold) | scoreboard |
-| Esc | release the mouse |
+| Esc | pause (menu) |
 
 | Controller | |
 |---|---|
@@ -53,9 +56,9 @@ Pick a name on the start screen; it shows over your head, in the kill feed and o
 | A / B / X | jump / crouch (toggles) / reload |
 | LB (hold) | sprint |
 | Select (hold) | scoreboard |
-| Start | menu; on a phone without a controller there's a Menu button |
+| Start | pause (menu); on a phone there's also a Menu button |
 
-Look speed, invert Y and vibration are on the start screen and saved in your browser. `npm run test:input` checks
+Look speed, invert Y, vibration, volume and graphics quality are under Settings and saved in your browser. `npm run test:input` checks
 the deadzones, response curve and buttons.
 
 ## How it's put together
@@ -87,6 +90,7 @@ src/          the browser game
   avatars.ts    other players: the animated model, driven by speed / crouch / eliminated / shots
   net.ts        WebSocket client + snapshot interpolation
   hud.ts        HTML overlay (no UI framework)
+  menu.ts       main, pause, settings and controls menus; controller navigation
 ```
 
 **Who decides what:**

@@ -40,7 +40,8 @@ export function makeHttpHandler(opts: { staticDir: string | null; health: () => 
   return (req: IncomingMessage, res: ServerResponse) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
     if (url.pathname === '/healthz') {
-      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', ...SECURITY_HEADERS });
+      // public numbers (players, bots, phase) the main menu shows; any page may read them
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*', ...SECURITY_HEADERS });
       res.end(JSON.stringify({ ok: true, ...opts.health() }));
       return;
     }
