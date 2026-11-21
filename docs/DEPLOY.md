@@ -51,6 +51,16 @@ fly logs                        # server log lines
   next visit, so an unused game costs almost nothing. The first page load after idle takes a few seconds. An open game
   connection counts as in use, so a match is never stopped halfway.
 - **Health:** Fly polls `GET /healthz` every 30 s.
+- **Automatic deploys:** `.github/workflows/deploy.yml` deploys every push to `main` once CI has passed on it
+  (a newer push waits for the running deploy rather than cancelling it), then checks `/healthz` on the live site.
+  You can also start it by hand from the Actions tab. It needs a deploy token in the repo's `FLY_API_TOKEN` secret,
+  and skips with a warning until one is set:
+
+  ```sh
+  fly tokens create deploy -a splat-arena -x 8760h | gh secret set FLY_API_TOKEN
+  ```
+
+  A deploy token can only deploy this one app. It expires after a year (`-x`); make a new one the same way.
 - **Deploys:** Fly stops the old machine with `SIGTERM`, which ends the current match (see "Restarts and deploys").
 - **More regions:** each machine is its own 12-player room, and Fly sends each player to the nearest running machine.
   `fly scale count 1 --region <code>` adds one machine in another region. Keep one machine per region until the server

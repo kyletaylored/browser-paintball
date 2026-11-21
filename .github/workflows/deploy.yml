@@ -1,0 +1,52 @@
+name: Deploy
+
+# Ships main to Fly.io once CI has passed on it. Runs from a separate workflow (not a job in ci.yml)
+# so a newer push can't cancel a deploy halfway: CI cancels superseded runs, this queues them.
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-fly
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    if: github.event_name == 'workflow_dispatch' || (github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: production
+      url: https://splat-arena.fly.dev/
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # the commit CI tested, not whatever main points at now
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      # pinned to the v1.5 release commit: this step runs with the deploy token
+      - uses: superfly/flyctl-actions/setup-flyctl@fc53c09e1bc3be6f54706524e3b82c4f462f77be
+
+      - name: Deploy
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          if [ -z "$FLY_API_TOKEN" ]; then
+            echo "::warning::FLY_API_TOKEN is not set; skipping the deploy (see docs/DEPLOY.md)"
+            exit 0
+          fi
+          flyctl deploy --remote-only --ha=false
+
+      - name: Live site answers
+        if: env.FLY_API_TOKEN != ''
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+        run: |
+          for i in $(seq 1 30); do curl -fsS https://splat-arena.fly.dev/healthz && exit 0; sleep 2; done
+          exit 1
