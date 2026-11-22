@@ -24,6 +24,7 @@ import {
 } from '../shared/sim';
 import { BotBrain, NavGrid, SKILLS, botName, type CoverSpot, type Seen } from './bots';
 import { decodeClient, encodeAck, encodeBall, encodeSnap } from '../shared/codec';
+import { walkOffInput } from '../shared/walkoff';
 import { FastLink, type RtcOptions } from './rtc';
 import { voiceConfig, voiceToken } from './voice';
 import {
@@ -93,7 +94,8 @@ interface Player {
   ws: WebSocket | null;
   /** data channel for snapshots, acks and input frames, once the browser asks for one (humans only) */
   fast: FastLink | null;
-  bot: { brain: BotBrain } | null;
+  /** walkLeft: time not yet walked off the field in INPUT_DT steps, while out */
+  bot: { brain: BotBrain; walkLeft: number } | null;
   /** authoritative movement state; x/y/z below mirror it */
   body: Body;
   /** last input frame applied (humans) */
@@ -327,7 +329,12 @@ function applyInput(p: Player, f: unknown) {
   p.budget -= INPUT_DT;
   p.yaw = yaw;
   p.pitch = clamp(pitch, -1.6, 1.6);
-  // eliminated, or holding still for the countdown: the browser steps with no keys, so do the same
+  // eliminated: walk off the field (the browser runs the same walk-off). Holding still for the
+  // countdown: the browser steps with no keys, so do the same
+  if (!p.alive && match.phase !== 'countdown') {
+    walkOff(p);
+    return;
+  }
   const canMove = p.alive && match.phase !== 'countdown';
   moveIn.forward = canMove ? clamp(forward, -1, 1) : 0;
   moveIn.right = canMove ? clamp(right, -1, 1) : 0;
@@ -342,6 +349,18 @@ function applyInput(p: Player, f: unknown) {
   p.z = p.body.z;
   p.crouch = moveIn.crouch;
   p.prone = moveIn.prone;
+}
+
+/** one step of an out player's walk to the side line, for humans and bots alike */
+function walkOff(p: Player) {
+  walkOffInput(p.body, moveIn);
+  stepMovement(p.body, moveIn, INPUT_DT);
+  p.x = p.body.x;
+  p.y = p.body.y;
+  p.z = p.body.z;
+  p.yaw = moveIn.yaw;
+  p.pitch = 0;
+  p.crouch = p.prone = false;
 }
 
 function spawnBall(p: Player, o: V3, dir: V3) {
@@ -445,7 +464,7 @@ function addBot(team: Team) {
   brain.reset(sp.yaw);
   const alive = match.phase !== 'live';
   players.set(id, {
-    ws: null, fast: null, bot: { brain }, body: newBody(sp.x, sp.y, sp.z), lastSeq: -1, budget: 0, history: [], id, team, slot, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw, pitch: 0,
+    ws: null, fast: null, bot: { brain, walkLeft: 0 }, body: newBody(sp.x, sp.y, sp.z), lastSeq: -1, budget: 0, history: [], id, team, slot, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw, pitch: 0,
     crouch: false, prone: false, alive, outUntil: alive ? 0 : Infinity, lastFire: 0,
     name, wantName: name, lastRename: 0, k: 0, d: 0, ping: 0, lastVoiceToken: -Infinity, vote: null,
   });
@@ -483,7 +502,16 @@ function updateBots(dt: number) {
   const seen: Seen[] = [];
   for (const p of players.values()) seen.push({ id: p.id, team: p.team, x: p.x, y: p.y, z: p.z, crouch: p.crouch, prone: p.prone, alive: p.alive });
   for (const p of players.values()) {
-    if (!p.bot || !p.alive || !canMove) continue;
+    if (!p.bot) continue;
+    if (!p.alive) {
+      // out: walk off the field (between points too, like humans). The bot runs at the server
+      // tick, not in input steps, so take as many walk-off steps as fit
+      if (match.phase === 'countdown') continue;
+      p.bot.walkLeft += dt;
+      for (; p.bot.walkLeft >= INPUT_DT; p.bot.walkLeft -= INPUT_DT) walkOff(p);
+      continue;
+    }
+    if (!canMove) continue;
     const { brain } = p.bot;
     const body = p.body;
     const out = brain.update(t, dt, { id: p.id, team: p.team, x: body.x, y: body.y, z: body.z, height: body.height, speed: Math.hypot(body.vx, body.vz) }, seen, canMove);

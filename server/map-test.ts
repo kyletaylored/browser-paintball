@@ -13,15 +13,17 @@
 //
 // Paint: glancing hits bounce and square ones break, and every machine rolls the same bounces.
 // Lying down: the body is hit along the ground, not as a short upright stub.
+// Out: from anywhere on every field, an eliminated player walks off past the side line.
 
 import { MAP_LIST, DEFAULT_MAP, nextMap, unanimousVote, voteWinner } from '../shared/maps';
 import { field, setMap, spawnPoint, footprintDistance, topOf, type Bunker } from '../shared/field';
 import {
   traceWorld, stepMovement, advanceBall, hitWorld, ballSeed, bounceChance, segmentHitsPlayer, BALL_DT, STAND_HEIGHT,
-  PRONE_HEIGHT, PLAYER_RADIUS,
+  PRONE_HEIGHT, PLAYER_RADIUS, INPUT_DT,
   type Ball, type Body, type MoveInput, type Contact,
 } from '../shared/sim';
 import { NavGrid } from './bots';
+import { walkOffInput, walkOffMap, offField, waitLine } from '../shared/walkoff';
 import { join, send, startServer, waitFor, snapWhere, rosterWhere, type Hit } from './test-client';
 import type { ServerMsg } from '../shared/protocol';
 
@@ -291,8 +293,38 @@ function lyingDown() {
     segmentHitsPlayer(1, 0.15, -3, 1, 0.15, 3, 0, 0, 0, PRONE_HEIGHT, -Math.PI / 2, true) === null);
 }
 
+function walkingOff() {
+  console.log('-- walking off when out');
+  for (const m of MAP_LIST) {
+    setMap(m.id);
+    const t0 = performance.now();
+    walkOffMap();
+    const built = performance.now() - t0;
+    let starts = 0;
+    let slowest = 0;
+    const stuck: string[] = [];
+    const move: MoveInput = { forward: 0, right: 0, jump: false, sprint: false, crouch: false, prone: false, yaw: 0 };
+    // starts every 2 m over the whole field, wherever a player can stand
+    for (let x = -field.halfL + 0.5; x <= field.halfL - 0.5; x += 2) {
+      for (let z = -field.halfW + 0.5; z <= field.halfW - 0.5; z += 2) {
+        if (field.bunkers.some((b, i) => footprintDistance(b, x, z, i) < PLAYER_RADIUS)) continue;
+        starts++;
+        const body: Body = { x, y: 0, z, vx: 0, vy: 0, vz: 0, height: STAND_HEIGHT, onGround: true };
+        let t = 0;
+        for (; t < 30 && walkOffInput(body, move); t += INPUT_DT) stepMovement(body, move, INPUT_DT);
+        if (!offField(body.x, body.z) || Math.abs(body.z) < waitLine() - 0.1) stuck.push(`(${x.toFixed(1)}, ${z.toFixed(1)})`);
+        else slowest = Math.max(slowest, t);
+      }
+    }
+    check(`${m.name}: out players walk off from all ${starts} starts (slowest ${slowest.toFixed(1)} s)`, !stuck.length, `stuck from ${stuck.slice(0, 5).join(' ')}`);
+    check(`${m.name}: the way off is worked out quickly (${built.toFixed(0)} ms)`, built < 300);
+  }
+  setMap(DEFAULT_MAP);
+}
+
 paintRules();
 lyingDown();
+walkingOff();
 voteRules();
 await voting();
 
