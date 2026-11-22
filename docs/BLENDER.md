@@ -3,7 +3,8 @@
 Most of the game's models are built in code (`scripts/build-assets.ts`). Anything more detailed is easier to make in
 Blender, and this pipeline gets it from Blender into the game in one command. The first model made this way is the pump
 marker you hold in pump mode (`art/pump-marker.py` → `public/models/pump-marker.glb`). The inflatable bunkers on every
-field come from it too (`art/bunkers.py` → `public/models/bunkers.glb`).
+field come from it too (`art/bunkers.py` → `public/models/bunkers.glb`), and so does the player figure
+(`art/player.py` → `public/models/player.glb`).
 
 ## The look
 
@@ -67,6 +68,15 @@ makes `npm run assets:blender` write every inflatable bunker's shape (from `shar
 `scripts/bunker-shapes.ts`) to a JSON file and pass its path in the `SPLAT_INPUT` environment variable. The models then
 always fit what the server collides with, and `npm run check:models` fails if a field gains a bunker that has no
 model yet.
+
+## Animations kept in code
+
+The player figure's joints and animations live in `scripts/player-rig.ts`, so the game, the rig and the animations
+can't drift apart. `"input": "player"` hands the joints to `art/player.py`, which builds an empty per joint (named
+like the game expects) with that joint's shapes in a child `<joint>_mesh`. `"clips": "player"` then adds every
+animation to the export before it's compressed. To change how the figure moves, edit the poses in `player-rig.ts`
+and re-export. To change how it looks, edit `art/player.py`. Keep the top of the helmet at the standing height: that's
+where the hitbox ends.
 
 ## Adding a model
 
