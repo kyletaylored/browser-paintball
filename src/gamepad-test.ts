@@ -103,6 +103,13 @@ s.update(pad([BTN.B]), 1 / 60);
 check('B is reported for "back"', s.bPressed);
 s.update(pad(), 1 / 60);
 
+s.update(pad([BTN.UP]), 1 / 60);
+const talking = s.talk;
+s.update(pad([BTN.UP]), 1 / 60);
+check('holding d-pad up is push-to-talk, for as long as it is held', talking && s.talk);
+s.update(pad(), 1 / 60);
+check('letting go of d-pad up stops talking', !s.talk);
+
 s.update(pad([BTN.START]), 1 / 60);
 check('Start is reported once', s.startPressed);
 s.update(null, 1 / 60);

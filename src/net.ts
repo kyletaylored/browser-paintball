@@ -20,6 +20,8 @@ export interface NetEvents {
   hit(m: Extract<ServerMsg, { t: 'hit' }>): void;
   respawn(spawn: Spawn): void;
   ack(m: Extract<ServerMsg, { t: 'ack' }>): void;
+  /** a voice server token (asked for with { t: 'voice' }) */
+  voice(url: string, token: string): void;
   disconnected(): void;
 }
 
@@ -57,6 +59,8 @@ export class Net {
   id = -1;
   team: Team = 0;
   score: [number, number] = [0, 0];
+  /** the server has team voice chat */
+  voice = false;
   /** latest match state from the server, and when it arrived (performance.now ms) */
   round: RoundState | null = null;
   roundAt = 0;
@@ -153,6 +157,7 @@ export class Net {
     this.lastSnapSeq = -1;
     this.lastAckSeq = -1;
     this.id = -1;
+    this.voice = false;
     this.round = null;
     this.score = [0, 0];
     this.remotes.clear();
@@ -242,6 +247,7 @@ export class Net {
         this.retryDelay = 3000;
         this.id = m.id;
         this.team = m.team;
+        this.voice = m.voice === true;
         this.round = m.round;
         this.roundAt = performance.now();
         Object.assign(this.timing, { last: 0, longest: 0, over100: 0, count: 0, since: this.roundAt });
@@ -266,6 +272,9 @@ export class Net {
         break;
       case 'ice':
         this.fast?.candidate(m.c, m.mid);
+        break;
+      case 'voice':
+        if (typeof m.url === 'string' && typeof m.token === 'string') this.ev.voice(m.url, m.token);
         break;
       case 'snap': {
         if (m.seq <= this.lastSnapSeq) break; // older than one we have: skip it

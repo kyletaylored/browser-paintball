@@ -1,0 +1,35 @@
+# The game plus a LiveKit media server for team voice chat, on one host. Voice is optional: without
+# it, run the game image on its own (see docs/DEPLOY.md).
+#
+#   cp .env.example .env        # then fill in LIVEKIT_URL, LIVEKIT_API_KEY and LIVEKIT_API_SECRET
+#   docker compose up -d --build
+#
+# Both services need TLS in front for https:// pages: the game on its domain, LiveKit's port 7880 on
+# another (wss://voice.example.com). Open 7881/tcp and 7882/udp to the internet for the voice audio.
+
+services:
+  game:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    environment:
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+      LIVEKIT_URL: ${LIVEKIT_URL:?set LIVEKIT_URL in .env (see docs/DEPLOY.md)}
+      LIVEKIT_API_KEY: ${LIVEKIT_API_KEY:?set LIVEKIT_API_KEY in .env}
+      LIVEKIT_API_SECRET: ${LIVEKIT_API_SECRET:?set LIVEKIT_API_SECRET in .env}
+      VOICE_ROOM: ${VOICE_ROOM:-splat-arena}
+
+  livekit:
+    image: livekit/livekit-server:v1.13.11
+    restart: unless-stopped
+    command: --config /etc/livekit.yaml
+    environment:
+      # "key: secret", from the same .env values the game signs tokens with
+      LIVEKIT_KEYS: "${LIVEKIT_API_KEY}: ${LIVEKIT_API_SECRET}"
+    volumes:
+      - ./deploy/livekit.yaml:/etc/livekit.yaml:ro
+    ports:
+      - "7880:7880" # signalling (WebSocket); put TLS in front of it
+      - "7881:7881" # audio over TCP, for networks that block UDP
+      - "7882:7882/udp" # audio over UDP

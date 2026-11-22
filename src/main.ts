@@ -20,6 +20,7 @@ import { Nameplates, type PlateTarget } from './nameplates';
 import { Prediction } from './prediction';
 import { Net, sampleRemote, phaseSecondsLeft } from './net';
 import { NetStats } from './netstats';
+import { Voice, type VoiceSettings } from './voice';
 import { BALL_SPEED, FIRE_INTERVAL, STAND_HEIGHT, CROUCH_HEIGHT, CLIENT_SEND_HZ, RESPAWN_SECONDS, INPUT_DT, INTERP_DELAY } from '../shared/sim';
 import { DEFAULT_PORT, TEAM_COLORS, TEAM_NAMES, cleanName, type RoundPhase, type V3 } from '../shared/protocol';
 
@@ -92,6 +93,17 @@ hud.bindMapPicker((id) => {
   if (mode !== 'online') switchMap(id);
 });
 input.onPadLost = () => hud.toast('Controller disconnected · paused');
+
+// voice chat settings live in this browser too (Settings: on/off, voices volume)
+const VOICE_KEY = 'splat-arena.voice';
+const voiceSettings: VoiceSettings = { enabled: true, volume: 0.9 };
+try {
+  const v = JSON.parse(localStorage.getItem(VOICE_KEY) ?? '{}') as Record<string, unknown>;
+  if (typeof v.enabled === 'boolean') voiceSettings.enabled = v.enabled;
+  if (typeof v.volume === 'number' && v.volume >= 0 && v.volume <= 1) voiceSettings.volume = v.volume;
+} catch {
+  // storage blocked or garbled: defaults
+}
 const player = new LocalPlayer(camera, models?.marker ?? null);
 const balls = new Paintballs(scene);
 const fx = new Fx(scene);
@@ -100,7 +112,10 @@ player.placeAt(spawnPoint(0, 2));
 
 // browsers only let audio start from a click or key press (the menu buttons count)
 canvas.addEventListener('click', () => sound.unlock());
-document.getElementById('menu')!.addEventListener('click', () => sound.unlock());
+document.getElementById('menu')!.addEventListener('click', () => {
+  sound.unlock();
+  voice.unlock();
+});
 hud.bindAudio(sound);
 
 // mix levels (each synthesised sound is normalised, so these set the balance)
@@ -194,6 +209,8 @@ const serverUrl: string =
 const net = new Net(serverUrl, {
   welcome(_id, team, spawn, map) {
     switchMap(map);
+    voice.available = net.voice;
+    hud.setVoiceAvailable(net.voice);
     prediction.reset();
     netStats.reset();
     player.setTeam(team);
@@ -254,8 +271,25 @@ const net = new Net(serverUrl, {
     player.alive = true;
     hud.toast('Lost the server, back to practice');
   },
+  voice(url, token) {
+    void voice.gotToken(url, token);
+  },
 }, () => myName);
 const netStats = new NetStats(net);
+
+const voice = new Voice(voiceSettings, () => net.send({ t: 'voice' }));
+hud.bindVoice(
+  voiceSettings,
+  () => {
+    voice.settingsChanged();
+    try {
+      localStorage.setItem(VOICE_KEY, JSON.stringify(voiceSettings));
+    } catch {
+      // ignore
+    }
+  },
+  (held) => (input.touchTalk = held),
+);
 
 function updateRemotes(now: number) {
   const at = now - INTERP_DELAY_MS;
@@ -371,9 +405,10 @@ async function refreshField() {
   fieldBusy = true;
   try {
     const r = await fetch(`${httpBase}/healthz`, { cache: 'no-store' });
-    const j = (await r.json()) as { players?: unknown; bots?: unknown; map?: unknown };
+    const j = (await r.json()) as { players?: unknown; bots?: unknown; map?: unknown; voice?: unknown };
     const onMap = MAP_LIST.find((m) => m.id === j.map);
     hud.setFieldInfo({ players: Number(j.players) || 0, bots: Number(j.bots) || 0, map: onMap?.name ?? null });
+    if (net.status !== 'online') hud.setVoiceAvailable(j.voice === true); // so Settings shows the voice options
   } catch {
     hud.setFieldInfo(null);
   } finally {
@@ -526,7 +561,10 @@ function updatePlates(online: boolean) {
   if (online) {
     for (const [id, ra] of remoteAvatars) {
       const t = ra.target;
-      plateTargets.push({ id, name: net.nameOf(id), team: t.team === 0 ? 0 : 1, x: t.x, y: t.y + t.height + 0.28, z: t.z, alive: t.alive });
+      plateTargets.push({
+        id, name: net.nameOf(id), team: t.team === 0 ? 0 : 1, x: t.x, y: t.y + t.height + 0.28, z: t.z, alive: t.alive,
+        speaking: voice.speaking.has(id),
+      });
     }
   }
   plates.update(camera, plateTargets);
@@ -651,7 +689,13 @@ function frame(now: number) {
     hud.setScore(`Practice hits: ${practiceHits}`);
   }
   hud.setAmmo(hopper, HOPPER, reloadLeft > 0);
-  hud.setScoreboard(online && input.active && input.scoreboardHeld ? [...net.roster.values()] : null, net.id, net.score, field.map.name);
+  hud.setScoreboard(online && input.active && input.scoreboardHeld ? [...net.roster.values()] : null, net.id, net.score, field.map.name, voice.speaking);
+
+  // voice chat: join or leave the voice room as people come and go, push-to-talk, the talk chip
+  voice.update(online, net.id, net.team, [...net.roster.values()].map((r) => ({ id: r.id, team: r.team, bot: r.bot })), phase, now);
+  voice.setTalk(online && input.talkHeld); // out of the point, you can still talk to your team
+  hud.setVoice(voice, online && input.active, TOUCH);
+  if (menu.screen === 'players') hud.setPlayers(online ? [...net.roster.values()] : [], net.id, voice, (id) => voice.toggleMute(id));
   hud.showOut(player.alive ? null : outLine(phase, now));
 
   if (menu.screen === 'main') {

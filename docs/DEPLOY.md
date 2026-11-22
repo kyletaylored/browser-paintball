@@ -109,6 +109,57 @@ then add to `fly.toml`:
     port = 8788
 ```
 
+## Voice chat (optional)
+
+Team voice chat goes through a [LiveKit](https://livekit.io) media server (open source, self-hosted). Each player sends
+one audio stream to it, and it forwards streams to whoever may hear them. Without one configured the game runs exactly
+as before and the voice controls stay hidden.
+
+How it fits together:
+
+- The game server stays in charge. When a player first needs voice, it signs a 10-minute LiveKit token naming them
+  (`p<id>`), their name and their team, for one room (`VOICE_ROOM`). The browser can't change any of that.
+- Browsers only connect while there's another human in the match (bots don't talk). The microphone opens only when a
+  player first holds push-to-talk (V, d-pad up, or the Talk button on a phone), and that's when the browser asks for
+  permission.
+- During a point each player's track only lets their teammates subscribe, and the media server enforces that. In
+  warm-up and after a match everyone hears everyone. Voices from the other team are also silenced on the listener's
+  side.
+
+Set three variables on the game server; with any of them unset, voice is off:
+
+| variable | |
+|---|---|
+| `LIVEKIT_URL` | where browsers reach the media server, e.g. `wss://voice.example.com` (must be `wss://` for an `https://` game) |
+| `LIVEKIT_API_KEY` | the API key the media server is configured with |
+| `LIVEKIT_API_SECRET` | its secret: at least 32 random characters (`openssl rand -base64 32`). Keep it out of git |
+| `VOICE_ROOM` | room name, default `splat-arena` |
+
+**Running the media server next to the game** (`docker-compose.yml`, settings in `deploy/livekit.yaml`):
+
+```sh
+cp .env.example .env          # fill in LIVEKIT_URL, LIVEKIT_API_KEY, LIVEKIT_API_SECRET (.env is git-ignored)
+docker compose up -d --build
+```
+
+- Ports: `7880/tcp` is signalling (put TLS in front, on its own domain), `7881/tcp` carries audio for networks that
+  block UDP, and `7882/udp` carries audio. Open 7881 and 7882 to the internet.
+- Size: 12 players' voices is light work; a 1 GB VPS runs both containers.
+- **Fly.io:** LiveKit needs UDP and fixed ports, which Fly only offers with a dedicated IPv4. A small VPS for the
+  media server, or the hosted LiveKit Cloud, is simpler. Then set the three variables as Fly secrets:
+  `fly secrets set LIVEKIT_URL=... LIVEKIT_API_KEY=... LIVEKIT_API_SECRET=...`.
+
+**Trying it locally:** LiveKit's development mode uses a fixed, publicly documented key pair (`devkey` / `secret`), so
+it must never be used on a public server:
+
+```sh
+docker run --rm -p 7880:7880 -p 7881:7881 -p 7882:7882/udp livekit/livekit-server:v1.13.11 --dev --bind 0.0.0.0 --node-ip 127.0.0.1
+LIVEKIT_URL=ws://localhost:7880 LIVEKIT_API_KEY=devkey LIVEKIT_API_SECRET=secret npm run dev
+```
+
+Open the game in two browser windows on the same team (with bots off, `BOT_TEAM_SIZE=0`, the second joins the other
+team; join a third to get a teammate), hold V in one and listen in the other.
+
 ## Option B: website on a static host, server elsewhere
 
 1. Build the website with the server's public address baked in:
@@ -147,6 +198,8 @@ all with their defaults. For a local run you can copy it to `.env` (git ignores 
 | `RTC_UDP_PORT` | game port + 1 in development, off in production | the one UDP port for data channels; `0` = off |
 | `RTC_PUBLIC_IP` | unset | address browsers send UDP to, when it isn't the server's own (NAT, containers, proxies) |
 | `RTC_BIND_ADDRESS` | all interfaces | local address or host name to bind the UDP port to (`fly-global-services` on Fly.io) |
+| `LIVEKIT_URL` / `LIVEKIT_API_KEY` / `LIVEKIT_API_SECRET` | unset (voice off) | team voice chat; see "Voice chat" above |
+| `VOICE_ROOM` | `splat-arena` | the voice room name |
 
 Build-time only (website):
 

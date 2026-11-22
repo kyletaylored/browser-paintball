@@ -93,12 +93,14 @@ export type ClientMsg =
    */
   | { t: 'rtc'; sdp?: string }
   /** one of our ICE candidates */
-  | { t: 'ice'; c: string; mid: string };
+  | { t: 'ice'; c: string; mid: string }
+  /** a token for the voice server (only if the welcome said voice is on) */
+  | { t: 'voice' };
 
 /** server → browser */
 export type ServerMsg =
-  /** map: the field being played (an id from shared/maps.ts) */
-  | { t: 'welcome'; id: number; team: Team; spawn: Spawn; round: RoundState; map: string }
+  /** map: the field being played (an id from shared/maps.ts); voice: this server has team voice chat (ask for a token with { t: 'voice' }) */
+  | { t: 'welcome'; id: number; team: Team; spawn: Spawn; round: RoundState; map: string; voice: boolean }
   /** the field changed (between matches); a respawn on the new field follows */
   | { t: 'map'; id: string }
   /** seq counts up by one per snapshot (to skip late ones); score is points won this match */
@@ -117,7 +119,9 @@ export type ServerMsg =
   /** data channel offer, in reply to the browser's { t: 'rtc' } */
   | { t: 'rtc'; sdp: string }
   /** one of the server's ICE candidates */
-  | { t: 'ice'; c: string; mid: string };
+  | { t: 'ice'; c: string; mid: string }
+  /** voice server address and a short-lived token for it; identities are 'p' + player id */
+  | { t: 'voice'; url: string; token: string };
 
 export const DEFAULT_PORT = 8787;
 export const NAME_MAX = 16;

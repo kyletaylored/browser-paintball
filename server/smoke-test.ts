@@ -11,10 +11,14 @@
 //  4. Data channel: a player asks for one, snapshots and acks arrive on it, and with 5% of packets
 //     lost each way its movement still matches the server exactly (inputs are sent with redundancy)
 //     and no snapshot is held up. With data channels off on the server, it plays over the WebSocket.
+//  5. Voice: with no media server configured the welcome says so and token requests are ignored
+//     (the game is unchanged); with one configured, players get a signed, short-lived token that
+//     names them and their team, at most one every few seconds.
 //
 // Set SERVER_URL to run only the rules check against a server you started yourself (bots off), and
 // SERVER_RTC=1 as well to check a data channel opens to it.
 
+import { createHmac } from 'node:crypto';
 import { cleanName, type ServerMsg, type InputFrame } from '../shared/protocol';
 import { EYE_FROM_TOP } from '../shared/sim';
 import {
@@ -274,6 +278,54 @@ async function noRtcTest(url: string) {
   c.ws.close();
 }
 
+// ---- 5. voice ------------------------------------------------------------------------------
+
+type Welcome = Extract<ServerMsg, { t: 'welcome' }>;
+type VoiceMsg = Extract<ServerMsg, { t: 'voice' }>;
+const isWelcome = (m: ServerMsg): m is Welcome => m.t === 'welcome';
+const isVoice = (m: ServerMsg): m is VoiceMsg => m.t === 'voice';
+
+async function noVoiceTest(url: string) {
+  console.log('-- voice not configured');
+  const c = await join(url);
+  const welcome = c.inbox.find(isWelcome);
+  send(c.ws, { t: 'voice' });
+  const token = await waitFor(c.inbox, isVoice, 600);
+  check('the welcome says there is no voice', welcome?.voice === false);
+  check('a voice token request is ignored', token === null);
+  c.ws.close();
+}
+
+// test values only: nothing real is signed with these
+const TEST_VOICE = { LIVEKIT_URL: 'ws://voice.test:7880', LIVEKIT_API_KEY: 'test-key', LIVEKIT_API_SECRET: 'test-secret-not-real', VOICE_ROOM: 'test-room' };
+
+async function voiceTest(url: string) {
+  console.log('-- voice configured (no media server needed: only the token is checked)');
+  const c = await join(url);
+  const welcome = c.inbox.find(isWelcome);
+  check('the welcome says voice is on', welcome?.voice === true);
+  send(c.ws, { t: 'voice' });
+  const v = await waitFor(c.inbox, isVoice, 1000);
+  const [h, b, sig] = (v?.token ?? '..').split('.');
+  const good = createHmac('sha256', TEST_VOICE.LIVEKIT_API_SECRET).update(`${h}.${b}`).digest('base64url') === sig;
+  let claims: Record<string, any> = {};
+  try {
+    claims = JSON.parse(Buffer.from(b, 'base64url').toString());
+  } catch {
+    // stays empty: the checks below fail
+  }
+  check('the token comes with the media server address', v?.url === TEST_VOICE.LIVEKIT_URL);
+  check('the token is signed with the API secret (HS256)', good && JSON.parse(Buffer.from(h, 'base64url').toString()).alg === 'HS256');
+  check(`it names the player (${claims.sub}) and their team, for the voice room only`,
+    claims.iss === TEST_VOICE.LIVEKIT_API_KEY && claims.sub === `p${c.id}` && claims.attributes?.team === String(c.team) &&
+    claims.video?.room === TEST_VOICE.VOICE_ROOM && claims.video?.roomJoin === true && claims.video?.canPublishData === false);
+  check('it expires within a few minutes', typeof claims.exp === 'number' && claims.exp - Date.now() / 1000 <= 11 * 60 && claims.exp > Date.now() / 1000);
+  const before = c.inbox.length;
+  send(c.ws, { t: 'voice' });
+  check('a second request straight away gets no new token', (await waitFor(c.inbox, isVoice, 500, before)) === null);
+  c.ws.close();
+}
+
 // ---- run -----------------------------------------------------------------------------------
 
 try {
@@ -312,6 +364,18 @@ try {
       await noRtcTest(noRtc.url);
     } finally {
       noRtc.stop();
+    }
+    const noVoice = await startServer({ BOT_TEAM_SIZE: '0', LIVEKIT_URL: '' }); // off even if your shell has it set
+    try {
+      await noVoiceTest(noVoice.url);
+    } finally {
+      noVoice.stop();
+    }
+    const withVoice = await startServer({ BOT_TEAM_SIZE: '0', ...TEST_VOICE });
+    try {
+      await voiceTest(withVoice.url);
+    } finally {
+      withVoice.stop();
     }
     const bots = await startServer({ BOT_TEAM_SIZE: '2', BOT_SKILL: 'hard' });
     try {
