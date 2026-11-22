@@ -242,6 +242,12 @@ function slide(p: Body, nx: number, nz: number, depth: number): void {
 
 // ---- paintballs ---------------------------------------------------------------------------
 
+/**
+ * Balls fly in fixed steps of this, on the server and in every browser, so the same ball takes the
+ * same path everywhere (and bounces the same way: see hitWorld).
+ */
+export const BALL_DT = INPUT_DT;
+
 export interface Ball {
   x: number;
   y: number;
@@ -252,6 +258,84 @@ export interface Ball {
   age: number;
   owner: number;
   team: number;
+  /** this ball's random numbers (ballSeed, then rolled on each hit); the same on every machine */
+  seed: number;
+  /** times it has bounced off something without breaking */
+  bounces: number;
+}
+
+const f32 = new Float32Array(3);
+const u32 = new Uint32Array(f32.buffer);
+
+/**
+ * Where a ball's random numbers start: a hash of the point it was fired from, rounded to float32
+ * the way the wire sends it. The shooter, the server and everyone who gets the 'ball' message all
+ * know that point, so they all roll the same bounces without anyone sending a seed.
+ */
+export function ballSeed(o: readonly number[]): number {
+  f32[0] = o[0];
+  f32[1] = o[1];
+  f32[2] = o[2];
+  let h = 0x811c9dc5;
+  for (let i = 0; i < 3; i++) {
+    h = Math.imul(h ^ u32[i], 0x01000193);
+    h ^= h >>> 15;
+    h = Math.imul(h, 0x2c1b3c6d);
+  }
+  return h >>> 0;
+}
+
+/** the ball's next random number in [0, 1) (mulberry32) */
+function roll(b: Ball): number {
+  let t = (b.seed = (b.seed + 0x6d2b79f5) | 0);
+  t = Math.imul(t ^ (t >>> 15), t | 1);
+  t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+  return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+}
+
+const MAX_BOUNCES = 3;
+/** after a bounce: what's left of the speed into the surface, and along it */
+const BOUNCE_RESTITUTION = 0.3;
+const BOUNCE_FRICTION = 0.72;
+/** slower than this after a bounce, the ball just drops and rolls: it's out of play */
+const BOUNCE_MIN_SPEED = 6;
+
+/**
+ * How likely a ball is to bounce instead of breaking. cos is how square-on it hits (1 = straight
+ * at the surface, 0 = skimming along it). A glancing hit usually bounces, a square one never does,
+ * and a slow ball (long range, or one that already bounced) bounces more easily.
+ */
+export function bounceChance(cos: number, speed: number): number {
+  const angle = clamp01((0.5 - cos) / 0.38);
+  const slow = clamp01((40 - speed) / 40) * 0.45;
+  return Math.min(0.92, angle * 0.85 + (cos < 0.75 ? slow : 0));
+}
+
+export type Contact = 'break' | 'bounce' | 'stop';
+
+/**
+ * The ball touched the world at w (from traceWorld): it breaks (paint), bounces off (the ball is
+ * moved to the contact point and its velocity reflected), or bounces and has too little speed left
+ * to matter ('stop': it's gone, without paint). Rolls the ball's random number either way, so every
+ * machine stays in step.
+ */
+export function hitWorld(b: Ball, w: WorldHit): Contact {
+  const speed = Math.hypot(b.vx, b.vy, b.vz);
+  const vn = b.vx * w.nx + b.vy * w.ny + b.vz * w.nz; // negative: into the surface
+  const cos = speed > 1e-6 ? -vn / speed : 1;
+  const r = roll(b);
+  if (b.bounces >= MAX_BOUNCES || r >= bounceChance(cos, speed)) return 'break';
+  const tx = b.vx - w.nx * vn;
+  const ty = b.vy - w.ny * vn;
+  const tz = b.vz - w.nz * vn;
+  b.vx = tx * BOUNCE_FRICTION - w.nx * vn * BOUNCE_RESTITUTION;
+  b.vy = ty * BOUNCE_FRICTION - w.ny * vn * BOUNCE_RESTITUTION;
+  b.vz = tz * BOUNCE_FRICTION - w.nz * vn * BOUNCE_RESTITUTION;
+  b.x = w.x + w.nx * 0.01;
+  b.y = w.y + w.ny * 0.01;
+  b.z = w.z + w.nz * 0.01;
+  b.bounces++;
+  return Math.hypot(b.vx, b.vy, b.vz) < BOUNCE_MIN_SPEED ? 'stop' : 'bounce';
 }
 
 export function advanceBall(b: Ball, dt: number): void {
@@ -279,6 +363,8 @@ export interface WorldHit {
   nx: number;
   ny: number;
   nz: number;
+  /** which bunker (an index into field.bunkers), or -1 for the ground */
+  bunker: number;
 }
 
 /**
@@ -293,6 +379,7 @@ export function traceWorld(x0: number, y0: number, z0: number, x1: number, y1: n
   let nx = 0;
   let ny = 0;
   let nz = 0;
+  let hitI = -1;
 
   if (y0 > 0 && y1 <= 0) {
     best = y0 / (y0 - y1);
@@ -314,6 +401,7 @@ export function traceWorld(x0: number, y0: number, z0: number, x1: number, y1: n
         nx = hitN[0];
         ny = hitN[1];
         nz = hitN[2];
+        hitI = i;
       }
       continue;
     }
@@ -324,6 +412,7 @@ export function traceWorld(x0: number, y0: number, z0: number, x1: number, y1: n
         nx = boxN[0];
         ny = boxN[1];
         nz = boxN[2];
+        hitI = i;
       }
     } else {
       const fx = x0 - b.x;
@@ -342,6 +431,7 @@ export function traceWorld(x0: number, y0: number, z0: number, x1: number, y1: n
             nx = (fx + dx * t) / b.r;
             ny = 0;
             nz = (fz + dz * t) / b.r;
+            hitI = i;
           }
         }
       }
@@ -355,13 +445,14 @@ export function traceWorld(x0: number, y0: number, z0: number, x1: number, y1: n
           nx = 0;
           ny = 1;
           nz = 0;
+          hitI = i;
         }
       }
     }
   }
 
   if (best === Infinity) return null;
-  return { t: best, x: x0 + dx * best, y: y0 + dy * best, z: z0 + dz * best, nx, ny, nz };
+  return { t: best, x: x0 + dx * best, y: y0 + dy * best, z: z0 + dz * best, nx, ny, nz, bunker: hitI };
 }
 
 const boxN = [0, 0, 0];

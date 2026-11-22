@@ -10,10 +10,15 @@
 // default field's server isn't pinned to it, so it also checks the next field comes up after the match.
 //
 // Choosing the field: the vote rules, and a real server switching fields when players vote.
+//
+// Paint: glancing hits bounce and square ones break, and every machine rolls the same bounces.
 
 import { MAP_LIST, DEFAULT_MAP, nextMap, unanimousVote, voteWinner } from '../shared/maps';
 import { field, setMap, spawnPoint, footprintDistance, topOf, type Bunker } from '../shared/field';
-import { traceWorld, stepMovement, STAND_HEIGHT, PLAYER_RADIUS, type Body, type MoveInput } from '../shared/sim';
+import {
+  traceWorld, stepMovement, advanceBall, hitWorld, ballSeed, bounceChance, BALL_DT, STAND_HEIGHT, PLAYER_RADIUS,
+  type Ball, type Body, type MoveInput, type Contact,
+} from '../shared/sim';
 import { NavGrid } from './bots';
 import { join, send, startServer, waitFor, snapWhere, rosterWhere, type Hit } from './test-client';
 import type { ServerMsg } from '../shared/protocol';
@@ -223,6 +228,53 @@ async function voting() {
   }
 }
 
+// ---- paint bounces ----------------------------------------------------------------------------
+
+/** fly a ball from o with velocity v until it touches something; what happened there */
+function firstContact(o: [number, number, number], v: [number, number, number], seed: number): { c: Contact; ball: Ball } | null {
+  const b: Ball = { x: o[0], y: o[1], z: o[2], vx: v[0], vy: v[1], vz: v[2], age: 0, owner: 0, team: 0, seed, bounces: 0 };
+  for (let i = 0; i < 400; i++) {
+    const x0 = b.x;
+    const y0 = b.y;
+    const z0 = b.z;
+    advanceBall(b, BALL_DT);
+    const w = traceWorld(x0, y0, z0, b.x, b.y, b.z);
+    if (w) return { c: hitWorld(b, w), ball: b };
+  }
+  return null;
+}
+
+function paintRules() {
+  console.log('-- paint bounces');
+  setMap(DEFAULT_MAP);
+  // out past the side line, where only the ground is in the way
+  const z = field.halfW + field.margin / 2;
+  let glancing = 0;
+  let square = 0;
+  let after: Ball | null = null;
+  for (let s = 1; s <= 400; s++) {
+    const g = firstContact([-10, 0.3, z], [80, -3, 0], s * 2654435761);
+    if (g?.c === 'bounce') {
+      glancing++;
+      after ??= g.ball;
+    }
+    if (firstContact([0, 1.5, z], [0, -60, 0], s * 2654435761)?.c !== 'break') square++;
+  }
+  check(`a glancing hit usually bounces (${glancing} of 400)`, glancing > 280 && glancing < 400);
+  check(`a square hit never does (${square} of 400 didn't break)`, square === 0);
+  check('a bounced ball flies on, slower, away from the surface',
+    after !== null && after.vy > 0 && Math.hypot(after.vx, after.vy, after.vz) < 80 && after.bounces === 1);
+  check('slow paint bounces more easily than fast paint at the same angle', bounceChance(0.4, 20) > bounceChance(0.4, 80));
+  // the seed is the firing point rounded the way the wire sends it, so the server and every browser agree
+  const o: [number, number, number] = [3.14159265, 1.23456789, -7.7777777];
+  const sent = Array.from(new Float32Array(o));
+  check('the shooter, the server and everyone else get the same seed', ballSeed(o) === ballSeed(sent) && ballSeed(o) !== ballSeed([o[0] + 0.01, o[1], o[2]]));
+  const a = firstContact([-10, 0.3, z], [80, -3, 0], ballSeed(o));
+  const b = firstContact([-10, 0.3, z], [80, -3, 0], ballSeed(sent));
+  check('so the same ball bounces the same way on every machine', a !== null && b !== null && a.c === b.c && a.ball.vx === b.ball.vx && a.ball.vy === b.ball.vy);
+}
+
+paintRules();
 voteRules();
 await voting();
 

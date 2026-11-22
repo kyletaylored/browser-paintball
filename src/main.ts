@@ -122,7 +122,7 @@ document.getElementById('menu')!.addEventListener('click', () => {
 hud.bindAudio(sound);
 
 // mix levels (each synthesised sound is normalised, so these set the balance)
-const VOL = { beep: 0.4, horn: 0.35, shot: 0.5, remoteShot: 0.9, splat: 0.55, hit: 0.9, confirm: 0.5, out: 0.55, step: 0.22, remoteStep: 0.5, reload: 0.45, dry: 0.5 };
+const VOL = { beep: 0.4, horn: 0.35, shot: 0.5, remoteShot: 0.9, splat: 0.55, hit: 0.9, confirm: 0.5, out: 0.55, step: 0.22, remoteStep: 0.5, reload: 0.45, dry: 0.5, whizz: 0.75, bounce: 0.45 };
 const myFeet = new Footsteps();
 const plates = new Nameplates(document.getElementById('plates')!);
 const prediction = new Prediction();
@@ -481,10 +481,19 @@ function fire() {
 }
 
 const ballEvents: BallEvents = {
-  onWorld(b, x, y, z, nx, ny, nz) {
-    fx.splat(x, y, z, nx, ny, nz, b.color);
-    fx.burst(x, y, z, nx, ny, nz, b.color, 6);
-    sound.playAt('splat', x, y, z, { volume: VOL.splat });
+  onWorld(b, w) {
+    fx.splat(w.x, w.y, w.z, w.nx, w.ny, w.nz, b.color);
+    fx.burst(w.x, w.y, w.z, w.nx, w.ny, w.nz, b.color, 6);
+    sound.playAt('splat', w.x, w.y, w.z, { volume: VOL.splat });
+    if (w.bunker >= 0) world.hit(w.bunker, w.nx, w.nz, 1);
+  },
+  onBounce(b, w, stopped) {
+    // no paint: it didn't break. A glancing knock still shakes an inflatable a little
+    if (!stopped) sound.playAt('bounce', w.x, w.y, w.z, { volume: VOL.bounce });
+    if (w.bunker >= 0) world.hit(w.bunker, w.nx, w.nz, 0.4);
+  },
+  onNearMiss(_b, x, y, z, d) {
+    sound.playAt('whizz', x, y, z, { volume: VOL.whizz * (1.2 - d / 2) });
   },
   onTarget(b, t, x, y, z) {
     fx.burst(x, y, z, 0, 1, 0, b.color, 16);
@@ -638,7 +647,8 @@ function frame(now: number) {
     const move = player.sample(input.active && !frozen ? input : null);
     if (online) prediction.record(move, player.pitch);
     player.apply(STEP);
-    balls.update(STEP, targets, ballEvents);
+    // the same step the server flies balls in (BALL_DT), so they take the same path and bounce the same way
+    balls.update(STEP, targets, ballEvents, mode === 'menu' ? null : camera.position);
     acc -= STEP;
     steps++;
   }
@@ -713,7 +723,8 @@ function frame(now: number) {
   updatePlates(online);
   netStats.update(now);
   fx.update(dt);
-  balls.sync();
+  world.update(dt);
+  balls.sync(camera);
   composer.render(dt);
   input.endFrame();
 }
@@ -722,4 +733,4 @@ requestAnimationFrame(frame);
 
 // Poke at the game from the browser console while developing, e.g. __game.player.body.
 // import.meta.env.DEV is false in `npm run build`, so this is stripped from production.
-if (import.meta.env.DEV) Object.assign(window, { __game: { THREE, scene, camera, renderer, composer, input, player, net, balls, fx, dummies, sound, hud, frame, prediction, models, remoteAvatars, menu, get mode() { return mode; } } });
+if (import.meta.env.DEV) Object.assign(window, { __game: { THREE, scene, camera, renderer, composer, input, player, net, balls, fx, dummies, sound, hud, frame, prediction, models, remoteAvatars, menu, get mode() { return mode; }, get world() { return world; } } });

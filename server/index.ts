@@ -18,7 +18,7 @@ import { makeHttpHandler } from './http';
 import { field, setMap, spawnPoint } from '../shared/field';
 import { MAPS, MAP_LIST, DEFAULT_MAP, voteWinner, unanimousVote } from '../shared/maps';
 import {
-  advanceBall, traceWorld, segmentHitsCapsule, isOutOfBounds, stepMovement,
+  advanceBall, traceWorld, segmentHitsCapsule, isOutOfBounds, stepMovement, hitWorld, ballSeed, BALL_DT,
   BALL_SPEED, BALL_LIFETIME, FIRE_INTERVAL, STAND_HEIGHT, CROUCH_HEIGHT, EYE_FROM_TOP,
   RESPAWN_SECONDS, SERVER_TICK_HZ, SNAPSHOT_HZ, INPUT_DT, INTERP_DELAY, type Ball, type Body, type MoveInput,
 } from '../shared/sim';
@@ -340,7 +340,10 @@ function applyInput(p: Player, f: unknown) {
 function spawnBall(p: Player, o: V3, dir: V3) {
   const v: V3 = [dir[0] * BALL_SPEED, dir[1] * BALL_SPEED, dir[2] * BALL_SPEED];
   if (balls.length < MAX_BALLS) {
-    balls.push({ x: o[0], y: o[1], z: o[2], vx: v[0], vy: v[1], vz: v[2], age: 0, owner: p.id, team: p.team, rewind: rewindFor(p) });
+    balls.push({
+      x: o[0], y: o[1], z: o[2], vx: v[0], vy: v[1], vz: v[2], age: 0, owner: p.id, team: p.team,
+      seed: ballSeed(o), bounces: 0, rewind: rewindFor(p),
+    });
   }
   // Everyone else draws the ball; a human shooter already drew it the moment they clicked.
   const ball: ServerMsg = { t: 'ball', owner: p.id, team: p.team, o, v };
@@ -493,10 +496,28 @@ function updateBots(dt: number) {
   }
 }
 
+let ballTime = 0;
+
 function tick(dt: number) {
   for (const p of players.values()) if (!p.bot) p.budget = Math.min(MAX_INPUT_BACKLOG, p.budget + dt);
   updateBots(dt);
   recordHistory(now());
+  // balls fly in the same fixed steps as in the browsers (shared/sim.ts), so they take the same path
+  ballTime += dt;
+  while (ballTime >= BALL_DT) {
+    stepBalls(BALL_DT);
+    ballTime -= BALL_DT;
+  }
+
+  const t = now();
+  for (const p of players.values()) {
+    if (!p.alive && t >= p.outUntil) respawn(p); // warm-up only: live points use Infinity
+    if (p.wantName !== p.name) applyName(p);
+  }
+  updateMatch();
+}
+
+function stepBalls(dt: number) {
   for (let i = balls.length - 1; i >= 0; i--) {
     const b = balls[i];
     const x0 = b.x;
@@ -529,17 +550,13 @@ function tick(dt: number) {
       const hp: V3 = [x0 + (b.x - x0) * bestT, y0 + (b.y - y0) * bestT, z0 + (b.z - z0) * bestT];
       eliminate(victim, b, hp, victimPose!);
       balls.splice(i, 1);
-    } else if (world || b.age > BALL_LIFETIME || isOutOfBounds(b.x, b.y, b.z)) {
+    } else if (world) {
+      // breaks, or bounces on (and can still eliminate someone)
+      if (hitWorld(b, world) !== 'bounce') balls.splice(i, 1);
+    } else if (b.age > BALL_LIFETIME || isOutOfBounds(b.x, b.y, b.z)) {
       balls.splice(i, 1);
     }
   }
-
-  const t = now();
-  for (const p of players.values()) {
-    if (!p.alive && t >= p.outUntil) respawn(p); // warm-up only: live points use Infinity
-    if (p.wantName !== p.name) applyName(p);
-  }
-  updateMatch();
 }
 
 /** take the player's requested name, at most once a second (the tick retries) */
