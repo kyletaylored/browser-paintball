@@ -3,6 +3,10 @@
 //
 // The high-frequency messages (snapshots, acks, paintballs, input frames) travel as compact binary
 // frames, see shared/codec.ts; everything else is JSON. Both decode to these same shapes.
+//
+// Snapshots, acks and input frames go over a WebRTC data channel when one is open (unordered, never
+// resent: see server/rtc.ts), and over the WebSocket otherwise. So they can arrive out of order or
+// not at all: receivers skip anything older than what they already have.
 
 export type Team = 0 | 1;
 export type V3 = [number, number, number];
@@ -82,13 +86,20 @@ export type ClientMsg =
   | { t: 'hello'; name: string }
   | { t: 'input'; i: InputFrame[] }
   | { t: 'fire'; o: V3; d: V3 }
-  | { t: 'pong'; s: number };
+  | { t: 'pong'; s: number }
+  /**
+   * Data channel signalling (server/rtc.ts). Without sdp: "please open a data channel" (the server
+   * replies with an offer if it has them on); with sdp: our answer to the server's offer.
+   */
+  | { t: 'rtc'; sdp?: string }
+  /** one of our ICE candidates */
+  | { t: 'ice'; c: string; mid: string };
 
 /** server → browser */
 export type ServerMsg =
   | { t: 'welcome'; id: number; team: Team; spawn: Spawn; round: RoundState }
-  /** score is points won this match */
-  | { t: 'snap'; time: number; players: PlayerSnap[]; score: [number, number]; round: RoundState }
+  /** seq counts up by one per snapshot (to skip late ones); score is points won this match */
+  | { t: 'snap'; seq: number; players: PlayerSnap[]; score: [number, number]; round: RoundState }
   | { t: 'ball'; owner: number; team: Team; o: V3; v: V3 }
   /** tp: where the victim's hitbox was tested [x, y, z, height] (after lag compensation) */
   | { t: 'hit'; victim: number; shooter: number; team: Team; p: V3; tp: [number, number, number, number] }
@@ -99,7 +110,11 @@ export type ServerMsg =
   /** latency probe: answer with { t: 'pong', s } */
   | { t: 'ping'; s: number }
   /** to one player, with every snapshot: where the server has you after your input `seq` */
-  | { t: 'ack'; seq: number; b: BodyState };
+  | { t: 'ack'; seq: number; b: BodyState }
+  /** data channel offer, in reply to the browser's { t: 'rtc' } */
+  | { t: 'rtc'; sdp: string }
+  /** one of the server's ICE candidates */
+  | { t: 'ice'; c: string; mid: string };
 
 export const DEFAULT_PORT = 8787;
 export const NAME_MAX = 16;

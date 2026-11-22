@@ -66,6 +66,49 @@ fly logs                        # server log lines
   `fly scale count 1 --region <code>` adds one machine in another region. Keep one machine per region until the server
   supports several rooms: a full server turns new players away ("server full") instead of sending them elsewhere.
 
+## Data channels (optional, UDP)
+
+Positions go stale in 50 ms, so the game sends snapshots, acks and input frames over a WebRTC data channel when it can:
+unordered and never resent, so a lost packet is just skipped instead of freezing everything behind it for a round trip
+the way TCP does. Each browser connects straight to the game server (`server/rtc.ts`); there's no relay between
+players, and the server still decides everything. Everything else stays on the WebSocket, and a browser that can't
+reach the UDP port plays over the WebSocket exactly as before. `?net` on a development build shows which link is in use.
+
+It's on by default in development (UDP port = game port + 1) and **off in production until you open a UDP port**:
+
+1. Open one UDP port to the server (every player shares it) and set `RTC_UDP_PORT` to it.
+2. If the server's own address isn't the one players reach (it's behind NAT, in a container, or behind a platform's
+   proxy), set `RTC_PUBLIC_IP` to the public address. The server then tells browsers only that address.
+3. Docker: publish the port too, e.g.
+   `docker run -p 8080:8080 -p 8788:8788/udp -e RTC_UDP_PORT=8788 -e RTC_PUBLIC_IP=<host address> splat-arena`.
+
+**No relay (TURN) server is needed.** The game server has a public address, so a browser behind any home or mobile NAT
+can reach it directly. The only players who can't are on networks that block UDP outright (some offices, some hotel
+Wi-Fi). A TURN relay wouldn't help them either: it would carry the channel over TCP, which brings back the stalls the
+channel is there to avoid. They simply stay on the WebSocket.
+
+**On Fly.io** (not switched on for the live game yet): Fly only forwards UDP to apps with a dedicated IPv4 address,
+which is a paid add-on, and the app must answer from the `fly-global-services` address. To turn it on:
+
+```sh
+fly ips allocate-v4 -a splat-arena     # dedicated IPv4 (paid); note the address it prints
+```
+
+then add to `fly.toml`:
+
+```toml
+[env]
+  RTC_UDP_PORT = "8788"
+  RTC_BIND_ADDRESS = "fly-global-services"
+  RTC_PUBLIC_IP = "<the dedicated IPv4>"
+
+[[services]]
+  protocol = "udp"
+  internal_port = 8788
+  [[services.ports]]
+    port = 8788
+```
+
 ## Option B: website on a static host, server elsewhere
 
 1. Build the website with the server's public address baked in:
@@ -99,7 +142,10 @@ all with their defaults. For a local run you can copy it to `.env` (git ignores 
 | `BOT_SKILL` | `normal` | `easy`, `normal`, `hard` |
 | `LAG_COMPENSATION` | on | `0` turns it off |
 | `MAX_REWIND_MS` | 300 | the furthest back lag compensation will look |
-| `WIRE_FORMAT` | `binary` | `json` sends everything as readable JSON (debugging) |
+| `WIRE_FORMAT` | `binary` | `json` sends everything as readable JSON (debugging; turns data channels off) |
+| `RTC_UDP_PORT` | game port + 1 in development, off in production | the one UDP port for data channels; `0` = off |
+| `RTC_PUBLIC_IP` | unset | address browsers send UDP to, when it isn't the server's own (NAT, containers, proxies) |
+| `RTC_BIND_ADDRESS` | all interfaces | local address or host name to bind the UDP port to (`fly-global-services` on Fly.io) |
 
 Build-time only (website):
 
@@ -115,7 +161,8 @@ Build-time only (website):
   restarting", and exits within about 1.5 s. Browsers reconnect by themselves, backing off from 3 s up to 15 s.
   Match state lives in memory, so a restart ends the current match.
 - **Size:** one process runs one room of up to 12 humans. Eleven bots use about 1% of a CPU core, and each player needs
-  about 5 KB/s down and 2 KB/s up, so a small VPS has plenty of headroom.
+  about 5 KB/s down and 2 KB/s up (about 4 up on a data channel, which repeats recent input frames in every packet), so
+  a small VPS has plenty of headroom.
 - **Security:** messages are size-capped (4 KB), every client message is validated, and movement and hits are decided on
   the server. Names are cleaned on the server and always shown as text. The static file handler never serves
   anything outside `STATIC_DIR`.

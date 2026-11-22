@@ -73,6 +73,7 @@ shared/       code BOTH sides run, so they agree
 server/
   index.ts      authoritative game server: simulates paintballs, decides hits, runs the match, sends snapshots
   bots.ts       server-side bots: navigation grid + A*, cover spots, aim with reaction delay and error
+  rtc.ts        WebRTC data channel to each browser, for snapshots, acks and input (UDP, never resent)
   smoke-test.ts headless end-to-end checks (starts its own servers)
   test-client.ts fake players for the tests: join, walk with real input frames, see others like a browser
   net-measure.ts how play holds up with latency and packet loss (npm run measure:net)
@@ -93,6 +94,7 @@ src/          the browser game
   avatars.ts    other players: the animated model, driven by speed / crouch / eliminated / shots
   net.ts        WebSocket client + snapshot interpolation
   netstats.ts   development network overlay (?net, ?lag=, ?loss=)
+  fastlink.ts   the browser's end of the data channel
   hud.ts        HTML overlay (no UI framework)
   menu.ts       main, pause, settings and controls menus; controller navigation
 ```
@@ -109,6 +111,11 @@ src/          the browser game
   packed into small binary frames (`shared/codec.ts`): positions to the centimetre, angles to a few thousandths of a
   degree. In a 6-on-6 match that's about 5 KB/s down and 2 KB/s up per player, versus about 32 and 5.5 as JSON.
   Everything else (joining, names, eliminations) stays JSON so it's easy to read in the browser's network tab.
+- **Two connections:** snapshots, acks and input frames go over a WebRTC data channel straight to the game server when
+  the browser can reach its UDP port (`server/rtc.ts`, `src/fastlink.ts`). It never resends, so a lost packet is just
+  one skipped snapshot instead of a TCP stall that freezes everyone for a round trip. Input frames repeat the last few
+  in every packet, so a lost one costs no input. Everything else, and everything when UDP is blocked, goes over the
+  WebSocket. See docs/DEPLOY.md for opening the port.
 - **Lag compensation:** because of that, and your ping, you're aiming at where people *were*. The server keeps a second
   of everyone's positions and tests your paintballs against targets as they were on your screen (your ping + 100 ms
   ago, at most 300 ms), so a shot that hits on your screen hits on the server too.
@@ -121,10 +128,11 @@ In development, `window.__game` in the browser console exposes the player, netwo
   round trip later and everything behind it waits (`shared/netsim.ts`). Combine it with `?lag=`.
 - `?net` shows a network overlay (it's also on with `?lag=` or `?loss=`): snapshot gaps over 100 ms, how often other
   players froze because the 100 ms interpolation buffer ran dry, and how often the server corrected your position.
+- `?rtc=0` stays on the WebSocket instead of opening a data channel, to compare the two.
 - `?hitboxes` outlines where the server tested each hit (after rewinding for lag).
 
 `npm run measure:net` plays a fake player at 50 and 150 ms with 0 to 5% loss and prints a table of the same numbers
-(`npm run measure:net -- 150 2 60` for one run: lag, loss, seconds).
+(`npm run measure:net -- 150 2 60` for one run: lag, loss, seconds; add `--rtc` to measure over a data channel).
 
 ## Where to take it next
 

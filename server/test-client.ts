@@ -1,9 +1,10 @@
 // Fake players for the server tests (server/smoke-test.ts) and the network measurement
 // (server/net-measure.ts): they join over a real WebSocket, walk with real input frames, and see
-// other players the way a browser does.
+// other players the way a browser does. Asked to, they open a data channel like a browser too.
 
 import WebSocket from 'ws';
 import { spawn, type ChildProcess } from 'node:child_process';
+import { PeerConnection, type DataChannel } from 'node-datachannel';
 import type { ClientMsg, ServerMsg, Team, InputFrame } from '../shared/protocol';
 import { decodeServer, encodeInput, quantizeInput } from '../shared/codec';
 import { INPUT_DT, STAND_HEIGHT, stepMovement, type Body, type MoveInput } from '../shared/sim';
@@ -23,29 +24,72 @@ export interface Client {
   seq: number;
   /** snapshots with the (local) time they arrived, for drawing others like a browser does */
   snaps: { at: number; m: Snap }[];
+  /** the data channel, when join() was asked for one (like the browser's src/fastlink.ts) */
+  fast: FastState | null;
 }
 export type Ack = Extract<ServerMsg, { t: 'ack' }>;
 
-/** fake network per socket, each way, like the browser's ?lag= and ?loss= (shared/netsim.ts) */
-const linkOf = new WeakMap<WebSocket, { up: FakeLink; down: FakeLink }>();
+export interface FastState {
+  pc: PeerConnection | null;
+  dc: DataChannel | null;
+  open: boolean;
+  /** the server sent an offer */
+  offered: boolean;
+  /** unreliable fake network each way: a lost message is just gone */
+  up: FakeLink;
+  down: FakeLink;
+  /** the last few input frames, repeated in every packet */
+  recent: InputFrame[];
+  /** snapshots that arrived on the data channel / on the WebSocket */
+  via: { fast: number; ws: number };
+}
 
-/** connect a fake player; `lagMs` round trip and `lossPct` TCP-style loss each way are faked on our side */
-export function join(url: string, lagMs = 0, lossPct = 0): Promise<Client> {
+/** input frames repeated in every data channel packet (the browser does the same) */
+const INPUT_REDUNDANCY = 12;
+
+/** fake network per socket, each way, like the browser's ?lag= and ?loss= (shared/netsim.ts) */
+const linkOf = new WeakMap<WebSocket, { up: FakeLink; down: FakeLink; fast: FastState | null }>();
+
+/**
+ * Connect a fake player. `lagMs` round trip and `lossPct` loss each way are faked on our side: TCP-style
+ * on the WebSocket, dropped on the data channel. `rtc` asks the server for a data channel, like a browser.
+ */
+export function join(url: string, lagMs = 0, lossPct = 0, rtc = false): Promise<Client> {
   return new Promise((resolve, reject) => {
     const ws = new WebSocket(url);
-    const link = { up: new FakeLink(lagMs, lossPct), down: new FakeLink(lagMs, lossPct) };
+    const fast: FastState | null = rtc
+      ? {
+          pc: null, dc: null, open: false, offered: false, recent: [], via: { fast: 0, ws: 0 },
+          up: new FakeLink(lagMs, lossPct, false), down: new FakeLink(lagMs, lossPct, false),
+        }
+      : null;
+    const link = { up: new FakeLink(lagMs, lossPct), down: new FakeLink(lagMs, lossPct), fast };
     linkOf.set(ws, link);
     const inbox: ServerMsg[] = [];
     const snaps: { at: number; m: Snap }[] = [];
+    let lastSnap = -1;
+    let lastAck = -1;
     ws.on('error', reject);
-    const handle = (m: ServerMsg) => {
+    const handle = (m: ServerMsg, onFast: boolean) => {
+      // the data channel can deliver out of order: skip anything older than what we have, like the browser
+      if (m.t === 'snap') {
+        if (m.seq <= lastSnap) return;
+        lastSnap = m.seq;
+        if (fast) fast.via[onFast ? 'fast' : 'ws']++;
+      } else if (m.t === 'ack') {
+        if (m.seq < lastAck) return;
+        lastAck = m.seq;
+      }
       inbox.push(m);
       if (m.t === 'snap') snaps.push({ at: performance.now(), m });
       if (m.t === 'ping') send(ws, { t: 'pong', s: m.s });
+      if (m.t === 'rtc' && fast && !fast.pc) answerOffer(ws, fast, m.sdp, (d) => handle(d, true));
+      if (m.t === 'ice') fast?.pc?.addRemoteCandidate(m.c, m.mid);
       if (m.t === 'welcome') {
         const sp = m.spawn;
+        if (fast) send(ws, { t: 'rtc' });
         resolve({
-          ws, id: m.id, team: m.team, inbox, snaps, yaw: sp.yaw, seq: 0,
+          ws, id: m.id, team: m.team, inbox, snaps, yaw: sp.yaw, seq: 0, fast,
           body: { x: sp.x, y: sp.y, z: sp.z, vx: 0, vy: 0, vz: 0, height: STAND_HEIGHT, onGround: true },
         });
       }
@@ -53,14 +97,74 @@ export function join(url: string, lagMs = 0, lossPct = 0): Promise<Client> {
     ws.on('message', (data, isBinary) => {
       // snapshots, acks and balls arrive as binary frames, the rest as JSON, just like in the browser
       const m = isBinary ? decodeServer(data as Buffer) : (JSON.parse(data.toString()) as ServerMsg);
-      if (link.down.active) link.down.send(() => handle(m));
-      else handle(m);
+      if (link.down.active) link.down.send(() => handle(m, false));
+      else handle(m, false);
     });
+    ws.on('close', () => closeFast(fast));
   });
 }
+
+function closeFast(fast: FastState | null) {
+  if (!fast) return;
+  fast.open = false;
+  try {
+    fast.dc?.close();
+    fast.pc?.close();
+  } catch {
+    // already closed
+  }
+}
+
+/** answer the server's data channel offer, the way src/fastlink.ts does in the browser */
+function answerOffer(ws: WebSocket, fast: FastState, sdp: string, deliver: (m: ServerMsg) => void) {
+  fast.offered = true;
+  const pc = new PeerConnection('test-client', { iceServers: [] });
+  fast.pc = pc;
+  pc.onLocalDescription((answer, type) => {
+    if (type === 'answer') send(ws, { t: 'rtc', sdp: answer });
+  });
+  pc.onLocalCandidate((c, mid) => send(ws, { t: 'ice', c, mid }));
+  pc.onDataChannel((dc) => {
+    fast.dc = dc;
+    dc.onOpen(() => (fast.open = true));
+    if (dc.isOpen()) fast.open = true;
+    dc.onClosed(() => (fast.open = false));
+    dc.onMessage((msg) => {
+      if (typeof msg === 'string') return;
+      const m = decodeServer(Buffer.isBuffer(msg) ? msg : Buffer.from(msg));
+      if (fast.down.active) fast.down.send(() => deliver(m));
+      else deliver(m);
+    });
+  });
+  pc.setRemoteDescription(sdp, 'offer');
+}
+
+/** wait until the client's data channel is open; false if it didn't open in time */
+export async function fastOpen(c: Client, ms = 5000): Promise<boolean> {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    if (c.fast?.open) return true;
+    await wait(20);
+  }
+  return false;
+}
+
 export function send(ws: WebSocket, m: ClientMsg) {
-  const data = m.t === 'input' ? encodeInput(m.i) : JSON.stringify(m);
   const link = linkOf.get(ws);
+  const fast = link?.fast;
+  if (m.t === 'input' && fast?.open && fast.dc) {
+    fast.recent.push(...m.i);
+    if (fast.recent.length > INPUT_REDUNDANCY) fast.recent.splice(0, fast.recent.length - INPUT_REDUNDANCY);
+    const data = encodeInput(fast.recent);
+    const dc = fast.dc;
+    const out = () => {
+      if (dc.isOpen()) dc.sendMessageBinary(data);
+    };
+    if (fast.up.active) fast.up.send(out);
+    else out();
+    return;
+  }
+  const data = m.t === 'input' ? encodeInput(m.i) : JSON.stringify(m);
   if (link?.up.active) link.up.send(() => ws.readyState === ws.OPEN && ws.send(data));
   else ws.send(data);
 }

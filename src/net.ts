@@ -1,9 +1,10 @@
 // WebSocket client. Keeps a short history of snapshots for each other player so they can be
 // drawn slightly in the past, smoothly interpolated, instead of jumping 20 times a second.
 
-import type { ClientMsg, ServerMsg, PlayerSnap, RosterEntry, RoundState, Spawn, Team } from '../shared/protocol';
+import type { ClientMsg, ServerMsg, PlayerSnap, RosterEntry, RoundState, Spawn, Team, InputFrame } from '../shared/protocol';
 import { decodeServer, encodeInput } from '../shared/codec';
 import { FakeLink, fakeNumber } from '../shared/netsim';
+import { BrowserFastLink } from './fastlink';
 
 export interface RemotePlayer {
   id: number;
@@ -32,6 +33,10 @@ export type NetStatus = 'idle' | 'connecting' | 'online' | 'offline';
 const params = import.meta.env.DEV ? new URLSearchParams(location.search) : null;
 export const FAKE_LAG_MS = fakeNumber(params?.get('lag'), 2000);
 export const FAKE_LOSS_PCT = fakeNumber(params?.get('loss'), 50);
+/** development only: ?rtc=0 stays on the WebSocket (no data channel), to compare the two */
+const USE_RTC = params?.get('rtc') !== '0';
+/** input frames repeated in every data channel packet, so a lost packet loses none (15 bytes each) */
+const INPUT_REDUNDANCY = 12;
 
 /** snapshot timing since joining, for the dev network overlay (src/netstats.ts) */
 export interface SnapTiming {
@@ -60,6 +65,16 @@ export class Net {
   /** fake network each way (development only; inactive otherwise) */
   private up = new FakeLink(FAKE_LAG_MS, FAKE_LOSS_PCT);
   private down = new FakeLink(FAKE_LAG_MS, FAKE_LOSS_PCT);
+  /** and on the data channel, where a lost message is just gone */
+  private fastUp = new FakeLink(FAKE_LAG_MS, FAKE_LOSS_PCT, false);
+  private fastDown = new FakeLink(FAKE_LAG_MS, FAKE_LOSS_PCT, false);
+  /** the data channel for snapshots, acks and input frames; the WebSocket carries them until it opens */
+  fast: BrowserFastLink | null = null;
+  /** the last few input frames sent, repeated in each data channel packet */
+  private recentInputs: InputFrame[] = [];
+  /** newest snapshot and ack sequence numbers seen: older ones (out of order on the data channel) are skipped */
+  private lastSnapSeq = -1;
+  private lastAckSeq = -1;
   readonly timing: SnapTiming = { last: 0, longest: 0, over100: 0, count: 0, since: 0 };
   private retryTimer = 0;
   /** we want to be connected (Play online); false after stop() */
@@ -101,6 +116,25 @@ export class Net {
   bytesOut = 0;
 
   send(m: ClientMsg): void {
+    if (m.t === 'input' && this.fast?.open) {
+      // data channel: each packet repeats the last few frames, so losing one loses no input (the
+      // server skips frames it has already applied)
+      const recent = this.recentInputs;
+      recent.push(...m.i);
+      if (recent.length > INPUT_REDUNDANCY) recent.splice(0, recent.length - INPUT_REDUNDANCY);
+      const data = encodeInput(recent);
+      const fast = this.fast;
+      if (this.fastUp.active) {
+        this.bytesOut += data.byteLength;
+        this.fastUp.send(() => fast.send(data));
+        return;
+      }
+      if (fast.send(data)) {
+        this.bytesOut += data.byteLength;
+        return;
+      }
+      // backed up: this batch goes over the WebSocket instead
+    }
     // input frames go 60 times a second: binary; the rest is rare, so JSON
     const data = m.t === 'input' ? encodeInput(m.i) : JSON.stringify(m);
     this.bytesOut += typeof data === 'string' ? data.length : data.byteLength;
@@ -111,6 +145,11 @@ export class Net {
   }
 
   private reset(): void {
+    this.fast?.close();
+    this.fast = null;
+    this.recentInputs = [];
+    this.lastSnapSeq = -1;
+    this.lastAckSeq = -1;
     this.id = -1;
     this.round = null;
     this.score = [0, 0];
@@ -159,6 +198,32 @@ export class Net {
 
   private retryDelay = 3000;
 
+  /** ask for a data channel (after joining); snapshots and acks arriving on it go through handle() too */
+  private openFast(): void {
+    this.fast?.close();
+    this.fast = null;
+    if (!USE_RTC) return;
+    const ws = this.ws;
+    const fast = new BrowserFastLink(
+      (m) => this.send(m),
+      (data) => {
+        if (this.ws !== ws || this.fast !== fast) return;
+        this.bytesIn += data.byteLength;
+        let m: ServerMsg;
+        try {
+          m = decodeServer(data);
+        } catch {
+          return;
+        }
+        if (this.fastDown.active) this.fastDown.send(() => this.ws === ws && this.handle(m));
+        else this.handle(m);
+      },
+      () => {},
+    );
+    this.fast = fast;
+    fast.request();
+  }
+
   /** keep trying, backing off to every 15 s so a missing server doesn't flood the console */
   private retry(): void {
     clearTimeout(this.retryTimer);
@@ -179,6 +244,7 @@ export class Net {
         this.roundAt = performance.now();
         Object.assign(this.timing, { last: 0, longest: 0, over100: 0, count: 0, since: this.roundAt });
         this.sendName();
+        this.openFast();
         this.ev.welcome(m.id, m.team, m.spawn);
         break;
       case 'roster':
@@ -189,9 +255,19 @@ export class Net {
         this.send({ t: 'pong', s: m.s });
         break;
       case 'ack':
+        if (m.seq < this.lastAckSeq) break; // older than one we've used (out of order on the data channel)
+        this.lastAckSeq = m.seq;
         this.ev.ack(m);
         break;
+      case 'rtc':
+        if (typeof m.sdp === 'string') void this.fast?.offer(m.sdp);
+        break;
+      case 'ice':
+        this.fast?.candidate(m.c, m.mid);
+        break;
       case 'snap': {
+        if (m.seq <= this.lastSnapSeq) break; // older than one we have: skip it
+        this.lastSnapSeq = m.seq;
         const now = performance.now();
         const t = this.timing;
         if (t.last) {

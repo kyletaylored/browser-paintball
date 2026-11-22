@@ -43,7 +43,7 @@ export function encodeSnap(m: SnapMsg): Uint8Array<ArrayBuffer> {
   const buf = new ArrayBuffer(14 + n * 13);
   const v = new DataView(buf);
   v.setUint8(0, SNAP);
-  v.setFloat32(1, m.time, true);
+  v.setUint32(1, m.seq >>> 0, true);
   v.setUint8(5, Math.max(0, PHASES.indexOf(m.round.phase)));
   v.setUint16(6, clampInt(m.round.endsIn * 100, 0, 65535), true);
   v.setUint8(8, clampInt(m.round.round, 0, 255));
@@ -115,7 +115,7 @@ export function decodeServer(data: ArrayBuffer | ArrayBufferView): ServerMsg {
       }
       return {
         t: 'snap',
-        time: v.getFloat32(1, true),
+        seq: v.getUint32(1, true),
         round: {
           phase: PHASES[v.getUint8(5)] ?? 'waiting',
           endsIn: v.getUint16(6, true) / 100,

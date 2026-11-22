@@ -33,7 +33,7 @@ const throws = (f: () => unknown) => {
     const phases: RoundPhase[] = ['waiting', 'countdown', 'live', 'point', 'matchover'];
     const m: SnapMsg = {
       t: 'snap',
-      time: rnd(0, 1e5),
+      seq: Math.floor(rnd(0, 4e9)),
       score: [Math.floor(rnd(0, 6)), Math.floor(rnd(0, 6))],
       round: {
         phase: phases[trial % 5],
@@ -58,7 +58,7 @@ const throws = (f: () => unknown) => {
     if (d.t !== 'snap') throw new Error('wrong type');
     headerOk &&= d.round.phase === m.round.phase && d.round.round === m.round.round && d.round.winner === m.round.winner &&
       d.round.toWin === m.round.toWin && Math.abs(d.round.endsIn - m.round.endsIn) <= 0.005 &&
-      d.score[0] === m.score[0] && d.score[1] === m.score[1] && Math.abs(d.time - m.time) <= m.time * 1e-6;
+      d.score[0] === m.score[0] && d.score[1] === m.score[1] && d.seq === m.seq;
     for (let i = 0; i < m.players.length; i++) {
       const a = m.players[i];
       const b = d.players[i];
@@ -69,7 +69,7 @@ const throws = (f: () => unknown) => {
     }
   }
   check('snapshot: ids, teams, crouch and alive flags exact', flagsOk);
-  check('snapshot: round state, score and time survive', headerOk);
+  check('snapshot: round state, score and sequence number survive', headerOk);
   check(`snapshot: positions within 5 mm (worst ${(worstPos * 1000).toFixed(2)} mm)`, worstPos <= 0.005 + 1e-9);
   check(`snapshot: yaw within 0.003° (worst ${((worstYaw * 180) / Math.PI).toFixed(4)}°)`, worstYaw <= (Math.PI * 2) / 65536);
   check(`snapshot: pitch within 0.003° (worst ${((worstPitch * 180) / Math.PI).toFixed(4)}°)`, worstPitch <= Math.PI / 2 / 32767);
@@ -120,7 +120,7 @@ const throws = (f: () => unknown) => {
 
 // ---- malformed frames are rejected, not misread ------------------------------------------------------
 {
-  const snap = encodeSnap({ t: 'snap', time: 1, score: [0, 0], round: { phase: 'live', endsIn: 1, round: 1, winner: -1, toWin: 5 }, players: [{ id: 1, team: 0, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, c: false, alive: true }] });
+  const snap = encodeSnap({ t: 'snap', seq: 1, score: [0, 0], round: { phase: 'live', endsIn: 1, round: 1, winner: -1, toWin: 5 }, players: [{ id: 1, team: 0, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, c: false, alive: true }] });
   const input = encodeInput([[1, 0, 0, 0, 0, 0]]);
   check('malformed: truncated snapshot throws', throws(() => decodeServer(snap.slice(0, snap.length - 3))));
   check('malformed: truncated input throws', throws(() => decodeClient(input.slice(0, input.length - 2))));
@@ -131,7 +131,7 @@ const throws = (f: () => unknown) => {
 // ---- size ------------------------------------------------------------------------------------------
 {
   const m: SnapMsg = {
-    t: 'snap', time: 1234.5678, score: [2, 3], round: { phase: 'live', endsIn: 87.3, round: 6, winner: -1, toWin: 5 },
+    t: 'snap', seq: 1234, score: [2, 3], round: { phase: 'live', endsIn: 87.3, round: 6, winner: -1, toWin: 5 },
     players: Array.from({ length: 12 }, (_, i) => ({ id: i + 1, team: (i % 2) as Team, x: rnd(-20, 20), y: 0, z: rnd(-14, 14), yaw: rnd(0, 6), pitch: rnd(-0.3, 0.3), c: false, alive: true })),
   };
   const bin = encodeSnap(m).byteLength;
