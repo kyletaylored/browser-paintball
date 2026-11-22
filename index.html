@@ -57,8 +57,30 @@
         position: absolute; padding: 8px 12px; border-radius: 10px; background: var(--panel);
         font-weight: 700; letter-spacing: 0.02em; backdrop-filter: blur(6px);
       }
-      #score { top: calc(16px + var(--st)); left: 50%; translate: -50% 0; font-size: 18px; display: flex; gap: 14px; align-items: center; }
-      #score .r { color: var(--red); } #score .b { color: var(--blue); }
+      /* the score bar: arcade style, chunky blocks with a life bar of players still in under each team */
+      #score {
+        position: absolute; top: calc(10px + var(--st)); left: 50%; translate: -50% 0; display: flex; align-items: flex-start;
+        font-weight: 900; font-style: italic; text-transform: uppercase; filter: drop-shadow(0 3px 0 rgba(0, 0, 0, 0.55));
+      }
+      #score .team { display: flex; flex-direction: column; gap: 4px; }
+      #score .team.b { align-items: flex-end; }
+      #score .block {
+        display: flex; align-items: center; gap: 14px; height: 46px; padding: 0 18px; border: 3px solid #0b0a10;
+        color: #fff; font-size: 30px; letter-spacing: 0.02em; -webkit-text-stroke: 1.5px #0b0a10; paint-order: stroke fill;
+      }
+      #score .r .block { background: var(--red); clip-path: polygon(0 0, 100% 0, 100% 100%, 14px 100%); padding-left: 26px; }
+      #score .b .block { background: var(--blue); clip-path: polygon(0 0, 100% 0, calc(100% - 14px) 100%, 0 100%); padding-right: 26px; flex-direction: row-reverse; }
+      #score .block .n { font-size: 38px; min-width: 1ch; text-align: center; font-variant-numeric: tabular-nums; }
+      #score .pips { display: flex; gap: 3px; padding: 0 16px; }
+      #score .pip { width: 16px; height: 8px; background: #0b0a10; border: 2px solid #0b0a10; transform: skewX(-20deg); }
+      #score .r .pip.in { background: #ffd23f; } #score .b .pip.in { background: #ffd23f; }
+      #score .mid {
+        display: flex; flex-direction: column; align-items: center; min-width: 110px; height: 46px; justify-content: center;
+        background: #0b0a10; border: 3px solid #0b0a10; color: #ffd23f; padding: 0 12px;
+      }
+      #score .clock { font-size: 28px; line-height: 1; font-variant-numeric: tabular-nums; }
+      #score .sub { font-size: 11px; color: #f3efe4; letter-spacing: 0.08em; font-style: normal; margin-top: 2px; white-space: nowrap; }
+      #score .mid.solo { height: auto; padding: 8px 16px; }
       #status { top: calc(16px + var(--st)); left: calc(16px + var(--sl)); font-size: 13px; font-weight: 600; color: var(--dim); max-width: min(420px, 60vw); }
       #status .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; background: #888; }
       #status.online .dot { background: #5ee07a; } #status.offline .dot { background: var(--accent); }
@@ -82,7 +104,6 @@
       #banner small { display: block; font-size: 18px; font-weight: 700; color: var(--dim); letter-spacing: 0.02em; }
       #banner.r { color: var(--red); } #banner.b { color: var(--blue); }
       #banner.count { font-size: 96px; color: var(--accent); }
-      #score .clock { font-size: 14px; color: var(--dim); font-variant-numeric: tabular-nums; }
       #out small { display: block; font-size: 16px; font-weight: 600; color: var(--dim); letter-spacing: 0; }
 
       /* menus: the main menu sits on the left over the field; the others are centred panels */
@@ -253,7 +274,11 @@
         #banner { font-size: 40px; }
         #banner.count { font-size: 64px; }
         #out { font-size: 32px; }
-        #score { font-size: 15px; }
+        #score .block { height: 36px; font-size: 20px; gap: 8px; padding: 0 12px; }
+        #score .block .n { font-size: 28px; }
+        #score .mid { height: 36px; min-width: 80px; }
+        #score .clock { font-size: 22px; }
+        #score .pip { width: 11px; height: 6px; }
       }
     </style>
   </head>
@@ -264,7 +289,7 @@
       <div id="plates"></div>
       <div id="crosshair"></div>
       <div id="hitmarker"></div>
-      <div id="score" class="chip"></div>
+      <div id="score" aria-live="off"></div>
       <div id="status" class="chip"><span class="dot"></span><span class="txt">Connecting…</span></div>
       <div id="ammo" class="chip"></div>
       <div id="toast" class="chip"></div>

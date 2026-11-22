@@ -606,12 +606,23 @@ let lastCount = 0;
 const teamClass = (t: number) => (t === 0 ? 'r' : 'b');
 const clock = (sec: number) => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
 
-function scoreHtml(now: number): string {
+/** the score bar online: points, the clock (or what's on), and who's still in on each team */
+function updateScoreBar(now: number) {
   const r = net.round;
   const left = phaseSecondsLeft(net, now);
-  const extra = r?.phase === 'live' ? clock(left) : r ? `first to ${r.toWin}` : '';
-  return `<span class="r">RED ${net.score[0]}</span><span>–</span><span class="b">${net.score[1]} BLUE</span>` +
-    (extra ? `<span class="clock">${extra}</span>` : '');
+  const alive: [boolean[], boolean[]] = [[], []];
+  // in id order, so the pips don't swap places as people go out
+  for (const p of [...net.players].sort((a, b) => a.id - b.id)) alive[p.team].push(p.id === net.id ? player.alive : p.alive);
+  let c = '';
+  let sub = '';
+  switch (r?.phase) {
+    case 'live': c = clock(left); sub = `point ${r.round} · first to ${r.toWin}`; break;
+    case 'countdown': c = String(Math.max(1, Math.ceil(left))); sub = `point ${r.round} · get ready`; break;
+    case 'point': c = clock(left); sub = 'point over'; break;
+    case 'matchover': c = 'FINAL'; sub = 'new match soon'; break;
+    default: c = 'WARM-UP'; sub = 'waiting for both teams';
+  }
+  hud.setScoreBar({ teams: [net.score[0], net.score[1]], clock: c, sub, alive });
 }
 
 function outLine(phase: RoundPhase | null, now: number): string {
@@ -793,12 +804,12 @@ function frame(now: number) {
     const others = net.remotes.size;
     const waiting = phase === 'waiting' ? ' · warm-up, waiting for the other team' : '';
     hud.setStatus('online', `Online · ${TEAM_NAMES[net.team]} team · ${others} other player${others === 1 ? '' : 's'}${waiting}`);
-    hud.setScore(scoreHtml(now));
+    updateScoreBar(now);
   } else {
     if (mode === 'practice') hud.setStatus('offline', 'Practice · hit the targets');
     else if (net.status === 'connecting') hud.setStatus('connecting', 'Joining the match…');
     else hud.setStatus('offline', "Can't reach the game server · practising until it's back");
-    hud.setScore(`Practice hits: ${practiceHits}`);
+    hud.setScoreBar({ teams: null, clock: `${practiceHits} HITS`, sub: 'practice', alive: [[], []] });
   }
   hud.setAmmo(hopper, hopperSize(), reloadLeft > 0, trigger.ramping ? 'RAMPING' : MODE_RULES[trigger.mode].name);
   const fieldLine = hud.setVote(online && net.votes, online ? [...net.roster.values()] : [], net.id, field.map.id);
