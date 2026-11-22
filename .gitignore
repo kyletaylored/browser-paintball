@@ -8,3 +8,8 @@ dist-server
 CLAUDE.local.md
 .claude/settings.local.json
 .claude/launch.json
+# Blender backups
+*.blend1
+# Python caches (Blender build scripts)
+__pycache__/
+*.pyc

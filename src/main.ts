@@ -107,7 +107,7 @@ try {
 } catch {
   // storage blocked or garbled: defaults
 }
-const player = new LocalPlayer(camera, models?.marker ?? null);
+const player = new LocalPlayer(camera, models?.marker ?? null, models?.pumpMarker ?? null);
 player.setFigure(scene, (team) => makeAvatar(models, TEAM_COLORS[team]));
 
 // first or third person, remembered in this browser (Settings, H, or click the right stick)
@@ -198,6 +198,7 @@ try {
 }
 const trigger = new Trigger();
 trigger.mode = savedMode;
+player.hold(savedMode === 'pump' ? 'pump' : 'marker');
 /** balls per load for the mode being played */
 const hopperSize = () => MODE_RULES[trigger.mode].hopper;
 let hopper = hopperSize();
@@ -467,6 +468,7 @@ function setFireMode(m: FireMode, announce: boolean) {
   if (m === trigger.mode) return;
   trigger.mode = m;
   trigger.reset();
+  player.hold(m === 'pump' ? 'pump' : 'marker');
   hopper = hopperSize();
   reloadLeft = 0;
   if (announce) hud.toast(`Marker: ${MODE_RULES[m].name} · ${MODE_RULES[m].blurb}`);

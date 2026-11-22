@@ -13,6 +13,11 @@ export interface Models {
   marker: THREE.Object3D;
   /** the player figure and its animation clips */
   player: { scene: THREE.Object3D; clips: THREE.AnimationClip[] };
+  /**
+   * the first-person pump marker for pump mode (made in Blender: art/pump-marker.py), with its
+   * "pump" animation; null if it didn't load (then pump mode uses the usual marker)
+   */
+  pumpMarker: { scene: THREE.Object3D; clips: THREE.AnimationClip[] } | null;
 }
 
 const FILES = ['bunkers', 'marker', 'player'] as const;
@@ -65,7 +70,14 @@ export async function loadModels(onProgress: (fraction: number) => void): Promis
     });
     const markerNode = marker.scene.getObjectByName('marker');
     if (!markerNode) throw new Error('marker.glb has no "marker" node');
-    return { bunkers: byKey, marker: markerNode, player: { scene: player.scene, clips: player.animations } };
+    // optional: a missing pump marker only means pump mode looks like the others
+    const pump = await new Promise<GLTF | null>((resolve) => loader.load(`${base}pump-marker.glb`, resolve, undefined, () => resolve(null)));
+    const pumpNode = pump?.scene.getObjectByName('marker') ?? null;
+    if (pump && !pumpNode) console.warn('pump-marker.glb has no "marker" node: using the usual marker for pump mode');
+    return {
+      bunkers: byKey, marker: markerNode, player: { scene: player.scene, clips: player.animations },
+      pumpMarker: pump && pumpNode ? { scene: pumpNode, clips: pump.animations } : null,
+    };
   } catch (e) {
     settled = true;
     console.warn('Could not load models, using built-in shapes instead:', e);
