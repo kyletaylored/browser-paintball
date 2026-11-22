@@ -68,12 +68,13 @@ Each half is the mirror image of the other, so neither team has an advantage.
 | R | reload (200-ball hopper) |
 | Tab (hold) | scoreboard |
 | V (hold) | talk to your team (voice chat) |
+| H | first person / third person (over the shoulder) |
 | Esc | pause (menu) |
 
 | Controller | |
 |---|---|
 | Left stick | move (how far you push sets your speed); click it to sprint until you stop |
-| Right stick | aim, slowed a little while your crosshair is on an opponent |
+| Right stick | aim, slowed a little while your crosshair is on an opponent; click it for first / third person |
 | RT (or RB) | fire |
 | A / B / X | jump / crouch (tap B) or lie down (hold B; tap again to get up to a crouch) / reload |
 | LB (hold) | sprint |
@@ -81,7 +82,9 @@ Each half is the mirror image of the other, so neither team has an advantage.
 | Start | pause (menu); on a phone there's also a Menu button |
 | D-pad up (hold) | talk to your team (voice chat) |
 
-Look speed, invert Y, vibration, volume and graphics quality are under Settings and saved in your browser. `npm run test:input` checks
+Look speed, invert Y, vibration, volume, graphics quality and the view (first or third person) are under Settings and
+saved in your browser. In third person the camera sits over your right shoulder and pulls in when a bunker is behind
+you; paint still flies from your marker to whatever the crosshair is on. `npm run test:input` checks
 the deadzones, response curve and buttons.
 
 ## How it's put together

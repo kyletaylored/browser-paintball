@@ -1,10 +1,22 @@
-// The local player: first-person camera, movement (via shared/sim.ts) and the gun you see on screen.
+// The local player: the camera (first person, or over the shoulder), movement (via shared/sim.ts),
+// the marker you see on screen in first person and your own figure in third.
 
 import * as THREE from 'three';
-import { stepMovement, STAND_HEIGHT, EYE_FROM_TOP, type Body, type MoveInput } from '../shared/sim';
+import { stepMovement, traceWorld, segmentHitsPlayer, STAND_HEIGHT, EYE_FROM_TOP, type Body, type MoveInput } from '../shared/sim';
 import { TEAM_COLORS, type Spawn, type Team } from '../shared/protocol';
 import type { Input } from './input';
 import { paintTeam } from './models';
+import type { Avatar } from './avatars';
+import type { Target } from './paintballs';
+
+export type View = 'first' | 'third';
+
+/** over the shoulder: how far behind, to the right and above the eyes the camera sits */
+const THIRD_BACK = 2.6;
+const THIRD_RIGHT = 0.6;
+const THIRD_UP = 0.3;
+/** how far the crosshair looks for something to aim at in third person */
+const AIM_RANGE = 150;
 
 const SENSITIVITY = 0.0022;
 
@@ -26,7 +38,19 @@ export class LocalPlayer {
 
   private markerModel: THREE.Object3D | null = null;
   /** where the marker sits in front of the camera (right, down, forward) */
-  readonly gunOffset = new THREE.Vector3(0.17, -0.17, -0.4);
+  readonly gunOffset = new THREE.Vector3(0.15, -0.14, -0.34);
+  /** first person, or over the shoulder */
+  view: View = 'first';
+  /** your own figure, for third person (made on demand, per team colour) */
+  private bodyFig: Avatar | null = null;
+  private makeFig: ((team: Team) => Avatar) | null = null;
+  private figScene: THREE.Object3D | null = null;
+  /** fired since the figure last drew (so it plays the shot) */
+  private fired = false;
+  /** how far back the third-person camera is now (it pulls in when a bunker is behind you, and eases out) */
+  private camBack = THIRD_BACK;
+  private v1 = new THREE.Vector3();
+  private v2 = new THREE.Vector3();
 
   /** marker: the model from marker.glb, or null to draw a simple one from code */
   constructor(private camera: THREE.PerspectiveCamera, marker: THREE.Object3D | null = null) {
@@ -36,8 +60,9 @@ export class LocalPlayer {
       this.markerModel.traverse((o) => (o.castShadow = false)); // it's inside your head as far as the sun knows
       this.gun.add(this.markerModel);
       this.gun.scale.setScalar(0.55);
-      this.gun.rotation.y = 0.06; // angled a touch toward the centre of the screen
-      this.gunOffset.set(0.22, -0.24, -0.62);
+      this.gun.rotation.y = 0.05; // angled a touch toward the centre of the screen
+      // held up close, like it's at your mask: higher and nearer than a "gun at the hip" view
+      this.gunOffset.set(0.17, -0.18, -0.48);
     } else {
       this.buildGun();
     }
@@ -45,7 +70,18 @@ export class LocalPlayer {
     this.setTeam(0);
   }
 
+  /** how to make your own figure for third person, and where to put it */
+  setFigure(scene: THREE.Object3D, make: (team: Team) => Avatar): void {
+    this.figScene = scene;
+    this.makeFig = make;
+  }
+
   setTeam(team: Team): void {
+    if (team !== this.team && this.bodyFig) {
+      this.bodyFig.root.removeFromParent();
+      this.bodyFig.dispose();
+      this.bodyFig = null;
+    }
     this.team = team;
     this.hopperMat.color.setHex(TEAM_COLORS[team]);
     if (this.markerModel) paintTeam(this.markerModel, TEAM_COLORS[team]);
@@ -114,14 +150,48 @@ export class LocalPlayer {
 
   kick(): void {
     this.recoil = 1;
+    this.fired = true;
   }
 
-  /** the marker in front of the camera (hidden while the main menu shows the field) */
+  /** the marker in front of the camera (hidden while the main menu shows the field), and your figure */
   showGun(v: boolean): void {
-    this.gun.visible = v && this.alive;
+    this.gun.visible = v && this.alive && this.view === 'first';
+    if (!v && this.bodyFig) this.bodyFig.root.visible = false;
+  }
+
+  /**
+   * Which way a shot goes. First person: straight along the view. Third person the camera sits
+   * behind your shoulder, so aim from your eyes at whatever the crosshair is on (the first bunker,
+   * ground or player along the camera's ray), so paint lands where the crosshair points.
+   */
+  shotDir(out: THREE.Vector3, targets: readonly Target[], myTeam: number): THREE.Vector3 {
+    this.aimDir(out);
+    if (this.view !== 'third') return out;
+    const eye = this.eye(this.v1);
+    const cam = this.camera.position;
+    // start the ray level with you, not behind you: nothing between the camera and you counts
+    const along = Math.max(0, (eye.x - cam.x) * out.x + (eye.y - cam.y) * out.y + (eye.z - cam.z) * out.z);
+    const sx = cam.x + out.x * along;
+    const sy = cam.y + out.y * along;
+    const sz = cam.z + out.z * along;
+    const ex = sx + out.x * AIM_RANGE;
+    const ey = sy + out.y * AIM_RANGE;
+    const ez = sz + out.z * AIM_RANGE;
+    let t = traceWorld(sx, sy, sz, ex, ey, ez)?.t ?? 1;
+    for (const p of targets) {
+      if (!p.alive || p.team === myTeam) continue;
+      const s = segmentHitsPlayer(sx, sy, sz, ex, ey, ez, p.x, p.y, p.z, p.height, p.yaw, p.prone);
+      if (s !== null && s < t) t = s;
+    }
+    const aim = this.v2.set(sx + (ex - sx) * t, sy + (ey - sy) * t, sz + (ez - sz) * t);
+    // too close to aim across (a bunker right in front of you): just shoot straight
+    if (aim.distanceTo(eye) < 1.5) return out;
+    return out.copy(aim).sub(eye).normalize();
   }
 
   updateCamera(dt: number): void {
+    const fired = this.fired;
+    this.fired = false;
     const k = Math.exp(-dt * 10);
     this.smooth.x *= k;
     this.smooth.y *= k;
@@ -130,6 +200,11 @@ export class LocalPlayer {
     this.camera.position.x += this.smooth.x;
     this.camera.position.y += this.smooth.y;
     this.camera.position.z += this.smooth.z;
+    if (this.view === 'third') {
+      this.thirdPerson(dt, fired);
+      return;
+    }
+    if (this.bodyFig) this.bodyFig.root.visible = false;
     const speed = Math.hypot(this.body.vx, this.body.vz);
     if (this.body.onGround && speed > 0.5) this.bobPhase += dt * speed * 1.6;
     const bob = this.body.onGround ? Math.sin(this.bobPhase * 2) * 0.018 * Math.min(1, speed / 5) : 0;
@@ -141,6 +216,51 @@ export class LocalPlayer {
     this.gun.position.set(o.x + Math.cos(this.bobPhase) * 0.005, o.y - bob * 0.5, o.z + this.recoil * 0.03);
     this.gun.rotation.x = this.recoil * 0.05;
     this.gun.visible = this.alive;
+  }
+
+  /** camera behind your right shoulder, pulled in if a bunker (or the ground) is in the way; your figure drawn */
+  private thirdPerson(dt: number, fired: boolean): void {
+    const cam = this.camera.position;
+    this.gun.visible = false;
+    this.recoil = Math.max(0, this.recoil - dt * 14);
+    const fwd = this.aimDir(this.v1);
+    const rx = Math.cos(this.yaw);
+    const rz = -Math.sin(this.yaw);
+    // the shoulder (or just above your head, if you're right up against something on your right)
+    let shx = cam.x + rx * THIRD_RIGHT;
+    const shy = cam.y + THIRD_UP;
+    let shz = cam.z + rz * THIRD_RIGHT;
+    if (traceWorld(cam.x, cam.y, cam.z, shx, shy, shz)) {
+      shx = cam.x;
+      shz = cam.z;
+    }
+    // then back from it along the view, stopping 0.25 m short of whatever's behind you. Two rays, the
+    // second a little lower, so the camera doesn't skim over a bunker's top and hide you behind it
+    let t = 1;
+    for (const drop of [0, 0.35]) {
+      const y = shy - drop;
+      const hit = traceWorld(shx, y, shz, shx - fwd.x * THIRD_BACK, y - fwd.y * THIRD_BACK, shz - fwd.z * THIRD_BACK);
+      if (hit) t = Math.min(t, hit.t);
+    }
+    const want = t < 1 ? Math.max(0, THIRD_BACK * t - 0.25) : THIRD_BACK;
+    // pull in at once (never see through a bunker), ease back out
+    this.camBack = want < this.camBack ? want : this.camBack + (want - this.camBack) * Math.min(1, dt * 4);
+    cam.set(shx - fwd.x * this.camBack, shy - fwd.y * this.camBack, shz - fwd.z * this.camBack);
+    if (cam.y < 0.15) cam.y = 0.15;
+    this.camera.rotation.set(this.pitch, this.yaw, 0);
+
+    if (!this.bodyFig && this.makeFig && this.figScene) {
+      this.bodyFig = this.makeFig(this.team);
+      this.figScene.add(this.bodyFig.root);
+    }
+    const f = this.bodyFig;
+    if (f) {
+      // pulled right in against a bunker, the camera would be inside your own head: don't draw it then
+      f.root.visible = this.camBack > 0.6;
+      const b = this.body;
+      f.set(b.x + this.smooth.x, b.y + this.smooth.y, b.z + this.smooth.z, this.yaw, this.pitch, b.height, this.alive, this.move.prone);
+      if (fired) f.fire();
+    }
   }
 
   private buildGun(): void {

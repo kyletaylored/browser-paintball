@@ -108,6 +108,26 @@ try {
   // storage blocked or garbled: defaults
 }
 const player = new LocalPlayer(camera, models?.marker ?? null);
+player.setFigure(scene, (team) => makeAvatar(models, TEAM_COLORS[team]));
+
+// first or third person, remembered in this browser (Settings, H, or click the right stick)
+const VIEW_KEY = 'splat-arena.view';
+try {
+  if (localStorage.getItem(VIEW_KEY) === 'third') player.view = 'third';
+} catch {
+  // storage blocked: first person
+}
+function setView(v: string, announce: boolean) {
+  player.view = v === 'third' ? 'third' : 'first';
+  hud.setView(player.view);
+  if (announce) hud.toast(player.view === 'third' ? 'Third person' : 'First person');
+  try {
+    localStorage.setItem(VIEW_KEY, player.view);
+  } catch {
+    // ignore
+  }
+}
+hud.bindView(player.view, (v) => setView(v, false));
 const balls = new Paintballs(scene);
 const fx = new Fx(scene);
 const sound = new SoundSystem(camera);
@@ -442,6 +462,7 @@ function flyAround(dt: number) {
 // ---- shooting -----------------------------------------------------------------------------
 
 const eye = new THREE.Vector3();
+const ear = new THREE.Vector3();
 const dir = new THREE.Vector3();
 const toTarget = new THREE.Vector3();
 
@@ -462,7 +483,8 @@ function aimSlowdown(myTeam: number): number {
 
 function fire() {
   player.eye(eye);
-  player.aimDir(dir);
+  // straight ahead in first person; at what the crosshair is on in third
+  player.shotDir(dir, targets, net.status === 'online' ? net.team : 0);
   dir.x += (Math.random() - 0.5) * 2 * SPREAD;
   dir.y += (Math.random() - 0.5) * 2 * SPREAD;
   dir.z += (Math.random() - 0.5) * 2 * SPREAD;
@@ -616,6 +638,7 @@ function frame(now: number) {
   setDummiesVisible(mode === 'practice' || (mode === 'online' && !online));
   const look = input.takeLook();
   if (input.locked) player.look(look.dx, look.dy);
+  if (input.active && input.viewPressed) setView(player.view === 'third' ? 'first' : 'third', true);
 
   // who can be hit this frame
   if (online) updateRemotes(now);
@@ -648,7 +671,7 @@ function frame(now: number) {
     if (online) prediction.record(move, player.pitch);
     player.apply(STEP);
     // the same step the server flies balls in (BALL_DT), so they take the same path and bounce the same way
-    balls.update(STEP, targets, ballEvents, mode === 'menu' ? null : camera.position);
+    balls.update(STEP, targets, ballEvents, mode === 'menu' ? null : player.eye(ear)); // your head, even in third person
     acc -= STEP;
     steps++;
   }

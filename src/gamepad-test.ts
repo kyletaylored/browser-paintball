@@ -126,6 +126,13 @@ check('holding d-pad up is push-to-talk, for as long as it is held', talking && 
 s.update(pad(), 1 / 60);
 check('letting go of d-pad up stops talking', !s.talk);
 
+const crouchBefore = s.crouch;
+s.update(pad([BTN.R3]), 1 / 60);
+const viewFirst = s.viewPressed;
+s.update(pad([BTN.R3]), 1 / 60);
+check('clicking the right stick switches the view, once per click (and leaves crouch alone)', viewFirst && !s.viewPressed && s.crouch === crouchBefore);
+s.update(pad(), 1 / 60);
+
 s.update(pad([BTN.START]), 1 / 60);
 check('Start is reported once', s.startPressed);
 s.update(null, 1 / 60);
