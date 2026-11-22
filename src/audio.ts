@@ -10,7 +10,7 @@
 import * as THREE from 'three';
 
 export type SoundName =
-  | 'shot' | 'splat' | 'hit' | 'confirm' | 'out' | 'step' | 'reload' | 'reloadDone' | 'dry' | 'beep' | 'go' | 'horn'
+  | 'shot' | 'splat' | 'hit' | 'confirm' | 'out' | 'step' | 'reload' | 'reloadDone' | 'pump' | 'dry' | 'beep' | 'go' | 'horn'
   | 'whizz' | 'bounce';
 
 interface PlayOpts {
@@ -283,6 +283,18 @@ function buildSounds(ctx: BaseAudioContext): Record<SoundName, AudioBuffer> {
 
     // lid shut
     reloadDone: make(0.12, (d, sr) => addClicks(d, sr, [[0, 1], [0.035, 0.55]])),
+
+    // a pump marker racked after the shot: back (a slide and a click), then forward (a firmer clack)
+    pump: make(0.42, (d, sr) => {
+      let lp = 0;
+      for (let i = 0; i < d.length; i++) {
+        const t = i / sr;
+        lp += (Math.random() * 2 - 1 - lp) * 0.25;
+        const slide = (t > 0.07 && t < 0.17) || (t > 0.24 && t < 0.31) ? 0.18 : 0;
+        d[i] = lp * slide;
+      }
+      addClicks(d, sr, [[0.17, 0.7], [0.31, 1]]);
+    }),
 
     // trigger pulled with nothing to fire
     dry: make(0.06, (d, sr) => addClicks(d, sr, [[0, 1]])),

@@ -21,11 +21,11 @@ import { Prediction } from './prediction';
 import { Net, sampleRemote, phaseSecondsLeft } from './net';
 import { NetStats } from './netstats';
 import { Voice, type VoiceSettings } from './voice';
-import { BALL_SPEED, FIRE_INTERVAL, STAND_HEIGHT, stanceHeight, CLIENT_SEND_HZ, RESPAWN_SECONDS, INPUT_DT, INTERP_DELAY } from '../shared/sim';
+import { BALL_SPEED, STAND_HEIGHT, stanceHeight, CLIENT_SEND_HZ, RESPAWN_SECONDS, INPUT_DT, INTERP_DELAY } from '../shared/sim';
 import { DEFAULT_PORT, TEAM_COLORS, TEAM_NAMES, cleanName, type RoundPhase, type V3 } from '../shared/protocol';
+import { Trigger, MODE_RULES, DEFAULT_FIRE_MODE, isFireMode, type FireMode } from '../shared/fire';
 
 const STEP = INPUT_DT; // the server replays our movement in steps of exactly this
-const HOPPER = 200;
 const RELOAD_SECONDS = 1.6;
 const SPREAD = 0.012;
 const INTERP_DELAY_MS = INTERP_DELAY * 1000; // the server's lag compensation assumes this exact delay
@@ -166,9 +166,31 @@ hud.bindName(myName, (typed) => {
   net.sendName();
 });
 
-let hopper = HOPPER;
+// the firing mode: online the server's; practice, the one picked on the main menu (remembered here)
+const MODE_KEY = 'splat-arena.mode';
+let savedMode: FireMode = DEFAULT_FIRE_MODE;
+try {
+  const v = localStorage.getItem(MODE_KEY);
+  if (isFireMode(v)) savedMode = v;
+} catch {
+  // storage blocked: the default
+}
+const trigger = new Trigger();
+trigger.mode = savedMode;
+/** balls per load for the mode being played */
+const hopperSize = () => MODE_RULES[trigger.mode].hopper;
+let hopper = hopperSize();
 let reloadLeft = 0;
-let fireCooldown = 0;
+// the marker (firing mode) chooser: practice plays it, and online it's your vote once you change it
+hud.bindModePicker(savedMode, (m) => {
+  try {
+    localStorage.setItem(MODE_KEY, m);
+  } catch {
+    // ignore
+  }
+  if (net.status === 'online' && net.modeVotes) net.send({ t: 'mode', mode: m });
+});
+hud.bindModeVote((m) => net.send({ t: 'mode', mode: m }));
 let outUntil = 0;
 let practiceHits = 0;
 
@@ -234,6 +256,10 @@ const net = new Net(serverUrl, {
     switchMap(map);
     // the field picked on the main menu is your vote (untouched, you go with whatever's on)
     if (net.votes && hud.mapTouched) net.send({ t: 'vote', map: hud.pickedMap() });
+    // and so is the marker picked there
+    if (net.modeVotes && hud.modeTouched) net.send({ t: 'mode', mode: hud.pickedMode() });
+    hud.setModePick(net.mode);
+    setFireMode(net.mode, false);
     voice.available = net.voice;
     hud.setVoiceAvailable(net.voice);
     prediction.reset();
@@ -241,7 +267,7 @@ const net = new Net(serverUrl, {
     player.setTeam(team);
     player.placeAt(spawn);
     player.alive = true;
-    hopper = HOPPER;
+    hopper = hopperSize();
     setDummiesVisible(false);
     hud.toast(`Joined the ${TEAM_NAMES[team]} team`);
   },
@@ -282,8 +308,12 @@ const net = new Net(serverUrl, {
   respawn(sp) {
     player.placeAt(sp);
     player.alive = true;
-    hopper = HOPPER;
+    hopper = hopperSize();
     reloadLeft = 0;
+  },
+  mode() {
+    hud.setModePick(net.mode);
+    setFireMode(net.mode, true);
   },
   map(id) {
     clearRemotes();
@@ -406,9 +436,19 @@ function resetLocal() {
   player.setTeam(0);
   player.placeAt(spawnPoint(0, 2));
   player.alive = true;
-  hopper = HOPPER;
+  hopper = hopperSize();
   reloadLeft = 0;
   outUntil = 0;
+}
+
+/** play a firing mode: a fresh load for its hopper or tube, and say so if it changed mid-game */
+function setFireMode(m: FireMode, announce: boolean) {
+  if (m === trigger.mode) return;
+  trigger.mode = m;
+  trigger.reset();
+  hopper = hopperSize();
+  reloadLeft = 0;
+  if (announce) hud.toast(`Marker: ${MODE_RULES[m].name} · ${MODE_RULES[m].blurb}`);
 }
 
 input.onChange = () => {
@@ -685,26 +725,29 @@ function frame(now: number) {
   if (reloadLeft > 0) {
     reloadLeft -= dt;
     if (reloadLeft <= 0) {
-      hopper = HOPPER;
+      hopper = hopperSize();
       sound.play('reloadDone', { volume: VOL.reload });
     }
-  } else if (input.reloadPressed && hopper < HOPPER && player.alive) {
+  } else if (input.reloadPressed && hopper < hopperSize() && player.alive) {
     startReload();
   }
-  fireCooldown -= dt;
+  // the server's firing mode online, the menu's in practice (shared/fire.ts has the rules)
+  setFireMode(online ? net.mode : hud.pickedMode(), false);
   const fireHeld = input.fireHeld;
   const firePressed = fireHeld && !wasFireHeld;
   wasFireHeld = fireHeld;
   const canFire = input.active && player.alive && reloadLeft <= 0 && !holdFire;
   if (firePressed && input.active && player.alive && !holdFire && (reloadLeft > 0 || hopper <= 0)) sound.play('dry', { volume: VOL.dry });
-  if (canFire && fireHeld) {
-    if (hopper <= 0) startReload();
-    while (fireCooldown <= 0 && hopper > 0) {
-      fire();
-      fireCooldown += FIRE_INTERVAL;
+  // the trigger only sees the pull while you can fire, so a pull during a reload doesn't count
+  const shots = trigger.update(dt, canFire && fireHeld && hopper > 0);
+  if (canFire && fireHeld && hopper <= 0) startReload();
+  for (let n = 0; n < shots && hopper > 0; n++) {
+    fire();
+    if (trigger.mode === 'pump') {
+      player.pump(MODE_RULES.pump.interval);
+      sound.play('pump', { volume: VOL.reload });
     }
   }
-  if (fireCooldown < 0) fireCooldown = 0;
 
   // tell the server where we are
   // send our input frames (the server moves us with them)
@@ -728,9 +771,10 @@ function frame(now: number) {
     else hud.setStatus('offline', "Can't reach the game server · practising until it's back");
     hud.setScore(`Practice hits: ${practiceHits}`);
   }
-  hud.setAmmo(hopper, HOPPER, reloadLeft > 0);
+  hud.setAmmo(hopper, hopperSize(), reloadLeft > 0, trigger.ramping ? 'RAMPING' : MODE_RULES[trigger.mode].name);
   const fieldLine = hud.setVote(online && net.votes, online ? [...net.roster.values()] : [], net.id, field.map.id);
-  hud.setScoreboard(online && input.active && input.scoreboardHeld ? [...net.roster.values()] : null, net.id, net.score, fieldLine, voice.speaking);
+  const modeLine = hud.setModeVote(online && net.modeVotes, online ? [...net.roster.values()] : [], net.id, trigger.mode);
+  hud.setScoreboard(online && input.active && input.scoreboardHeld ? [...net.roster.values()] : null, net.id, net.score, `${fieldLine} · Marker: ${modeLine}`, voice.speaking);
 
   // voice chat: join or leave the voice room as people come and go, push-to-talk, the talk chip
   voice.update(online, net.id, net.team, [...net.roster.values()].map((r) => ({ id: r.id, team: r.team, bot: r.bot })), phase, now);

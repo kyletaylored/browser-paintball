@@ -2,6 +2,7 @@
 
 import { TapOrHold } from './input';
 import { BTN, LOOK_DEADZONE, LOOK_YAW_SPEED, MOVE_DEADZONE, PRONE_HOLD, PadState, TURN_BOOST, lookRates, radialDeadzone, turnBoost, type PadLike } from './gamepad';
+import { Trigger, MODE_RULES, modeVoteWinner, type FireMode } from '../shared/fire';
 
 let failed = 0;
 function check(name: string, ok: boolean, detail = '') {
@@ -158,6 +159,42 @@ check('unplugging clears everything', !s.connected && !s.sprint && !s.fire && s.
   check('holding it while tapped down keeps you down', k.on);
   k.release(4800);
   check('until you let go', !k.on);
+}
+
+// ---- firing modes: what pulling and holding the trigger fires ----------------------------------
+
+{
+  /** run a trigger at 60 fps through a list of [seconds, held] steps; how many balls it fired */
+  const run = (mode: FireMode, steps: [number, boolean][]) => {
+    const t = new Trigger();
+    t.mode = mode;
+    let n = 0;
+    for (const [secs, held] of steps) for (let f = 0; f < Math.round(secs * 60); f++) n += t.update(1 / 60, held);
+    return n;
+  };
+  /** `pulls` quick pulls (down 50 ms, up `gap`), then hold for `hold` seconds */
+  const pullsThenHold = (pulls: number, gap: number, hold: number): [number, boolean][] => [
+    ...Array.from({ length: pulls }, () => [[0.05, true], [gap, false]] as [number, boolean][]).flat(),
+    [hold, true],
+  ];
+  check('ramp: holding the trigger from cold fires one ball', run('ramp', [[1, true]]) === 1);
+  const ramped = run('ramp', pullsThenHold(2, 0.15, 1));
+  check(`ramp: two quick pulls, then a third held for a second, ramps to 10 a second (${ramped})`, ramped >= 11 && ramped <= 13);
+  const slow = run('ramp', pullsThenHold(2, 0.6, 1));
+  check(`ramp: slow pulls don't ramp (${slow})`, slow === 3);
+  const letGo = run('ramp', [...pullsThenHold(2, 0.15, 0.5), [0.6, false], [1, true]]);
+  check(`ramp: let go for a while and it's one per pull again (${letGo})`, letGo >= 8 && letGo <= 9);
+  check('semi: holding fires one ball', run('semi', [[1, true]]) === 1);
+  const fast = run('semi', Array.from({ length: 15 }, () => [[1 / 30, true], [1 / 30, false]] as [number, boolean][]).flat());
+  check(`semi: pulling 15 times a second still fires no more than 10 a second (${fast})`, fast >= 9 && fast <= 10);
+  check('semi: every pull at a human pace fires', run('semi', pullsThenHold(6, 0.12, 0)) === 6);
+  const pump = run('pump', Array.from({ length: 8 }, () => [[0.05, true], [0.2, false]] as [number, boolean][]).flat());
+  check(`pump: pulls during the pump stroke are lost (${pump} balls from 8 pulls in 2 s)`, pump === 4);
+  check('pump: holding fires one ball', run('pump', [[2, true]]) === 1);
+  check('pump: a 20-ball tube, ramp and semi a full hopper', MODE_RULES.pump.hopper === 20 && MODE_RULES.ramp.hopper === 200);
+  check('the vote: more than half for another mode switches to it',
+    modeVoteWinner(['pump', 'pump', null], 'ramp') === 'pump' && modeVoteWinner(['pump', 'semi'], 'ramp') === 'ramp' &&
+    modeVoteWinner(['pump', null], 'ramp') === 'ramp' && modeVoteWinner([], 'semi') === 'semi');
 }
 
 if (failed) {

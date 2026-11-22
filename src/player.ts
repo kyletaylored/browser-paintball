@@ -31,6 +31,9 @@ export class LocalPlayer {
   private gun = new THREE.Group();
   private hopperMat = new THREE.MeshStandardMaterial({ roughness: 0.35 });
   private recoil = 0;
+  /** pump stroke: 1 just fired, down to 0 when it's back (seconds per stroke in pumpLen) */
+  private pumpT = 0;
+  private pumpLen = 0.5;
   private bobPhase = 0;
   private move: MoveInput = { forward: 0, right: 0, jump: false, sprint: false, crouch: false, prone: false, yaw: 0 };
   private euler = new THREE.Euler(0, 0, 0, 'YXZ');
@@ -161,6 +164,12 @@ export class LocalPlayer {
     this.fired = true;
   }
 
+  /** a pump marker's stroke after a shot: the marker racks back and forward over `seconds` */
+  pump(seconds: number): void {
+    this.pumpT = 1;
+    this.pumpLen = seconds;
+  }
+
   /** the marker in front of the camera (hidden while the main menu shows the field), and your figure */
   showGun(v: boolean): void {
     this.gun.visible = v && this.alive && this.view === 'first';
@@ -220,9 +229,13 @@ export class LocalPlayer {
     this.camera.rotation.set(this.pitch, this.yaw, 0);
 
     this.recoil = Math.max(0, this.recoil - dt * 14);
+    this.pumpT = Math.max(0, this.pumpT - dt / this.pumpLen);
+    // the stroke: back and up a little, then forward again (a smooth bump over the stroke)
+    const stroke = this.pumpT > 0 ? Math.sin(Math.PI * Math.min(1, (1 - this.pumpT) * 1.25)) : 0;
     const o = this.gunOffset;
-    this.gun.position.set(o.x + Math.cos(this.bobPhase) * 0.005, o.y - bob * 0.5, o.z + this.recoil * 0.03);
-    this.gun.rotation.x = this.recoil * 0.05;
+    this.gun.position.set(o.x + Math.cos(this.bobPhase) * 0.005, o.y - bob * 0.5 - stroke * 0.012, o.z + this.recoil * 0.03 + stroke * 0.05);
+    this.gun.rotation.x = this.recoil * 0.05 - stroke * 0.12;
+    this.gun.rotation.z = -stroke * 0.08;
     this.gun.visible = this.alive;
   }
 
