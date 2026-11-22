@@ -10,7 +10,8 @@
 import * as THREE from 'three';
 
 export type SoundName =
-  | 'shot' | 'splat' | 'hit' | 'confirm' | 'out' | 'step' | 'reload' | 'reloadDone' | 'dry' | 'beep' | 'go' | 'horn';
+  | 'shot' | 'splat' | 'hit' | 'confirm' | 'out' | 'step' | 'reload' | 'reloadDone' | 'dry' | 'beep' | 'go' | 'horn'
+  | 'whizz' | 'bounce';
 
 interface PlayOpts {
   /** 0..1+, multiplied with the master volume */
@@ -193,6 +194,36 @@ function buildSounds(ctx: BaseAudioContext): Record<SoundName, AudioBuffer> {
         let drip = 0;
         for (const t0 of drops) if (t > t0) drip += Math.sin(TAU * 900 * (t - t0)) * Math.exp(-(t - t0) * 90) * 0.12;
         d[i] = body * 1.6 + squelch + drip;
+      }
+    }),
+
+    // paint flying past your head: a quick airy rush that swells and falls away, dropping in pitch
+    whizz: make(0.22, (d, sr) => {
+      let lp = 0;
+      let bp = 0;
+      let phase = 0;
+      for (let i = 0; i < d.length; i++) {
+        const t = i / sr;
+        const n = Math.random() * 2 - 1;
+        // a resonant band of noise whose centre falls (the doppler drop as it goes by)
+        const f = 2600 - 1700 * Math.min(1, t / 0.2);
+        const k = Math.min(0.9, (TAU * f) / sr);
+        lp += (n - lp) * k;
+        bp += (lp - bp) * k * 0.5;
+        phase += (TAU * f * 0.5) / sr;
+        const env = Math.exp(-(((t - 0.07) / 0.045) ** 2)); // rises and falls, peaking as it passes
+        d[i] = ((lp - bp) * 1.4 + Math.sin(phase) * 0.12) * env;
+      }
+    }),
+
+    // paint bouncing off without breaking: a short rubbery tock
+    bounce: make(0.09, (d, sr) => {
+      let phase = 0;
+      for (let i = 0; i < d.length; i++) {
+        const t = i / sr;
+        phase += (TAU * (420 + 520 * Math.exp(-t * 90))) / sr;
+        const n = Math.random() * 2 - 1;
+        d[i] = Math.sin(phase) * Math.exp(-t * 55) + n * Math.exp(-t * 400) * 0.35;
       }
     }),
 

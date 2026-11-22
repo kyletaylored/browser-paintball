@@ -114,7 +114,7 @@ src/          the browser game
   player.ts     first-person controller + the gun on screen
   input.ts      keyboard + mouse (pointer lock) and controllers, combined into actions; phone start
   gamepad.ts    controllers: deadzones, aim curve, buttons, rumble (gamepad-test.ts checks it)
-  paintballs.ts all balls in flight as one InstancedMesh
+  paintballs.ts all balls in flight, drawn as glowing streaks (three InstancedMeshes); near-miss whizzes
   fx.ts         paint splat decals + droplet bursts
   models.ts     loads the models (with a loading bar); falls back to code-drawn shapes if they fail
   avatars.ts    other players: the animated model, driven by speed / crouch / eliminated / shots
@@ -132,7 +132,11 @@ src/          the browser game
   the same movement code (`shared/sim.ts`) on them and decides where you are, so nobody can teleport or speed up.
   Your browser predicts the same steps locally, so moving feels instant, and quietly corrects itself if the server
   disagrees (`src/prediction.ts`).
-- **Paintballs:** your browser draws them the instant you click. The server *also* flies them using the same `shared/sim.ts` code and is the only one that decides eliminations.
+- **Paintballs:** your browser draws them the instant you click. The server *also* flies them using the same `shared/sim.ts` code, in the same fixed steps, and is the only one that decides eliminations.
+- **Bounces:** paint that hits at a glancing angle (or slowly) usually bounces off instead of breaking, flies on and can
+  still eliminate someone. Whether it bounces is a roll of the dice, but every machine rolls the same dice: each ball's
+  random numbers start from a hash of the point it was fired from, which the shooter, the server and every other browser
+  all know. Inflatable bunkers wobble when hit (`src/world.ts`), wood and rock don't.
 - **Other players:** drawn 100 ms in the past, blended between the server's snapshots, so they move smoothly instead of jumping 20 times a second.
 - **On the wire:** the messages sent many times a second (snapshots, your position acks, paintballs, your input) are
   packed into small binary frames (`shared/codec.ts`): positions to the centimetre, angles to a few thousandths of a

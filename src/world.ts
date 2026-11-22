@@ -13,7 +13,35 @@ import { TEAM_COLORS } from '../shared/protocol';
 export interface World {
   /** remove everything this map added and free its GPU memory */
   dispose(): void;
+  /**
+   * Paint hit bunker i (an index into field.bunkers) on a face with outward normal (nx, nz), with
+   * strength 0..1 (a direct hit is 1, a glancing bounce less). Inflatables wobble; wood and rock don't.
+   */
+  hit(i: number, nx: number, nz: number, strength: number): void;
+  /** let the wobbles settle; once per rendered frame */
+  update(dt: number): void;
 }
+
+/** bunker looks that are air-filled and wobble when hit */
+const SOFT: ReadonlySet<Look> = new Set<Look>(['inflatable', 'tower']);
+
+/**
+ * A wobbling bunker: a spring on how far its top leans (a vector along the ground), damped so a
+ * hit dies away in about a second. It leans about its base, away from the paint.
+ */
+interface Wobble {
+  g: THREE.Object3D;
+  /** taller bunkers lean less per hit */
+  give: number;
+  tx: number;
+  tz: number;
+  vx: number;
+  vz: number;
+}
+const WOBBLE_W = 15; // rad/s: about 2.4 wobbles a second
+const WOBBLE_DAMP = 3.2;
+const WOBBLE_KICK = 0.42; // rad/s of lean speed for a direct hit
+const WOBBLE_MAX = 0.1; // rad
 
 export function buildWorld(scene: THREE.Scene, models: Models | null): World {
   const map = field.map;
@@ -44,6 +72,11 @@ export function buildWorld(scene: THREE.Scene, models: Models | null): World {
   else buildRope(root, ex, ez);
 
   const mats = new Materials();
+  const wobbles: (Wobble | null)[] = [];
+  const addWobble = (g: THREE.Object3D, b: Bunker) => {
+    const h = b.kind === 'log' ? b.r * 2 : b.h;
+    wobbles.push(SOFT.has(b.look ?? 'inflatable') ? { g, give: 1.6 / Math.max(1.2, h), tx: 0, tz: 0, vx: 0, vz: 0 } : null);
+  };
   for (const b of field.bunkers) {
     const template = models ? bunkerModel(models, bunkerKey(b)) : undefined;
     if (template && (b.look ?? 'inflatable') === 'inflatable') {
@@ -54,6 +87,7 @@ export function buildWorld(scene: THREE.Scene, models: Models | null): World {
       g.add(template.clone(true));
       g.position.set(b.x, 0, b.z);
       root.add(g);
+      addWobble(g, b);
       if (import.meta.env.DEV) checkFit(g, b);
       continue;
     }
@@ -64,9 +98,49 @@ export function buildWorld(scene: THREE.Scene, models: Models | null): World {
       o.receiveShadow = true;
     });
     root.add(g);
+    addWobble(g, b);
   }
 
+  const moving = new Set<Wobble>();
+  const axis = new THREE.Vector3();
   return {
+    hit(i, nx, nz, strength) {
+      const w = wobbles[i];
+      if (!w) return;
+      // the top leans away from the paint: along -n
+      const len = Math.hypot(nx, nz) || 1;
+      const k = WOBBLE_KICK * w.give * Math.min(1, strength);
+      w.vx -= (nx / len) * k;
+      w.vz -= (nz / len) * k;
+      moving.add(w);
+    },
+    update(dt) {
+      const step = Math.min(dt, 0.05);
+      for (const w of moving) {
+        // damped spring, semi-implicit Euler
+        w.vx += (-WOBBLE_W * WOBBLE_W * w.tx - WOBBLE_DAMP * w.vx) * step;
+        w.vz += (-WOBBLE_W * WOBBLE_W * w.tz - WOBBLE_DAMP * w.vz) * step;
+        w.tx += w.vx * step;
+        w.tz += w.vz * step;
+        let a = Math.hypot(w.tx, w.tz);
+        if (a > WOBBLE_MAX) {
+          w.tx *= WOBBLE_MAX / a;
+          w.tz *= WOBBLE_MAX / a;
+          a = WOBBLE_MAX;
+        }
+        if (a < 1e-4 && Math.hypot(w.vx, w.vz) < 1e-3) {
+          w.tx = w.tz = w.vx = w.vz = 0;
+          w.g.quaternion.identity();
+          w.g.scale.setScalar(1);
+          moving.delete(w);
+          continue;
+        }
+        // lean the top toward (tx, tz): rotate about up × that direction; squash a little as it leans
+        w.g.quaternion.setFromAxisAngle(axis.set(w.tz / (a || 1), 0, -w.tx / (a || 1)), a);
+        const squash = a * 0.9;
+        w.g.scale.set(1 + squash * 0.5, 1 - squash, 1 + squash * 0.5);
+      }
+    },
     dispose() {
       scene.remove(root);
       const seen = new Set<unknown>();
