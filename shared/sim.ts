@@ -326,6 +326,16 @@ export function bounceChance(cos: number, speed: number): number {
   return Math.min(0.92, angle * 0.85 + (cos < 0.75 ? slow : 0));
 }
 
+/**
+ * How likely a ball is to bounce off a player instead of breaking. Bodies are soft: most hits
+ * break, but a glancing one often skips off, and then the player plays on.
+ */
+export function playerBounceChance(cos: number, speed: number): number {
+  const angle = clamp01((0.5 - cos) / 0.38);
+  const slow = clamp01((40 - speed) / 40) * 0.2;
+  return Math.min(0.75, 0.03 + angle * 0.6 + slow);
+}
+
 export type Contact = 'break' | 'bounce' | 'stop';
 
 /**
@@ -335,20 +345,88 @@ export type Contact = 'break' | 'bounce' | 'stop';
  * machine stays in step.
  */
 export function hitWorld(b: Ball, w: WorldHit): Contact {
+  return deflect(b, w.x, w.y, w.z, w.nx, w.ny, w.nz, bounceChance);
+}
+
+/**
+ * The ball touched a player at (x, y, z) (where segmentHitsPlayer said): 'break' and they're out,
+ * or it bounces off them ('bounce', or 'stop' if it's spent) and they play on. The same player
+ * shape as the hit test, so the same answer on every machine that saw the same hit.
+ */
+export function hitPlayer(
+  b: Ball, x: number, y: number, z: number,
+  px: number, py: number, pz: number, height: number, yaw: number, prone: boolean,
+): Contact {
+  // the body's centre line (a0 → a1) and thickness, as in segmentHitsPlayer
+  let a0x = px, a0y = py + PLAYER_RADIUS, a0z = pz;
+  let a1x = px, a1y = py + Math.max(PLAYER_RADIUS, height - PLAYER_RADIUS), a1z = pz;
+  let r = PLAYER_RADIUS + BALL_RADIUS;
+  if (prone) {
+    const fx = -Math.sin(yaw);
+    const fz = -Math.cos(yaw);
+    a0x = px + fx * PRONE_HEAD; a0y = py + PRONE_RADIUS; a0z = pz + fz * PRONE_HEAD;
+    a1x = px - fx * PRONE_FEET; a1y = a0y; a1z = pz - fz * PRONE_FEET;
+    r = PRONE_RADIUS + BALL_RADIUS;
+  }
+  const ex = a1x - a0x;
+  const ey = a1y - a0y;
+  const ez = a1z - a0z;
+  const ee = ex * ex + ey * ey + ez * ez;
+  const near = { x: 0, y: 0, z: 0 };
+  const dist = (qx: number, qy: number, qz: number): number => {
+    const t = ee > 1e-12 ? clamp01(((qx - a0x) * ex + (qy - a0y) * ey + (qz - a0z) * ez) / ee) : 0;
+    near.x = a0x + ex * t;
+    near.y = a0y + ey * t;
+    near.z = a0z + ez * t;
+    return Math.hypot(qx - near.x, qy - near.y, qz - near.z);
+  };
+  // (x, y, z) is where the path came closest, which can be well inside the body: back up along the
+  // path to where the ball first touched it (bisection), so the bounce comes off the surface it met
+  const speed = Math.hypot(b.vx, b.vy, b.vz) || 1;
+  const ux = b.vx / speed;
+  const uy = b.vy / speed;
+  const uz = b.vz / speed;
+  let lo = 0; // inside (or touching)
+  let hi = 2 * r + 0.05; // backed up this far: outside
+  for (let i = 0; i < 24; i++) {
+    const m = (lo + hi) / 2;
+    if (dist(x - ux * m, y - uy * m, z - uz * m) < r) lo = m;
+    else hi = m;
+  }
+  const cx = x - ux * hi;
+  const cy = y - uy * hi;
+  const cz = z - uz * hi;
+  const d = dist(cx, cy, cz);
+  let nx = -ux;
+  let ny = -uy;
+  let nz = -uz;
+  if (d > 1e-6) {
+    nx = (cx - near.x) / d;
+    ny = (cy - near.y) / d;
+    nz = (cz - near.z) / d;
+  }
+  return deflect(b, cx, cy, cz, nx, ny, nz, playerBounceChance);
+}
+
+/** break, or bounce off the surface at (x, y, z) with outward normal n; see hitWorld */
+function deflect(
+  b: Ball, x: number, y: number, z: number, nx: number, ny: number, nz: number,
+  chance: (cos: number, speed: number) => number,
+): Contact {
   const speed = Math.hypot(b.vx, b.vy, b.vz);
-  const vn = b.vx * w.nx + b.vy * w.ny + b.vz * w.nz; // negative: into the surface
-  const cos = speed > 1e-6 ? -vn / speed : 1;
+  const vn = b.vx * nx + b.vy * ny + b.vz * nz; // negative: into the surface
+  const cos = speed > 1e-6 ? Math.max(0, -vn / speed) : 1;
   const r = roll(b);
-  if (b.bounces >= MAX_BOUNCES || r >= bounceChance(cos, speed)) return 'break';
-  const tx = b.vx - w.nx * vn;
-  const ty = b.vy - w.ny * vn;
-  const tz = b.vz - w.nz * vn;
-  b.vx = tx * BOUNCE_FRICTION - w.nx * vn * BOUNCE_RESTITUTION;
-  b.vy = ty * BOUNCE_FRICTION - w.ny * vn * BOUNCE_RESTITUTION;
-  b.vz = tz * BOUNCE_FRICTION - w.nz * vn * BOUNCE_RESTITUTION;
-  b.x = w.x + w.nx * 0.01;
-  b.y = w.y + w.ny * 0.01;
-  b.z = w.z + w.nz * 0.01;
+  if (b.bounces >= MAX_BOUNCES || r >= chance(cos, speed)) return 'break';
+  const tx = b.vx - nx * vn;
+  const ty = b.vy - ny * vn;
+  const tz = b.vz - nz * vn;
+  b.vx = tx * BOUNCE_FRICTION - nx * vn * BOUNCE_RESTITUTION;
+  b.vy = ty * BOUNCE_FRICTION - ny * vn * BOUNCE_RESTITUTION;
+  b.vz = tz * BOUNCE_FRICTION - nz * vn * BOUNCE_RESTITUTION;
+  b.x = x + nx * 0.01;
+  b.y = y + ny * 0.01;
+  b.z = z + nz * 0.01;
   b.bounces++;
   return Math.hypot(b.vx, b.vy, b.vz) < BOUNCE_MIN_SPEED ? 'stop' : 'bounce';
 }

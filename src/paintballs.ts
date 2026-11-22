@@ -8,7 +8,7 @@
 
 import * as THREE from 'three';
 import {
-  advanceBall, traceWorld, segmentHitsPlayer, isOutOfBounds, hitWorld, ballSeed,
+  advanceBall, traceWorld, segmentHitsPlayer, isOutOfBounds, hitWorld, hitPlayer, ballSeed,
   BALL_LIFETIME, type Ball, type WorldHit,
 } from '../shared/sim';
 import type { V3 } from '../shared/protocol';
@@ -41,6 +41,8 @@ export interface BallEvents {
   /** bounced off without breaking; stopped: too slow to carry on */
   onBounce(ball: LiveBall, w: WorldHit, stopped: boolean): void;
   onTarget(ball: LiveBall, target: Target, x: number, y: number, z: number): void;
+  /** skipped off a player without breaking (they play on); stopped: too slow to carry on */
+  onPlayerBounce(ball: LiveBall, target: Target, x: number, y: number, z: number, stopped: boolean): void;
   /** someone else's ball passed within NEAR_MISS of the listener (closest point x, y, z) */
   onNearMiss(ball: LiveBall, x: number, y: number, z: number, distance: number): void;
 }
@@ -144,8 +146,17 @@ export class Paintballs {
       }
       if (ear && !b.whizzed) this.nearMiss(b, x0, y0, z0, Math.min(1, bestT), ear, ev);
       if (hit) {
-        b.active = false;
-        ev.onTarget(b, hit, x0 + (b.x - x0) * bestT, y0 + (b.y - y0) * bestT, z0 + (b.z - z0) * bestT);
+        const hx = x0 + (b.x - x0) * bestT;
+        const hy = y0 + (b.y - y0) * bestT;
+        const hz = z0 + (b.z - z0) * bestT;
+        const c = hitPlayer(b, hx, hy, hz, hit.x, hit.y, hit.z, hit.height, hit.yaw, hit.prone);
+        if (c === 'break') {
+          b.active = false;
+          ev.onTarget(b, hit, hx, hy, hz);
+        } else {
+          if (c === 'stop') b.active = false;
+          ev.onPlayerBounce(b, hit, hx, hy, hz, c === 'stop');
+        }
       } else if (w) {
         const c = hitWorld(b, w);
         if (c === 'break') {

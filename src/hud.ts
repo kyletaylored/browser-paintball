@@ -395,23 +395,37 @@ export class Hud {
     });
   }
 
-  /** "shooter ✕ victim" in the corner; mine = you were involved */
-  killFeed(shooter: string, shooterTeam: Team, victim: string, victimTeam: Team, mine: boolean): void {
+  /** "shooter ✕ victim" in the corner, with a tag like "DOUBLE" or "off a bounce"; mine = you were involved */
+  killFeed(shooter: string, shooterTeam: Team, victim: string, victimTeam: Team, mine: boolean, tags: string[] = []): void {
+    this.feedRow([{ text: shooter, team: shooterTeam }, { text: '✕', cls: 'x' }, { text: victim, team: victimTeam }, ...tags.map((t) => ({ text: t, cls: 'tag' }))], mine);
+  }
+
+  /** any line in the corner feed: names in team colours, the rest plain (or a class: 'x', 'tag', 'note') */
+  feedRow(parts: { text: string; team?: Team; cls?: string }[], mine = false, cls = ''): void {
     const row = document.createElement('div');
-    row.className = mine ? 'row mine' : 'row';
-    const a = document.createElement('span');
-    a.className = shooterTeam === 0 ? 'r' : 'b';
-    a.textContent = shooter;
-    const x = document.createElement('span');
-    x.className = 'x';
-    x.textContent = '✕';
-    const b = document.createElement('span');
-    b.className = victimTeam === 0 ? 'r' : 'b';
-    b.textContent = victim;
-    row.append(a, x, b);
+    row.className = ['row', mine ? 'mine' : '', cls].filter(Boolean).join(' ');
+    for (const p of parts) {
+      const s = document.createElement('span');
+      s.className = p.team !== undefined ? (p.team === 0 ? 'r' : 'b') : p.cls ?? '';
+      s.textContent = p.text;
+      row.append(s);
+    }
     this.feed.prepend(row);
     while (this.feed.children.length > FEED_MAX) this.feed.lastElementChild!.remove();
     window.setTimeout(() => row.remove(), FEED_SECONDS * 1000);
+  }
+
+  private streakTimer = 0;
+
+  /** your eliminations in a row this point, as a big arcade-style callout (2 and up) */
+  streak(n: number): void {
+    const el = $('streak');
+    el.innerHTML = `<b>${n}</b><span>IN A ROW</span>`;
+    el.classList.remove('show');
+    void el.offsetWidth; // restart the animation
+    el.classList.add('show');
+    window.clearTimeout(this.streakTimer);
+    this.streakTimer = window.setTimeout(() => el.classList.remove('show'), 1800);
   }
 
   // ---- voice ------------------------------------------------------------------------------

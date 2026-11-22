@@ -21,6 +21,8 @@ export interface NetEvents {
   mode(): void;
   ball(m: Extract<ServerMsg, { t: 'ball' }>): void;
   hit(m: Extract<ServerMsg, { t: 'hit' }>): void;
+  /** a ball bounced off a player without breaking */
+  bounce(m: Extract<ServerMsg, { t: 'bounce' }>): void;
   respawn(spawn: Spawn): void;
   ack(m: Extract<ServerMsg, { t: 'ack' }>): void;
   /** a voice server token (asked for with { t: 'voice' }) */
@@ -328,6 +330,9 @@ export class Net {
         break;
       case 'hit':
         this.ev.hit(m);
+        break;
+      case 'bounce':
+        if (Array.isArray(m.p) && m.p.length === 3) this.ev.bounce(m);
         break;
       case 'respawn':
         this.ev.respawn(m.spawn);

@@ -157,7 +157,11 @@ src/          the browser game
 - **Bounces:** paint that hits at a glancing angle (or slowly) usually bounces off instead of breaking, flies on and can
   still eliminate someone. Whether it bounces is a roll of the dice, but every machine rolls the same dice: each ball's
   random numbers start from a hash of the point it was fired from, which the shooter, the server and every other browser
-  all know. Inflatable bunkers wobble when hit (`src/world.ts`), wood and rock don't.
+  all know. Inflatable bunkers wobble when hit (`src/world.ts`), wood and rock don't. Paint can bounce off players too:
+  most hits break, but a glancing one often skips off (about 5 in 100 hits overall), and that player plays on. The server
+  decides, and the feed says "bounce, plays on".
+- **Event feed:** besides who hit whom, the corner feed calls doubles and triples, eliminations off a bounce, paint
+  bouncing off a player, and the last one standing on a team. Your own eliminations in a row pop up as a streak.
 - **Other players:** drawn 100 ms in the past, blended between the server's snapshots, so they move smoothly instead of jumping 20 times a second.
 - **On the wire:** the messages sent many times a second (snapshots, your position acks, paintballs, your input) are
   packed into small binary frames (`shared/codec.ts`): positions to the centimetre, angles to a few thousandths of a

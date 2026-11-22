@@ -304,8 +304,19 @@ const net = new Net(serverUrl, {
     const mine = m.victim === net.id || m.shooter === net.id;
     const shooterTeam = net.roster.get(m.shooter)?.team ?? m.team;
     const victimTeam = net.roster.get(m.victim)?.team ?? (m.team === 0 ? 1 : 0);
-    hud.killFeed(net.nameOf(m.shooter), shooterTeam, net.nameOf(m.victim), victimTeam, mine);
+    // two or more quickly from the same shooter: a double (triple, …)
+    const now = performance.now();
+    const prev = multiElims.get(m.shooter);
+    const run = prev && now - prev.at < MULTI_MS ? prev.n + 1 : 1;
+    multiElims.set(m.shooter, { at: now, n: run });
+    const tags = [...(run >= 2 ? [MULTI_NAMES[Math.min(run, MULTI_NAMES.length - 1)]] : []), ...(m.bounced ? ['off a bounce'] : [])];
+    hud.killFeed(net.nameOf(m.shooter), shooterTeam, net.nameOf(m.victim), victimTeam, mine, tags);
+    if (m.shooter === net.id && player.alive) {
+      myStreak++;
+      if (myStreak >= 2) hud.streak(myStreak);
+    }
     if (m.victim === net.id) {
+      myStreak = 0;
       hud.toast(`${net.nameOf(m.shooter)} got you`);
       player.alive = false;
       outUntil = performance.now() + RESPAWN_SECONDS * 1000;
@@ -319,6 +330,14 @@ const net = new Net(serverUrl, {
       sound.play('confirm', { volume: VOL.confirm, rate: 1 });
       hud.toast(`You eliminated ${net.nameOf(m.victim)}`);
     }
+  },
+  bounce(m) {
+    // a ball skipped off someone: they play on
+    const team = net.roster.get(m.victim)?.team ?? 0;
+    hud.feedRow([{ text: net.nameOf(m.victim), team }, { text: '· bounce, plays on', cls: 'note' }], m.victim === net.id || m.shooter === net.id);
+    sound.playAt('bounce', m.p[0], m.p[1], m.p[2], { volume: VOL.bounce * 1.4 });
+    if (m.victim === net.id) hud.toast('That one bounced off you · still in');
+    else if (m.shooter === net.id) hud.toast(`Bounced off ${net.nameOf(m.victim)} · still in`);
   },
   ack(m) {
     // the server's word on where we are; replay what it hasn't seen yet on top
@@ -577,6 +596,16 @@ const ballEvents: BallEvents = {
     if (!stopped) sound.playAt('bounce', w.x, w.y, w.z, { volume: VOL.bounce });
     if (w.bunker >= 0) world.hit(w.bunker, w.nx, w.nz, 0.4);
   },
+  onPlayerBounce(b, _t, x, y, z, stopped) {
+    // skipped off them without breaking: no paint, they play on. Online the server says so (the
+    // 'bounce' message); in practice it's decided here
+    if (!stopped) sound.playAt('bounce', x, y, z, { volume: VOL.bounce });
+    fx.burst(x, y, z, 0, 1, 0, 0xffffff, 3);
+    if (b.local && net.status !== 'online') {
+      hud.feedRow([{ text: 'Target', team: 1 }, { text: '· bounce, plays on', cls: 'note' }], true);
+      hud.toast('Bounced off · still in');
+    }
+  },
   onNearMiss(_b, x, y, z, d) {
     sound.playAt('whizz', x, y, z, { volume: VOL.whizz * (1.2 - d / 2) });
   },
@@ -602,6 +631,45 @@ const ballEvents: BallEvents = {
 
 let lastPhase: RoundPhase | null = null;
 let lastCount = 0;
+
+// ---- event feed: doubles, your streak, the last one standing ----------------------------------
+
+/** eliminations this close together (ms) from the same shooter make a double, triple, … */
+const MULTI_MS = 4000;
+const MULTI_NAMES = ['', '', 'double', 'triple', 'quad', 'clean sweep'];
+const multiElims = new Map<number, { at: number; n: number }>();
+/** your eliminations this point without being hit */
+let myStreak = 0;
+/** players still in per team, last frame; and which teams have had their "last one standing" call this point */
+let lastAlive: [number, number] = [0, 0];
+const lastStandingCalled = new Set<number>();
+
+/** call out the last player standing on a team, once a point */
+function checkLastStanding(phase: RoundPhase | null) {
+  if (phase !== 'live') {
+    lastStandingCalled.clear();
+    lastAlive = [0, 0];
+    return;
+  }
+  const alive: [number, number] = [0, 0];
+  const last: [number, number] = [-1, -1];
+  for (const p of net.players) {
+    const isIn = p.id === net.id ? player.alive : p.alive;
+    if (!isIn) continue;
+    alive[p.team]++;
+    last[p.team] = p.id;
+  }
+  for (const t of [0, 1] as const) {
+    const other = alive[t === 0 ? 1 : 0];
+    if (alive[t] === 1 && lastAlive[t] > 1 && other > 0 && !lastStandingCalled.has(t)) {
+      lastStandingCalled.add(t);
+      const id = last[t];
+      hud.feedRow([{ text: 'last one standing:', cls: 'note' }, { text: net.nameOf(id), team: t }, { text: `1 v ${other}`, cls: 'tag' }], id === net.id, 'big');
+      if (id === net.id) hud.toast(`You're the last one standing · 1 v ${other}`);
+    }
+  }
+  lastAlive = alive;
+}
 
 const teamClass = (t: number) => (t === 0 ? 'r' : 'b');
 const clock = (sec: number) => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, '0')}`;
@@ -635,6 +703,7 @@ function outLine(phase: RoundPhase | null, now: number): string {
 function updateMatchCues(phase: RoundPhase | null, now: number) {
   const r = net.round;
   if (phase !== lastPhase) {
+    if (phase === 'countdown') myStreak = 0;
     if (phase === 'live' && lastPhase === 'countdown') sound.play('go', { volume: VOL.beep, rate: 1 });
     if (phase === 'point' || phase === 'matchover') sound.play('horn', { volume: VOL.horn, rate: 1 });
     if (phase === 'live' && r) hud.toast(`Point ${r.round} · eliminate the other team`);
@@ -805,6 +874,7 @@ function frame(now: number) {
     const waiting = phase === 'waiting' ? ' · warm-up, waiting for the other team' : '';
     hud.setStatus('online', `Online · ${TEAM_NAMES[net.team]} team · ${others} other player${others === 1 ? '' : 's'}${waiting}`);
     updateScoreBar(now);
+    checkLastStanding(phase);
   } else {
     if (mode === 'practice') hud.setStatus('offline', 'Practice · hit the targets');
     else if (net.status === 'connecting') hud.setStatus('connecting', 'Joining the match…');
