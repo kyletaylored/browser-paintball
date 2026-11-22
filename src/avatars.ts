@@ -2,13 +2,13 @@
 // shape drawn from code, used if the models didn't load. Both have the same set() interface.
 
 import * as THREE from 'three';
-import { STAND_HEIGHT } from '../shared/sim';
+import { STAND_HEIGHT, PRONE_FEET, PRONE_RADIUS } from '../shared/sim';
 import { paintTeam, type Models } from './models';
 
 export interface Avatar {
   readonly root: THREE.Object3D;
-  /** where they are and what they're doing (call every frame) */
-  set(x: number, y: number, z: number, yaw: number, pitch: number, height: number, alive: boolean): void;
+  /** where they are and what they're doing (call every frame); prone: lying down */
+  set(x: number, y: number, z: number, yaw: number, pitch: number, height: number, alive: boolean, prone?: boolean): void;
   /** they fired: play the recoil */
   fire(): void;
   dispose(): void;
@@ -19,6 +19,27 @@ export function makeAvatar(models: Models | null, color: number): Avatar {
 }
 
 type State = 'idle' | 'run' | 'crouch' | 'crouchMove' | 'out';
+
+/**
+ * Lying down, for both kinds of figure: the whole figure tips forward onto its front, feet where the
+ * hitbox's legs end (shared/sim.ts segmentHitsPlayer) and head toward where they face. `lie` eases
+ * from 0 (upright) to 1 (flat) so getting down and up isn't a snap; crawling rocks it side to side.
+ */
+class Lying {
+  lie = 0;
+  private phase = 0;
+
+  place(root: THREE.Object3D, x: number, y: number, z: number, yaw: number, prone: boolean, speed: number, dt: number): void {
+    this.lie += ((prone ? 1 : 0) - this.lie) * Math.min(1, dt * 7);
+    if (this.lie < 0.002) this.lie = 0;
+    const l = this.lie;
+    this.phase += dt * speed * 5;
+    const back = (PRONE_FEET + PRONE_RADIUS) * l;
+    root.position.set(x + Math.sin(yaw) * back, y + 0.12 * l, z + Math.cos(yaw) * back);
+    root.rotation.order = 'YXZ';
+    root.rotation.set(-Math.PI / 2 * l, yaw, Math.sin(this.phase) * 0.12 * l * Math.min(1, speed));
+  }
+}
 
 /**
  * The player.glb figure, driven by network state: speed and crouch pick the base animation
@@ -36,6 +57,7 @@ export class ModelAvatar implements Avatar {
   private head: THREE.Object3D | null;
   private last = { x: NaN, z: NaN, t: 0 };
   private speed = 0;
+  private lying = new Lying();
 
   constructor(models: Models, color: number) {
     this.model = models.player.scene.clone(true);
@@ -57,7 +79,7 @@ export class ModelAvatar implements Avatar {
     this.play('idle', 0);
   }
 
-  set(x: number, y: number, z: number, yaw: number, pitch: number, height: number, alive: boolean): void {
+  set(x: number, y: number, z: number, yaw: number, pitch: number, height: number, alive: boolean, prone = false): void {
     const now = performance.now() / 1000;
     const dt = this.last.t ? Math.min(0.1, now - this.last.t) : 0;
     if (dt > 0 && !Number.isNaN(this.last.x)) {
@@ -65,18 +87,18 @@ export class ModelAvatar implements Avatar {
       this.speed += ((v > 20 ? 0 : v) - this.speed) * Math.min(1, dt * 10); // > 20 m/s is a respawn jump
     }
     this.last = { x, z, t: now };
-    this.root.position.set(x, y, z);
-    this.root.rotation.y = yaw;
+    this.lying.place(this.root, x, y, z, yaw, prone && alive, this.speed, dt);
 
     const crouched = height < STAND_HEIGHT - 0.2;
-    const state: State = !alive ? 'out' : crouched ? (this.speed > 0.6 ? 'crouchMove' : 'crouch') : this.speed > 1 ? 'run' : 'idle';
+    // lying flat: a straight figure (rocked by Lying while it crawls)
+    const state: State = !alive ? 'out' : prone ? 'idle' : crouched ? (this.speed > 0.6 ? 'crouchMove' : 'crouch') : this.speed > 1 ? 'run' : 'idle';
     if (state !== this.state) this.play(state, 0.2);
     const run = this.actions.get('run');
     if (run) run.timeScale = Math.max(0.6, Math.min(1.4, this.speed / 6.5));
 
     this.mixer.update(dt);
     // aim up/down: bend at the waist and neck on top of whatever the animation did
-    if (alive) {
+    if (alive && !prone) {
       if (this.torso) this.torso.rotation.x += pitch * 0.55;
       if (this.head) this.head.rotation.x += pitch * 0.4;
     }
@@ -113,6 +135,8 @@ export class PrimitiveAvatar implements Avatar {
   private head = new THREE.Group();
   private mats: THREE.MeshStandardMaterial[] = [];
   private alive = true;
+  private lying = new Lying();
+  private last = { x: NaN, z: NaN, t: 0 };
 
   constructor(color: number) {
     const suit = this.mat({ color, roughness: 0.8 });
@@ -137,10 +161,14 @@ export class PrimitiveAvatar implements Avatar {
     this.root.traverse((o) => (o.castShadow = true));
   }
 
-  set(x: number, y: number, z: number, yaw: number, pitch: number, height: number, alive: boolean): void {
-    this.root.position.set(x, y, z);
-    this.root.rotation.y = yaw;
-    this.root.scale.y = height / STAND_HEIGHT;
+  set(x: number, y: number, z: number, yaw: number, pitch: number, height: number, alive: boolean, prone = false): void {
+    const now = performance.now() / 1000;
+    const dt = this.last.t ? Math.min(0.1, now - this.last.t) : 0;
+    const speed = dt > 0 && !Number.isNaN(this.last.x) ? Math.min(5, Math.hypot(x - this.last.x, z - this.last.z) / dt) : 0;
+    this.last = { x, z, t: now };
+    this.lying.place(this.root, x, y, z, yaw, prone && alive, speed, dt);
+    // crouching squashes the figure; lying down it's full length, on its front
+    this.root.scale.y = prone ? 1 : height / STAND_HEIGHT;
     this.head.rotation.x = pitch * 0.6;
     if (alive !== this.alive) {
       this.alive = alive;

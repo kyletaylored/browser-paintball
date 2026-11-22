@@ -21,7 +21,7 @@ import { Prediction } from './prediction';
 import { Net, sampleRemote, phaseSecondsLeft } from './net';
 import { NetStats } from './netstats';
 import { Voice, type VoiceSettings } from './voice';
-import { BALL_SPEED, FIRE_INTERVAL, STAND_HEIGHT, CROUCH_HEIGHT, CLIENT_SEND_HZ, RESPAWN_SECONDS, INPUT_DT, INTERP_DELAY } from '../shared/sim';
+import { BALL_SPEED, FIRE_INTERVAL, STAND_HEIGHT, stanceHeight, CLIENT_SEND_HZ, RESPAWN_SECONDS, INPUT_DT, INTERP_DELAY } from '../shared/sim';
 import { DEFAULT_PORT, TEAM_COLORS, TEAM_NAMES, cleanName, type RoundPhase, type V3 } from '../shared/protocol';
 
 const STEP = INPUT_DT; // the server replays our movement in steps of exactly this
@@ -162,7 +162,7 @@ interface Dummy extends Target {
 const dummies: Dummy[] = field.map.targets.map(([x, z], i) => {
   const avatar = makeAvatar(models, TEAM_COLORS[1]);
   scene.add(avatar.root);
-  return { id: -100 - i, team: 1, x, y: 0, z, baseZ: z, height: STAND_HEIGHT, alive: true, avatar, downUntil: 0 };
+  return { id: -100 - i, team: 1, x, y: 0, z, baseZ: z, height: STAND_HEIGHT, yaw: Math.PI / 2, prone: false, alive: true, avatar, downUntil: 0 };
 });
 
 /** play on another field: rebuild the scene and move the practice targets; false if it's already on */
@@ -307,21 +307,21 @@ function updateRemotes(now: number) {
     if (!ra) {
       const avatar = makeAvatar(models, TEAM_COLORS[r.team]);
       scene.add(avatar.root);
-      ra = { avatar, target: { id, team: r.team, x: 0, y: 0, z: 0, height: STAND_HEIGHT, alive: true }, feet: new Footsteps(), lx: NaN, ly: 0, lz: NaN };
+      ra = { avatar, target: { id, team: r.team, x: 0, y: 0, z: 0, height: STAND_HEIGHT, yaw: 0, prone: false, alive: true }, feet: new Footsteps(), lx: NaN, ly: 0, lz: NaN };
       remoteAvatars.set(id, ra);
     }
     const s = sampleRemote(r, at);
     if (!s) continue;
-    const h = s.c ? CROUCH_HEIGHT : STAND_HEIGHT;
-    ra.avatar.set(s.x, s.y, s.z, s.yaw, s.pitch, h, s.alive);
-    Object.assign(ra.target, { x: s.x, y: s.y, z: s.z, height: h, alive: s.alive });
-    // footsteps you can hear from around a bunker (crouch-walking is silent)
+    const h = stanceHeight(s.c, s.pr);
+    ra.avatar.set(s.x, s.y, s.z, s.yaw, s.pitch, h, s.alive, s.pr);
+    Object.assign(ra.target, { x: s.x, y: s.y, z: s.z, height: h, yaw: s.yaw, prone: s.pr, alive: s.alive });
+    // footsteps you can hear from around a bunker (crouch-walking and crawling are silent)
     const moved = Number.isNaN(ra.lx) ? 0 : Math.hypot(s.x - ra.lx, s.z - ra.lz);
     const grounded = Math.abs(s.y - ra.ly) < 0.01;
     ra.lx = s.x;
     ra.ly = s.y;
     ra.lz = s.z;
-    if (moved < 1 && s.alive && !s.c && ra.feet.update(moved, grounded)) {
+    if (moved < 1 && s.alive && !s.c && !s.pr && ra.feet.update(moved, grounded)) {
       sound.playAt('step', s.x, s.y + 0.05, s.z, { volume: VOL.remoteStep });
     }
   }

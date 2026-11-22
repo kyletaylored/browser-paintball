@@ -20,10 +20,17 @@ export const FIRE_INTERVAL = 1 / 10;
 export const PLAYER_RADIUS = 0.32;
 export const STAND_HEIGHT = 1.8;
 export const CROUCH_HEIGHT = 1.15;
+/** lying down: eyes just above the grass */
+export const PRONE_HEIGHT = 0.55;
+/** a lying body's thickness (radius), and how far its capsule reaches ahead of and behind where they are */
+export const PRONE_RADIUS = 0.2;
+export const PRONE_HEAD = 0.2;
+export const PRONE_FEET = 1.2;
 export const EYE_FROM_TOP = 0.12;
 export const WALK_SPEED = 5.2;
 export const SPRINT_SPEED = 7.6;
 export const CROUCH_SPEED = 2.6;
+export const PRONE_SPEED = 1.1;
 export const JUMP_SPEED = 6.4;
 export const PLAYER_GRAVITY = 18;
 
@@ -63,8 +70,14 @@ export interface MoveInput {
   jump: boolean;
   sprint: boolean;
   crouch: boolean;
+  /** lying down (beats crouch) */
+  prone: boolean;
   yaw: number;
 }
+
+/** how tall a player is for their stance (what hits are tested against) */
+export const stanceHeight = (crouch: boolean, prone: boolean): number =>
+  prone ? PRONE_HEIGHT : crouch ? CROUCH_HEIGHT : STAND_HEIGHT;
 
 /**
  * One fixed step of player movement. The browser runs it to predict its own player, and the server
@@ -72,8 +85,10 @@ export interface MoveInput {
  * body + same input must give the same result on both sides.
  */
 export function stepMovement(b: Body, inp: MoveInput, dt: number): void {
-  const targetH = inp.crouch ? CROUCH_HEIGHT : STAND_HEIGHT;
-  b.height += (targetH - b.height) * Math.min(1, dt * 12);
+  const targetH = stanceHeight(inp.crouch, inp.prone);
+  // getting down on the ground (or up from it) takes a moment longer than crouching
+  const lying = inp.prone || b.height < CROUCH_HEIGHT - 0.05;
+  b.height += (targetH - b.height) * Math.min(1, dt * (lying ? 7 : 12));
 
   // yaw 0 looks down -z. forward = (-sin, -cos), right = (cos, -sin)
   const s = Math.sin(inp.yaw);
@@ -85,7 +100,7 @@ export function stepMovement(b: Body, inp: MoveInput, dt: number): void {
     wx /= len;
     wz /= len;
   }
-  const speed = inp.crouch ? CROUCH_SPEED : inp.sprint ? SPRINT_SPEED : WALK_SPEED;
+  const speed = inp.prone ? PRONE_SPEED : inp.crouch ? CROUCH_SPEED : inp.sprint ? SPRINT_SPEED : WALK_SPEED;
   wx *= speed;
   wz *= speed;
 
@@ -93,7 +108,7 @@ export function stepMovement(b: Body, inp: MoveInput, dt: number): void {
   b.vx += (wx - b.vx) * k;
   b.vz += (wz - b.vz) * k;
 
-  if (inp.jump && b.onGround && !inp.crouch) {
+  if (inp.jump && b.onGround && !inp.crouch && !inp.prone) {
     b.vy = JUMP_SPEED;
     b.onGround = false;
   }
@@ -624,24 +639,57 @@ function segBox(
 
 /**
  * Does the ball's path touch an upright player capsule standing at (px,py,pz)?
- * Returns how far along the path (0..1), or null. Closest-point between two segments (Ericson, RTCD 5.1.9).
+ * Returns how far along the path (0..1), or null.
  */
 export function segmentHitsCapsule(
   x0: number, y0: number, z0: number, x1: number, y1: number, z1: number,
   px: number, py: number, pz: number, height: number, radius = PLAYER_RADIUS,
 ): number | null {
-  const ay = py + radius;
-  const by = py + Math.max(radius, height - radius);
+  return segmentHitsSegment(x0, y0, z0, x1, y1, z1, px, py + radius, pz, px, py + Math.max(radius, height - radius), pz, radius);
+}
+
+/**
+ * Does the ball's path touch this player? Standing or crouched, they're an upright capsule.
+ * Lying down they're one along the ground: head a little ahead of where they stand (toward where
+ * they face, yaw), legs out behind. Returns how far along the path (0..1), or null.
+ */
+export function segmentHitsPlayer(
+  x0: number, y0: number, z0: number, x1: number, y1: number, z1: number,
+  px: number, py: number, pz: number, height: number, yaw: number, prone: boolean,
+): number | null {
+  if (!prone) return segmentHitsCapsule(x0, y0, z0, x1, y1, z1, px, py, pz, height);
+  const fx = -Math.sin(yaw);
+  const fz = -Math.cos(yaw);
+  const y = py + PRONE_RADIUS;
+  return segmentHitsSegment(
+    x0, y0, z0, x1, y1, z1,
+    px + fx * PRONE_HEAD, y, pz + fz * PRONE_HEAD,
+    px - fx * PRONE_FEET, y, pz - fz * PRONE_FEET,
+    PRONE_RADIUS,
+  );
+}
+
+/**
+ * Does the path (x0..z1) pass within `radius` (plus a ball) of the segment a→b? Returns how far
+ * along the path the closest approach is (0..1), or null. Closest points between two segments
+ * (Ericson, Real-Time Collision Detection 5.1.9).
+ */
+function segmentHitsSegment(
+  x0: number, y0: number, z0: number, x1: number, y1: number, z1: number,
+  ax: number, ay: number, az: number, bx: number, by: number, bz: number, radius: number,
+): number | null {
   const d1x = x1 - x0;
   const d1y = y1 - y0;
   const d1z = z1 - z0;
-  const d2y = by - ay; // the capsule axis is vertical, so d2x = d2z = 0
-  const rx = x0 - px;
+  const d2x = bx - ax;
+  const d2y = by - ay;
+  const d2z = bz - az;
+  const rx = x0 - ax;
   const ry = y0 - ay;
-  const rz = z0 - pz;
+  const rz = z0 - az;
   const a = d1x * d1x + d1y * d1y + d1z * d1z;
-  const e = d2y * d2y;
-  const f = d2y * ry;
+  const e = d2x * d2x + d2y * d2y + d2z * d2z;
+  const f = d2x * rx + d2y * ry + d2z * rz;
   let s: number;
   let t: number;
   if (a < 1e-12) {
@@ -653,7 +701,7 @@ export function segmentHitsCapsule(
       t = 0;
       s = clamp01(-c / a);
     } else {
-      const b = d1y * d2y;
+      const b = d1x * d2x + d1y * d2y + d1z * d2z;
       const denom = a * e - b * b;
       s = denom > 1e-12 ? clamp01((b * f - c * e) / denom) : 0;
       t = (b * s + f) / e;
@@ -666,9 +714,9 @@ export function segmentHitsCapsule(
       }
     }
   }
-  const cx = x0 + d1x * s - px;
+  const cx = x0 + d1x * s - (ax + d2x * t);
   const cy = y0 + d1y * s - (ay + d2y * t);
-  const cz = z0 + d1z * s - pz;
+  const cz = z0 + d1z * s - (az + d2z * t);
   const rr = radius + BALL_RADIUS;
   return cx * cx + cy * cy + cz * cz <= rr * rr ? s : null;
 }

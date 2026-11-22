@@ -1,6 +1,7 @@
 // Controller maths and button handling, without a browser: npm run test:input
 
-import { BTN, LOOK_DEADZONE, LOOK_YAW_SPEED, MOVE_DEADZONE, PadState, TURN_BOOST, lookRates, radialDeadzone, turnBoost, type PadLike } from './gamepad';
+import { TapOrHold } from './input';
+import { BTN, LOOK_DEADZONE, LOOK_YAW_SPEED, MOVE_DEADZONE, PRONE_HOLD, PadState, TURN_BOOST, lookRates, radialDeadzone, turnBoost, type PadLike } from './gamepad';
 
 let failed = 0;
 function check(name: string, ok: boolean, detail = '') {
@@ -67,11 +68,26 @@ check('a press counts once, not every frame it is held', first && !s.reloadPress
 
 s.update(pad(), 1 / 60);
 s.update(pad([BTN.B]), 1 / 60);
-check('B toggles crouch on', s.crouch);
+s.update(pad(), 1 / 60);
+check('a tap of B crouches', s.crouch && !s.prone);
 s.update(pad(), 1 / 60);
 check('crouch stays on after letting go', s.crouch);
 s.update(pad([BTN.B]), 1 / 60);
-check('B again stands back up', !s.crouch);
+s.update(pad(), 1 / 60);
+check('another tap stands back up', !s.crouch);
+s.update(pad([BTN.B]), 1 / 60);
+for (let i = 0; i < 30; i++) s.update(pad([BTN.B]), 1 / 60); // half a second
+check(`holding B (${PRONE_HOLD} s) lies down`, s.prone && !s.crouch);
+s.update(pad(), 1 / 60);
+check('and you stay down after letting go', s.prone);
+s.update(pad([BTN.B]), 1 / 60);
+s.update(pad(), 1 / 60);
+check('a tap from lying down gets you up to a crouch', !s.prone && s.crouch);
+s.update(pad([BTN.B]), 1 / 60);
+for (let i = 0; i < 30; i++) s.update(pad([BTN.B]), 1 / 60);
+s.update(pad([BTN.A]), 1 / 60);
+check('jumping gets you up from lying down', !s.prone && !s.crouch);
+s.update(pad(), 1 / 60);
 
 s.update(pad([], [0, -1, 0, 0]), 1 / 60);
 s.update(pad([BTN.L3], [0, -1, 0, 0]), 1 / 60);
@@ -114,6 +130,28 @@ s.update(pad([BTN.START]), 1 / 60);
 check('Start is reported once', s.startPressed);
 s.update(null, 1 / 60);
 check('unplugging clears everything', !s.connected && !s.sprint && !s.fire && s.moveY === 0);
+
+// ---- keyboard crouch and lie down: tap to stay down, or hold --------------------------------------
+
+{
+  const k = new TapOrHold();
+  k.press(0);
+  k.release(120);
+  check('a quick tap of C stays crouched', k.on);
+  k.press(1000);
+  k.release(1100);
+  check('another tap stands back up', !k.on);
+  k.press(2000);
+  check('holding it crouches', k.on);
+  k.release(2600);
+  check('a long hold stands up when you let go', !k.on);
+  k.press(3000);
+  k.release(3050);
+  k.press(4000);
+  check('holding it while tapped down keeps you down', k.on);
+  k.release(4800);
+  check('until you let go', !k.on);
+}
 
 if (failed) {
   console.log(`\n${failed} check(s) failed`);

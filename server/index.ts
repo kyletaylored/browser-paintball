@@ -18,7 +18,7 @@ import { makeHttpHandler } from './http';
 import { field, setMap, spawnPoint } from '../shared/field';
 import { MAPS, MAP_LIST, DEFAULT_MAP, voteWinner, unanimousVote } from '../shared/maps';
 import {
-  advanceBall, traceWorld, segmentHitsCapsule, isOutOfBounds, stepMovement, hitWorld, ballSeed, BALL_DT,
+  advanceBall, traceWorld, segmentHitsPlayer, stanceHeight, isOutOfBounds, stepMovement, hitWorld, ballSeed, BALL_DT,
   BALL_SPEED, BALL_LIFETIME, FIRE_INTERVAL, STAND_HEIGHT, CROUCH_HEIGHT, EYE_FROM_TOP,
   RESPAWN_SECONDS, SERVER_TICK_HZ, SNAPSHOT_HZ, INPUT_DT, INTERP_DELAY, type Ball, type Body, type MoveInput,
 } from '../shared/sim';
@@ -27,7 +27,7 @@ import { decodeClient, encodeAck, encodeBall, encodeSnap } from '../shared/codec
 import { FastLink, type RtcOptions } from './rtc';
 import { voiceConfig, voiceToken } from './voice';
 import {
-  DEFAULT_PORT, TEAM_NAMES, cleanName, INPUT_JUMP, INPUT_SPRINT, INPUT_CROUCH,
+  DEFAULT_PORT, TEAM_NAMES, cleanName, INPUT_JUMP, INPUT_SPRINT, INPUT_CROUCH, INPUT_PRONE,
   type ClientMsg, type ServerMsg, type Team, type V3, type RoundPhase, type RoundState, type RosterEntry,
 } from '../shared/protocol';
 
@@ -111,6 +111,8 @@ interface Player {
   yaw: number;
   pitch: number;
   crouch: boolean;
+  /** lying down */
+  prone: boolean;
   alive: boolean;
   outUntil: number;
   lastFire: number;
@@ -135,6 +137,9 @@ interface Pose {
   y: number;
   z: number;
   height: number;
+  /** which way they faced, and lying down: a lying body is hit along the ground (shared/sim.ts segmentHitsPlayer) */
+  yaw: number;
+  prone: boolean;
   alive: boolean;
 }
 
@@ -211,7 +216,7 @@ wss.on('connection', (ws) => {
   const alive = match.phase !== 'live';
   const p: Player = {
     ws, fast: null, bot: null, body: newBody(sp.x, sp.y, sp.z), lastSeq: -1, budget: 0.1, history: [], id, team, slot, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw, pitch: 0,
-    crouch: false, alive, outUntil: alive ? 0 : Infinity, lastFire: 0,
+    crouch: false, prone: false, alive, outUntil: alive ? 0 : Infinity, lastFire: 0,
     name: `Player ${id}`, wantName: `Player ${id}`, lastRename: -Infinity, k: 0, d: 0, ping: 0, lastVoiceToken: -Infinity, vote: null,
   };
   players.set(id, p);
@@ -308,7 +313,7 @@ function onFast(p: Player, data: Buffer) {
   if (msg.t === 'input') handle(p, msg);
 }
 
-const moveIn: MoveInput = { forward: 0, right: 0, jump: false, sprint: false, crouch: false, yaw: 0 };
+const moveIn: MoveInput = { forward: 0, right: 0, jump: false, sprint: false, crouch: false, prone: false, yaw: 0 };
 
 /** run one of a browser's input frames through the same movement code the browser predicted with */
 function applyInput(p: Player, f: unknown) {
@@ -329,12 +334,14 @@ function applyInput(p: Player, f: unknown) {
   moveIn.jump = canMove && (flags & INPUT_JUMP) !== 0;
   moveIn.sprint = canMove && (flags & INPUT_SPRINT) !== 0;
   moveIn.crouch = canMove && (flags & INPUT_CROUCH) !== 0;
+  moveIn.prone = canMove && (flags & INPUT_PRONE) !== 0;
   moveIn.yaw = yaw;
   stepMovement(p.body, moveIn, INPUT_DT);
   p.x = p.body.x;
   p.y = p.body.y;
   p.z = p.body.z;
   p.crouch = moveIn.crouch;
+  p.prone = moveIn.prone;
 }
 
 function spawnBall(p: Player, o: V3, dir: V3) {
@@ -365,17 +372,17 @@ function rewindFor(p: Player): number {
 function recordHistory(t: number) {
   for (const p of players.values()) {
     const h = p.history;
-    h.push({ t, x: p.x, y: p.y, z: p.z, height: p.crouch ? CROUCH_HEIGHT : STAND_HEIGHT, alive: p.alive });
+    h.push({ t, x: p.x, y: p.y, z: p.z, height: stanceHeight(p.crouch, p.prone), yaw: p.yaw, prone: p.prone, alive: p.alive });
     while (h.length && h[0].t < t - HISTORY_SECONDS) h.shift();
   }
 }
 
-const livePose: Pose = { t: 0, x: 0, y: 0, z: 0, height: 0, alive: false };
+const livePose: Pose = { t: 0, x: 0, y: 0, z: 0, height: 0, yaw: 0, prone: false, alive: false };
 /** where `p` was at time `t`, blended between the recorded ticks around it */
 function poseAt(p: Player, t: number): Pose {
   const h = p.history;
   if (!h.length || t >= h[h.length - 1].t) {
-    return Object.assign(livePose, { t, x: p.x, y: p.y, z: p.z, height: p.crouch ? CROUCH_HEIGHT : STAND_HEIGHT, alive: p.alive });
+    return Object.assign(livePose, { t, x: p.x, y: p.y, z: p.z, height: stanceHeight(p.crouch, p.prone), yaw: p.yaw, prone: p.prone, alive: p.alive });
   }
   if (t <= h[0].t) return h[0];
   let i = h.length - 1;
@@ -386,7 +393,7 @@ function poseAt(p: Player, t: number): Pose {
   if (Math.hypot(b.x - a.x, b.z - a.z) > 3) return k < 0.5 ? a : b; // a respawn in between: don't blend across the field
   return {
     t, x: a.x + (b.x - a.x) * k, y: a.y + (b.y - a.y) * k, z: a.z + (b.z - a.z) * k,
-    height: k < 0.5 ? a.height : b.height, alive: a.alive && b.alive,
+    height: k < 0.5 ? a.height : b.height, yaw: k < 0.5 ? a.yaw : b.yaw, prone: k < 0.5 ? a.prone : b.prone, alive: a.alive && b.alive,
   };
 }
 
@@ -439,7 +446,7 @@ function addBot(team: Team) {
   const alive = match.phase !== 'live';
   players.set(id, {
     ws: null, fast: null, bot: { brain }, body: newBody(sp.x, sp.y, sp.z), lastSeq: -1, budget: 0, history: [], id, team, slot, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw, pitch: 0,
-    crouch: false, alive, outUntil: alive ? 0 : Infinity, lastFire: 0,
+    crouch: false, prone: false, alive, outUntil: alive ? 0 : Infinity, lastFire: 0,
     name, wantName: name, lastRename: 0, k: 0, d: 0, ping: 0, lastVoiceToken: -Infinity, vote: null,
   });
 }
@@ -474,7 +481,7 @@ function updateBots(dt: number) {
   const t = now();
   const canMove = match.phase === 'live' || match.phase === 'waiting';
   const seen: Seen[] = [];
-  for (const p of players.values()) seen.push({ id: p.id, team: p.team, x: p.x, y: p.y, z: p.z, crouch: p.crouch, alive: p.alive });
+  for (const p of players.values()) seen.push({ id: p.id, team: p.team, x: p.x, y: p.y, z: p.z, crouch: p.crouch, prone: p.prone, alive: p.alive });
   for (const p of players.values()) {
     if (!p.bot || !p.alive || !canMove) continue;
     const { brain } = p.bot;
@@ -487,6 +494,7 @@ function updateBots(dt: number) {
     p.yaw = out.yaw;
     p.pitch = out.pitch;
     p.crouch = out.move.crouch;
+    p.prone = out.move.prone;
     if (out.fire && t - p.lastFire >= FIRE_INTERVAL * 0.95) {
       p.lastFire = t;
       const eyeY = body.y + body.height - EYE_FROM_TOP;
@@ -534,7 +542,7 @@ function stepBalls(dt: number) {
       // where this target was on the shooter's screen (just "now" for bots and with compensation off)
       const pose = b.rewind ? poseAt(p, tNow - b.rewind) : poseAt(p, Infinity);
       if (!pose.alive) continue;
-      const s = segmentHitsCapsule(x0, y0, z0, b.x, b.y, b.z, pose.x, pose.y, pose.z, pose.height);
+      const s = segmentHitsPlayer(x0, y0, z0, b.x, b.y, b.z, pose.x, pose.y, pose.z, pose.height, pose.yaw, pose.prone);
       if (s !== null && s < bestT) {
         bestT = s;
         victim = p;
@@ -571,7 +579,7 @@ function applyName(p: Player) {
 
 function respawn(p: Player) {
   const sp = spawnPoint(p.team, p.slot);
-  Object.assign(p, { alive: true, outUntil: 0, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw, pitch: 0, crouch: false });
+  Object.assign(p, { alive: true, outUntil: 0, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw, pitch: 0, crouch: false, prone: false });
   p.body = newBody(sp.x, sp.y, sp.z);
   p.bot?.brain.reset(sp.yaw);
   send(p.ws, { t: 'respawn', spawn: sp });
@@ -703,7 +711,7 @@ function snapshot() {
     score,
     round: roundState(),
     players: [...players.values()].map((p) => ({
-      id: p.id, team: p.team, x: p.x, y: p.y, z: p.z, yaw: p.yaw, pitch: p.pitch, c: p.crouch, alive: p.alive,
+      id: p.id, team: p.team, x: p.x, y: p.y, z: p.z, yaw: p.yaw, pitch: p.pitch, c: p.crouch, pr: p.prone, alive: p.alive,
     })),
   };
   const data = BINARY ? encodeSnap(snap) : JSON.stringify(snap);

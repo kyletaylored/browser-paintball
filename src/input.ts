@@ -12,6 +12,41 @@ export const TOUCH = typeof matchMedia !== 'undefined' && matchMedia('(pointer: 
 
 export type Device = 'keyboard' | 'pad';
 
+/** a quicker press than this is a tap */
+const TAP_MS = 250;
+
+/**
+ * A key that works both ways: hold it and it's on while held; tap it and it stays on until you tap
+ * it again (or something else, like jumping, ends it). Crouch (C) and lie down (Z).
+ */
+export class TapOrHold {
+  /** on from a tap */
+  latched = false;
+  private downAt = -1;
+  private wasLatched = false;
+
+  get on(): boolean {
+    return this.latched || this.downAt >= 0;
+  }
+
+  press(t: number): void {
+    // pressing it while latched ends the latch: a tap stands you up, a hold keeps you down until you let go
+    this.wasLatched = this.latched;
+    this.latched = false;
+    this.downAt = t;
+  }
+
+  release(t: number): void {
+    if (this.downAt >= 0 && t - this.downAt < TAP_MS && !this.wasLatched) this.latched = true;
+    this.downAt = -1;
+  }
+
+  clear(): void {
+    this.latched = false;
+    this.downAt = -1;
+  }
+}
+
 export class Input {
   locked = false;
   /** playing without pointer lock: started from a controller or on a touch screen */
@@ -28,6 +63,9 @@ export class Input {
   /** A started the game: don't also jump until it's let go */
   private holdA = false;
   readonly keys = new Set<string>();
+  /** C: crouch, Z: lie down (tap to toggle, or hold) */
+  readonly crouchKey = new TapOrHold();
+  readonly proneKey = new TapOrHold();
   private pressed = new Set<string>();
   private dx = 0;
   private dy = 0;
@@ -73,12 +111,29 @@ export class Input {
     });
     window.addEventListener('keydown', (e) => {
       if (!this.locked) return;
-      if (!e.repeat) this.pressed.add(e.code);
+      if (!e.repeat) {
+        this.pressed.add(e.code);
+        const t = performance.now();
+        if (e.code === 'KeyC') {
+          this.crouchKey.press(t);
+          this.proneKey.clear(); // crouching from lying down gets you up to a crouch
+        } else if (e.code === 'KeyZ') {
+          this.proneKey.press(t);
+          this.crouchKey.clear();
+        } else if (e.code === 'Space') {
+          this.crouchKey.clear(); // jumping stands you up
+          this.proneKey.clear();
+        }
+      }
       this.keys.add(e.code);
       this.device = 'keyboard';
       if (e.code === 'Space' || e.code === 'Tab') e.preventDefault();
     });
-    window.addEventListener('keyup', (e) => this.keys.delete(e.code));
+    window.addEventListener('keyup', (e) => {
+      this.keys.delete(e.code);
+      if (e.code === 'KeyC') this.crouchKey.release(performance.now());
+      else if (e.code === 'KeyZ') this.proneKey.release(performance.now());
+    });
     window.addEventListener('blur', () => {
       this.keys.clear();
       this.mouseFire = false;
@@ -171,7 +226,12 @@ export class Input {
   }
 
   get crouch(): boolean {
-    return this.isDown('KeyC') || (this.active && this.pad.state.crouch);
+    return this.crouchKey.on || (this.active && this.pad.state.crouch);
+  }
+
+  /** lying down (beats crouch) */
+  get prone(): boolean {
+    return this.proneKey.on || (this.active && this.pad.state.prone);
   }
 
   get fireHeld(): boolean {
@@ -212,6 +272,9 @@ export class Input {
   private releaseAll(): void {
     this.keys.clear();
     this.mouseFire = false;
+    // back from the menu standing up, not crouched from a key you let go of while it was open
+    this.crouchKey.clear();
+    this.proneKey.clear();
   }
 }
 

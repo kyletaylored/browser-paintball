@@ -28,6 +28,8 @@ export interface PlayerSnap {
   pitch: number;
   /** crouching */
   c: boolean;
+  /** lying down */
+  pr: boolean;
   alive: boolean;
 }
 
@@ -72,13 +74,14 @@ export interface RosterEntry {
 
 /**
  * One fixed movement step (INPUT_DT seconds) of keys + aim, as sent by the browser:
- * [sequence number, forward -1..1, right -1..1, flags, yaw, pitch]. flags: 1 jump, 2 sprint, 4 crouch.
+ * [sequence number, forward -1..1, right -1..1, flags, yaw, pitch]. flags: 1 jump, 2 sprint, 4 crouch, 8 lie down.
  * The server runs shared/sim.ts stepMovement on each one, exactly as the browser did when it predicted it.
  */
 export type InputFrame = [seq: number, forward: number, right: number, flags: number, yaw: number, pitch: number];
 export const INPUT_JUMP = 1;
 export const INPUT_SPRINT = 2;
 export const INPUT_CROUCH = 4;
+export const INPUT_PRONE = 8;
 
 /** a player's full movement state: [x, y, z, vx, vy, vz, height, onGround (1/0)] */
 export type BodyState = [number, number, number, number, number, number, number, number];

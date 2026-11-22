@@ -19,7 +19,7 @@ export class LocalPlayer {
   private hopperMat = new THREE.MeshStandardMaterial({ roughness: 0.35 });
   private recoil = 0;
   private bobPhase = 0;
-  private move: MoveInput = { forward: 0, right: 0, jump: false, sprint: false, crouch: false, yaw: 0 };
+  private move: MoveInput = { forward: 0, right: 0, jump: false, sprint: false, crouch: false, prone: false, yaw: 0 };
   private euler = new THREE.Euler(0, 0, 0, 'YXZ');
   /** visual-only offset left over from a server correction; decays to zero so fixes don't look like teleports */
   private smooth = { x: 0, y: 0, z: 0 };
@@ -88,7 +88,8 @@ export class LocalPlayer {
     m.right = on ? input.right : 0;
     m.jump = on && input.jump;
     m.sprint = on && input.sprint;
-    m.crouch = on && input.crouch;
+    m.prone = on && input.prone;
+    m.crouch = on && input.crouch && !m.prone;
     m.yaw = this.yaw;
     return m;
   }
@@ -98,8 +99,9 @@ export class LocalPlayer {
     stepMovement(this.body, this.move, dt);
   }
 
+  /** crouched or lying down (quiet: no footsteps) */
   get crouching(): boolean {
-    return this.move.crouch;
+    return this.move.crouch || this.move.prone;
   }
 
   eye(out: THREE.Vector3): THREE.Vector3 {

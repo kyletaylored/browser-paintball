@@ -8,7 +8,7 @@
 
 import * as THREE from 'three';
 import {
-  advanceBall, traceWorld, segmentHitsCapsule, isOutOfBounds, hitWorld, ballSeed,
+  advanceBall, traceWorld, segmentHitsPlayer, isOutOfBounds, hitWorld, ballSeed,
   BALL_LIFETIME, type Ball, type WorldHit,
 } from '../shared/sim';
 import type { V3 } from '../shared/protocol';
@@ -20,6 +20,9 @@ export interface Target {
   y: number;
   z: number;
   height: number;
+  /** which way they face, and lying down (then they're hit along the ground) */
+  yaw: number;
+  prone: boolean;
   alive: boolean;
 }
 
@@ -133,7 +136,7 @@ export class Paintballs {
       let hit: Target | null = null;
       for (const t of targets) {
         if (!t.alive || t.team === b.team || t.id === b.owner) continue;
-        const s = segmentHitsCapsule(x0, y0, z0, b.x, b.y, b.z, t.x, t.y, t.z, t.height);
+        const s = segmentHitsPlayer(x0, y0, z0, b.x, b.y, b.z, t.x, t.y, t.z, t.height, t.yaw, t.prone);
         if (s !== null && s < bestT) {
           bestT = s;
           hit = t;

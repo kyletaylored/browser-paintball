@@ -9,7 +9,7 @@
 // that froze you) you're put where the server says, with small corrections smoothed out.
 
 import { stepMovement, INPUT_DT, type Body, type MoveInput } from '../shared/sim';
-import { INPUT_CROUCH, INPUT_JUMP, INPUT_SPRINT, type BodyState, type InputFrame } from '../shared/protocol';
+import { INPUT_CROUCH, INPUT_JUMP, INPUT_PRONE, INPUT_SPRINT, type BodyState, type InputFrame } from '../shared/protocol';
 import { quantizeInput } from '../shared/codec';
 
 /** corrections bigger than this snap instead of smoothing (respawns, being frozen) */
@@ -35,7 +35,7 @@ export class Prediction {
     const seq = ++this.seq;
     this.pending.push({ seq, move: { ...move } });
     if (this.pending.length > 600) this.pending.shift(); // 5 s without an ack: something's very wrong; don't grow forever
-    const flags = (move.jump ? INPUT_JUMP : 0) | (move.sprint ? INPUT_SPRINT : 0) | (move.crouch ? INPUT_CROUCH : 0);
+    const flags = (move.jump ? INPUT_JUMP : 0) | (move.sprint ? INPUT_SPRINT : 0) | (move.crouch ? INPUT_CROUCH : 0) | (move.prone ? INPUT_PRONE : 0);
     this.outbox.push([seq, move.forward, move.right, flags, move.yaw, pitch]);
   }
 

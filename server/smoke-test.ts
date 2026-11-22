@@ -234,6 +234,24 @@ async function walkAndAgree(c: Client): Promise<boolean> {
   return a !== undefined && Math.hypot(a.b[0] - c.body.x, a.b[1] - c.body.y, a.b[2] - c.body.z) < 1e-6;
 }
 
+/** lying down: the server crawls you exactly as the browser predicted, and others see you lying down */
+async function crawlTest(url: string) {
+  console.log('-- crawling');
+  const c = await join(url); // alone (warm-up), so nothing freezes us for a countdown
+  const x0 = c.body.x;
+  await walkTo(c, c.body.x + (c.team === 0 ? 2 : -2), c.body.z + 1, false, true);
+  await wait(300);
+  const a = lastAck(c);
+  check('crawling: the server agrees exactly with the prediction',
+    a !== undefined && Math.hypot(a.b[0] - c.body.x, a.b[1] - c.body.y, a.b[2] - c.body.z) < 1e-6);
+  check(`crawling is slow, and keeps you low (eyes at ${(c.body.height - EYE_FROM_TOP).toFixed(2)} m)`,
+    Math.abs(c.body.x - x0) > 1.5 && c.body.height < 0.6);
+  // snapshots list everyone, us included: what everyone else draws
+  const seen = await waitFor(c.inbox, snapWhere((m) => m.players.some((p) => p.id === c.id && p.pr && !p.c)), 1000, c.inbox.length);
+  check('snapshots show you lying down, for everyone else to draw', seen !== null);
+  c.ws.close();
+}
+
 /** longest gap between snapshot arrivals, ms, after the first `skip` */
 function longestGap(c: Client, skip: number): number {
   let g = 0;
@@ -356,6 +374,7 @@ try {
     const withRtc = await startServer({ BOT_TEAM_SIZE: '0' }); // data channels are on by default in development
     try {
       await rtcTest(withRtc.url);
+      await crawlTest(withRtc.url);
     } finally {
       withRtc.stop();
     }

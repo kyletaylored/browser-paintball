@@ -8,7 +8,7 @@
 //
 //  snap   u8 type | f32 time | u8 phase | u16 endsIn (1/100 s) | u8 round | i8 winner | u8 toWin
 //         | u8 score red | u8 score blue | u8 count | count × player
-//  player u16 id | u8 flags (1 blue, 2 crouch, 4 alive) | i16 x, y, z (cm) | u16 yaw | i16 pitch
+//  player u16 id | u8 flags (1 blue, 2 crouch, 4 alive, 8 lying down) | i16 x, y, z (cm) | u16 yaw | i16 pitch
 //  ack    u8 type | u32 seq | 7 × f64 body | u8 onGround      (full precision: prediction replays from it)
 //  ball   u8 type | u16 owner | u8 team | 3 × f32 origin | 3 × f32 velocity
 //  input  u8 type | u8 count | count × (u32 seq | i8 forward | i8 right | u8 flags | f32 yaw | f32 pitch)
@@ -56,7 +56,7 @@ export function encodeSnap(m: SnapMsg): Uint8Array<ArrayBuffer> {
   for (let i = 0; i < n; i++) {
     const p = m.players[i];
     v.setUint16(o, p.id, true);
-    v.setUint8(o + 2, (p.team === 1 ? 1 : 0) | (p.c ? 2 : 0) | (p.alive ? 4 : 0));
+    v.setUint8(o + 2, (p.team === 1 ? 1 : 0) | (p.c ? 2 : 0) | (p.alive ? 4 : 0) | (p.pr ? 8 : 0));
     v.setInt16(o + 3, cm(p.x), true);
     v.setInt16(o + 5, cm(p.y), true);
     v.setInt16(o + 7, cm(p.z), true);
@@ -104,6 +104,7 @@ export function decodeServer(data: ArrayBuffer | ArrayBufferView): ServerMsg {
           id: v.getUint16(o, true),
           team: (f & 1 ? 1 : 0) as Team,
           c: (f & 2) !== 0,
+          pr: (f & 8) !== 0,
           alive: (f & 4) !== 0,
           x: v.getInt16(o + 3, true) / 100,
           y: v.getInt16(o + 5, true) / 100,

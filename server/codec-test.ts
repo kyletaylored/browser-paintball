@@ -51,6 +51,7 @@ const throws = (f: () => unknown) => {
         yaw: rnd(-20, 20), // any angle, including several turns
         pitch: rnd(-1.5, 1.5),
         c: Math.random() < 0.5,
+        pr: Math.random() < 0.5,
         alive: Math.random() < 0.5,
       })),
     };
@@ -65,7 +66,7 @@ const throws = (f: () => unknown) => {
       worstPos = Math.max(worstPos, Math.abs(a.x - b.x), Math.abs(a.y - b.y), Math.abs(a.z - b.z));
       worstYaw = Math.max(worstYaw, angleDiff(a.yaw, b.yaw));
       worstPitch = Math.max(worstPitch, Math.abs(a.pitch - b.pitch));
-      flagsOk &&= a.id === b.id && a.team === b.team && a.c === b.c && a.alive === b.alive;
+      flagsOk &&= a.id === b.id && a.team === b.team && a.c === b.c && a.pr === b.pr && a.alive === b.alive;
     }
   }
   check('snapshot: ids, teams, crouch and alive flags exact', flagsOk);
@@ -120,7 +121,7 @@ const throws = (f: () => unknown) => {
 
 // ---- malformed frames are rejected, not misread ------------------------------------------------------
 {
-  const snap = encodeSnap({ t: 'snap', seq: 1, score: [0, 0], round: { phase: 'live', endsIn: 1, round: 1, winner: -1, toWin: 5 }, players: [{ id: 1, team: 0, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, c: false, alive: true }] });
+  const snap = encodeSnap({ t: 'snap', seq: 1, score: [0, 0], round: { phase: 'live', endsIn: 1, round: 1, winner: -1, toWin: 5 }, players: [{ id: 1, team: 0, x: 0, y: 0, z: 0, yaw: 0, pitch: 0, c: false, pr: false, alive: true }] });
   const input = encodeInput([[1, 0, 0, 0, 0, 0]]);
   check('malformed: truncated snapshot throws', throws(() => decodeServer(snap.slice(0, snap.length - 3))));
   check('malformed: truncated input throws', throws(() => decodeClient(input.slice(0, input.length - 2))));
@@ -132,7 +133,7 @@ const throws = (f: () => unknown) => {
 {
   const m: SnapMsg = {
     t: 'snap', seq: 1234, score: [2, 3], round: { phase: 'live', endsIn: 87.3, round: 6, winner: -1, toWin: 5 },
-    players: Array.from({ length: 12 }, (_, i) => ({ id: i + 1, team: (i % 2) as Team, x: rnd(-20, 20), y: 0, z: rnd(-14, 14), yaw: rnd(0, 6), pitch: rnd(-0.3, 0.3), c: false, alive: true })),
+    players: Array.from({ length: 12 }, (_, i) => ({ id: i + 1, team: (i % 2) as Team, x: rnd(-20, 20), y: 0, z: rnd(-14, 14), yaw: rnd(0, 6), pitch: rnd(-0.3, 0.3), c: false, pr: false, alive: true })),
   };
   const bin = encodeSnap(m).byteLength;
   const json = JSON.stringify(m).length;
