@@ -294,3 +294,37 @@ export function nextMap(id: string): string {
   const i = MAP_LIST.findIndex((m) => m.id === id);
   return MAP_LIST[(i + 1) % MAP_LIST.length].id;
 }
+
+// ---- choosing the field online ----------------------------------------------------------------
+// Each human on the server can vote for a field (or not vote). The server and the menus use the same
+// two rules, so what the menu says will happen is what happens.
+
+/** every human wants the same other field: switch to it at the next break */
+export function unanimousVote(votes: readonly (string | null)[], current: string): string | null {
+  if (!votes.length) return null;
+  const first = votes[0];
+  if (!first || !MAPS[first] || first === current) return null;
+  return votes.every((v) => v === first) ? first : null;
+}
+
+/**
+ * The field for the next match: the one with the most votes, ties going to whichever comes first
+ * in the rotation after the current field; the next in the rotation if nobody voted.
+ */
+export function voteWinner(votes: readonly (string | null)[], current: string): string {
+  const count = new Map<string, number>();
+  for (const v of votes) if (v && MAPS[v]) count.set(v, (count.get(v) ?? 0) + 1);
+  if (!count.size) return nextMap(current);
+  const start = MAP_LIST.findIndex((m) => m.id === current);
+  let best = '';
+  let bestN = 0;
+  for (let k = 1; k <= MAP_LIST.length; k++) {
+    const id = MAP_LIST[(start + k) % MAP_LIST.length].id;
+    const n = count.get(id) ?? 0;
+    if (n > bestN) {
+      best = id;
+      bestN = n;
+    }
+  }
+  return best;
+}

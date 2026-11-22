@@ -28,8 +28,11 @@ feed and on the scoreboard), then **Play online** to join the match. The menu sh
 plays offline against three strafing targets on the field you pick. Esc (or Start on a controller) pauses: Resume,
 Settings, Controls, or Leave match. Online, you're still in the match while paused.
 
-**Fields** (`shared/maps.ts`). Online, the server moves to the next field after every match; `MAP=<id>` on the server
-plays one field only. The main menu's field picker shows each one behind the menu, and Practice plays on it.
+**Fields** (`shared/maps.ts`). Pick one with the arrows at the top of the main menu: it shows behind the menu,
+Practice plays on it, and Play online votes for it. Online, everyone gets a vote (change it from the pause menu):
+when every player wants the same other field it switches at the next break between points, and otherwise the field with
+the most votes comes up after the match (the next one in turn if nobody voted). `MAP=<id>` on the server plays one
+field only, with no vote.
 
 | field | size | |
 |---|---|---|
