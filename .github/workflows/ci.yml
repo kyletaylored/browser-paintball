@@ -73,10 +73,12 @@ jobs:
         run: docker build -t splat-arena:ci .
 
       - name: Start container
-        # with the data channel's UDP port open, advertised on localhost where the test client is
+        # with the data channel's UDP port open, advertised on localhost where the test client is, and the
+        # short breaks the smoke test expects
         run: >-
           docker run -d --name game -p 8080:8080 -p 8788:8788/udp
-          -e BOT_TEAM_SIZE=0 -e RTC_UDP_PORT=8788 -e RTC_PUBLIC_IP=127.0.0.1 splat-arena:ci
+          -e BOT_TEAM_SIZE=0 -e RTC_UDP_PORT=8788 -e RTC_PUBLIC_IP=127.0.0.1
+          -e POINT_PAUSE_SECONDS=3 -e MATCH_OVER_SECONDS=6 splat-arena:ci
 
       - name: Health check answers
         run: |
