@@ -47,6 +47,11 @@ export class LocalPlayer {
   private smooth = { x: 0, y: 0, z: 0 };
 
   private markerModel: THREE.Object3D | null = null;
+  /** the pump marker (pump mode), its animation, and which of the two is in your hands */
+  private pumpModel: THREE.Object3D | null = null;
+  private pumpMixer: THREE.AnimationMixer | null = null;
+  private pumpAction: THREE.AnimationAction | null = null;
+  private holding: 'marker' | 'pump' = 'marker';
   /** where the marker sits in front of the camera (right, down, forward) */
   readonly gunOffset = new THREE.Vector3(0.15, -0.14, -0.34);
   /** first person, or over the shoulder */
@@ -70,8 +75,11 @@ export class LocalPlayer {
   private v1 = new THREE.Vector3();
   private v2 = new THREE.Vector3();
 
-  /** marker: the model from marker.glb, or null to draw a simple one from code */
-  constructor(private camera: THREE.PerspectiveCamera, marker: THREE.Object3D | null = null) {
+  /**
+   * marker: the model from marker.glb, or null to draw a simple one from code. pump: the pump
+   * marker (pump-marker.glb) and its clips, shown in pump mode
+   */
+  constructor(private camera: THREE.PerspectiveCamera, marker: THREE.Object3D | null = null, pump: { scene: THREE.Object3D; clips: THREE.AnimationClip[] } | null = null) {
     camera.rotation.order = 'YXZ';
     if (marker) {
       this.markerModel = marker.clone(true);
@@ -84,8 +92,28 @@ export class LocalPlayer {
     } else {
       this.buildGun();
     }
+    if (pump && this.markerModel) {
+      this.pumpModel = pump.scene.clone(true);
+      this.pumpModel.traverse((o) => (o.castShadow = false));
+      this.pumpModel.visible = false;
+      this.gun.add(this.pumpModel);
+      const clip = pump.clips.find((c) => c.name === 'pump');
+      if (clip) {
+        this.pumpMixer = new THREE.AnimationMixer(this.pumpModel);
+        this.pumpAction = this.pumpMixer.clipAction(clip);
+        this.pumpAction.setLoop(THREE.LoopOnce, 1);
+        this.pumpAction.clampWhenFinished = true;
+      }
+    }
     camera.add(this.gun);
     this.setTeam(0);
+  }
+
+  /** which marker you hold: the pump marker in pump mode (if it loaded), the usual one otherwise */
+  hold(kind: 'marker' | 'pump'): void {
+    this.holding = kind === 'pump' && this.pumpModel ? 'pump' : 'marker';
+    if (this.markerModel) this.markerModel.visible = this.holding === 'marker';
+    if (this.pumpModel) this.pumpModel.visible = this.holding === 'pump';
   }
 
   /** how to make your own figure for third person, and where to put it */
@@ -103,6 +131,7 @@ export class LocalPlayer {
     this.team = team;
     this.hopperMat.color.setHex(TEAM_COLORS[team]);
     if (this.markerModel) paintTeam(this.markerModel, TEAM_COLORS[team]);
+    if (this.pumpModel) paintTeam(this.pumpModel, TEAM_COLORS[team]);
   }
 
   placeAt(sp: Spawn): void {
@@ -178,10 +207,19 @@ export class LocalPlayer {
     this.fired = true;
   }
 
-  /** a pump marker's stroke after a shot: the marker racks back and forward over `seconds` */
+  /**
+   * a pump marker's stroke after a shot, over `seconds`: the pump marker's handle racks back and
+   * forward (its "pump" animation, from Blender) and the marker rocks a little; without that model
+   * the whole marker racks back instead
+   */
   pump(seconds: number): void {
     this.pumpT = 1;
     this.pumpLen = seconds;
+    if (this.holding === 'pump' && this.pumpAction) {
+      this.pumpAction.reset();
+      this.pumpAction.timeScale = this.pumpAction.getClip().duration / seconds;
+      this.pumpAction.play();
+    }
   }
 
   /**
@@ -260,8 +298,11 @@ export class LocalPlayer {
 
     this.recoil = Math.max(0, this.recoil - dt * 14);
     this.pumpT = Math.max(0, this.pumpT - dt / this.pumpLen);
-    // the stroke: back and up a little, then forward again (a smooth bump over the stroke)
-    const stroke = this.pumpT > 0 ? Math.sin(Math.PI * Math.min(1, (1 - this.pumpT) * 1.25)) : 0;
+    this.pumpMixer?.update(dt);
+    // the stroke: back and up a little, then forward again (a smooth bump over the stroke). With the
+    // pump marker its handle does the work, so the marker itself only rocks a touch
+    const bump = this.pumpT > 0 ? Math.sin(Math.PI * Math.min(1, (1 - this.pumpT) * 1.25)) : 0;
+    const stroke = this.holding === 'pump' && this.pumpAction ? bump * 0.35 : bump;
     const o = this.gunOffset;
     this.gun.position.set(o.x + Math.cos(this.bobPhase) * 0.005, o.y - bob * 0.5 - stroke * 0.012, o.z + this.recoil * 0.03 + stroke * 0.05);
     this.gun.rotation.x = this.recoil * 0.05 - stroke * 0.12;

@@ -33,6 +33,10 @@ jobs:
       - name: Models are up to date
         run: npm run check:assets
 
+      # the Blender-made models (art/models.json) have what the game needs and fit their budgets
+      - name: Blender-made models check out
+        run: npm run check:models
+
       - name: Build
         run: npm run build
 

@@ -125,7 +125,9 @@ server/
   codec-test.ts round-trip checks for the binary wire format
 scripts/
   build-assets.ts builds public/models/*.glb from code (npm run assets)
-public/models/  the generated models (meshopt-compressed glTF, ~220 KB total)
+  blender-assets.ts exports the Blender-made models (npm run assets:blender, docs/BLENDER.md)
+art/            sources for the Blender-made models (build scripts and .blend files) and their rules
+public/models/  the models (meshopt-compressed glTF, ~240 KB total)
 src/          the browser game
   main.ts       game loop (fixed 120 Hz physics step), shooting, wiring
   render.ts     WebGLRenderer + postprocessing (bloom, vignette, tone mapping, SMAA)
@@ -188,10 +190,10 @@ In development, `window.__game` in the browser console exposes the player, netwo
 
 Roughly in order of payoff:
 
-1. **Hand-made art.** The models are built by `scripts/build-assets.ts`. To replace any of them, model it in Blender, keep
-   the node names listed at the top of that script, export `.glb` into `public/models/`, and compress it with glTF tooling
-   (`gltf-transform optimize in.glb out.glb --compress meshopt`). A skinned character with mocap-style animations would be
-   the biggest upgrade.
+1. **Hand-made art.** Most models are built by `scripts/build-assets.ts`. Detailed ones come from Blender through
+   `npm run assets:blender` (see docs/BLENDER.md, which also covers working with Claude through the Blender MCP server).
+   To replace a code-made model, make it in Blender with the node names listed at the top of that script. A skinned
+   character with mocap-style animations would be the biggest upgrade.
 2. **More modes.** Capture the flag, an attack/defend variant, and so on (rounds are already in).
 
 ## Deploying

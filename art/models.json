@@ -1,0 +1,16 @@
+{
+  "$comment": "Models made in Blender (docs/BLENDER.md). npm run assets:blender exports each one to public/models; npm run check:models (CI) checks the committed files still meet these rules.",
+  "models": [
+    {
+      "source": "art/pump-marker.py",
+      "out": "pump-marker.glb",
+      "what": "the first-person pump marker, for pump mode",
+      "nodes": ["marker", "pump", "muzzle"],
+      "animations": { "pump": 0.5 },
+      "materials": ["team"],
+      "maxTriangles": 6000,
+      "maxKB": 60,
+      "size": [0.1, 0.4, 0.9]
+    }
+  ]
+}
