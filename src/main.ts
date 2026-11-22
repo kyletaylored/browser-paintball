@@ -19,6 +19,7 @@ import { SoundSystem, Footsteps } from './audio';
 import { Nameplates, type PlateTarget } from './nameplates';
 import { Prediction } from './prediction';
 import { Spectator } from './spectate';
+import { Director } from './director';
 import { waitLine } from '../shared/walkoff';
 import { Net, sampleRemote, phaseSecondsLeft } from './net';
 import { NetStats } from './netstats';
@@ -219,6 +220,9 @@ let outUntil = 0;
 /** when you were last hit (performance.now ms), for when to start spectating */
 let outAt = 0;
 const spectator = new Spectator();
+const director = new Director();
+/** paint each bunker has taken this point (for the "most paint" shot between points) */
+let paintHits: number[] = [];
 /** out this long (ms) without reaching the side line, and you start watching a teammate anyway */
 const SPECTATE_AFTER_MS = 2500;
 let practiceHits = 0;
@@ -554,6 +558,8 @@ function flyAround(dt: number) {
 
 const eye = new THREE.Vector3();
 const ear = new THREE.Vector3();
+const shotPos = new THREE.Vector3();
+const shotLook = new THREE.Vector3();
 const dir = new THREE.Vector3();
 const toTarget = new THREE.Vector3();
 
@@ -598,7 +604,10 @@ const ballEvents: BallEvents = {
     fx.splat(w.x, w.y, w.z, w.nx, w.ny, w.nz, b.color);
     fx.burst(w.x, w.y, w.z, w.nx, w.ny, w.nz, b.color, 6);
     sound.playAt('splat', w.x, w.y, w.z, { volume: VOL.splat });
-    if (w.bunker >= 0) world.hit(w.bunker, w.nx, w.nz, 1);
+    if (w.bunker >= 0) {
+      world.hit(w.bunker, w.nx, w.nz, 1);
+      paintHits[w.bunker] = (paintHits[w.bunker] ?? 0) + 1;
+    }
   },
   onBounce(b, w, stopped) {
     // no paint: it didn't break. A glancing knock still shakes an inflatable a little
@@ -708,11 +717,29 @@ function outLine(phase: RoundPhase | null, now: number): string {
   return `back in ${Math.max(1, Math.ceil((outUntil - now) / 1000))}…`;
 }
 
+/** plan the camera shots for the break that's starting */
+function startBreakShots(phase: 'point' | 'matchover', winner: number, seconds: number) {
+  const winners: { x: number; y: number; z: number }[] = [];
+  if (winner === 0 || winner === 1) {
+    for (const ra of remoteAvatars.values()) if (ra.target.alive && ra.target.team === winner) winners.push(ra.target);
+    if (player.alive && net.team === winner) winners.push(player.body);
+  }
+  director.start({
+    kind: phase === 'matchover' ? 'match' : 'point', winner, winnerName: winner >= 0 ? TEAM_NAMES[winner] : '',
+    winners: winners.map((p) => ({ x: p.x, y: p.y, z: p.z })), paint: field.bunkers.map((_, i) => paintHits[i] ?? 0), seconds,
+  });
+}
+
 /** banner, sounds and toasts when the match changes phase */
 function updateMatchCues(phase: RoundPhase | null, now: number) {
   const r = net.round;
   if (phase !== lastPhase) {
-    if (phase === 'countdown') myStreak = 0;
+    if (phase === 'countdown') {
+      myStreak = 0;
+      paintHits = [];
+    }
+    if ((phase === 'point' || phase === 'matchover') && r) startBreakShots(phase, r.winner, phaseSecondsLeft(net, now));
+    else director.stop();
     if (phase === 'live' && lastPhase === 'countdown') sound.play('go', { volume: VOL.beep, rate: 1 });
     if (phase === 'point' || phase === 'matchover') sound.play('horn', { volume: VOL.horn, rate: 1 });
     if (phase === 'live' && r) hud.toast(`Point ${r.round} · eliminate the other team`);
@@ -937,7 +964,20 @@ function frame(now: number) {
     hud.setWatching(null);
   } else {
     player.updateCamera(dt);
-    spectate(online, phase, now, dt);
+    if (online && director.active) {
+      // between points: the camera shots take over (your own figure still drew, above)
+      director.update(dt, camera, shotPos, shotLook);
+      player.hideGun();
+      hud.setWatching(null);
+      const r = net.round;
+      const w = r?.winner ?? -1;
+      hud.setCinema({
+        caption: director.caption, team: w, next: phase === 'matchover' ? 'NEW MATCH' : 'NEXT POINT', time: clock(phaseSecondsLeft(net, now)),
+      });
+    } else {
+      hud.setCinema(null);
+      spectate(online, phase, now, dt);
+    }
   }
   updatePlates(online);
   netStats.update(now);
