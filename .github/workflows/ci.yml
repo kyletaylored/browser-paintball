@@ -65,7 +65,10 @@ jobs:
         run: docker build -t splat-arena:ci .
 
       - name: Start container
-        run: docker run -d --name game -p 8080:8080 -e BOT_TEAM_SIZE=0 splat-arena:ci
+        # with the data channel's UDP port open, advertised on localhost where the test client is
+        run: >-
+          docker run -d --name game -p 8080:8080 -p 8788:8788/udp
+          -e BOT_TEAM_SIZE=0 -e RTC_UDP_PORT=8788 -e RTC_PUBLIC_IP=127.0.0.1 splat-arena:ci
 
       - name: Health check answers
         run: |
@@ -78,8 +81,8 @@ jobs:
           asset=$(curl -fsS http://localhost:8080/ | grep -o '/assets/[^"]*\.js' | head -1)
           curl -fsSI "http://localhost:8080$asset" | grep -qi "cache-control: public, max-age=31536000, immutable"
 
-      - name: A point plays out against the container
-        run: SERVER_URL=ws://localhost:8080 npm run test:server
+      - name: A point plays out against the container, and a data channel opens to it
+        run: SERVER_URL=ws://localhost:8080 SERVER_RTC=1 npm run test:server
 
       - name: Stops cleanly on SIGTERM
         run: |

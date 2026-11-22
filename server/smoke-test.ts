@@ -12,7 +12,8 @@
 //     lost each way its movement still matches the server exactly (inputs are sent with redundancy)
 //     and no snapshot is held up. With data channels off on the server, it plays over the WebSocket.
 //
-// Set SERVER_URL to run only the rules check against a server you started yourself (bots off).
+// Set SERVER_URL to run only the rules check against a server you started yourself (bots off), and
+// SERVER_RTC=1 as well to check a data channel opens to it.
 
 import { cleanName, type ServerMsg, type InputFrame } from '../shared/protocol';
 import { EYE_FROM_TOP } from '../shared/sim';
@@ -278,6 +279,7 @@ async function noRtcTest(url: string) {
 try {
   if (process.env.SERVER_URL) {
     await rulesTest(process.env.SERVER_URL);
+    if (process.env.SERVER_RTC) await rtcTest(process.env.SERVER_URL);
   } else {
     const rules = await startServer({ BOT_TEAM_SIZE: '0' });
     try {
