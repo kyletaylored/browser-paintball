@@ -114,6 +114,8 @@ export class PadState {
   reloadPressed = false;
   /** right stick clicked: switch first / third person */
   viewPressed = false;
+  /** d-pad left / right pressed: put the third-person camera over that shoulder (-1 left, 1 right, 0 neither) */
+  shoulderPressed: -1 | 0 | 1 = 0;
   startPressed = false;
   aPressed = false;
   bPressed = false;
@@ -189,6 +191,7 @@ export class PadState {
       this.bHeld = -1;
     }
     this.viewPressed = this.pressed(BTN.R3);
+    this.shoulderPressed = this.pressed(BTN.LEFT) ? -1 : this.pressed(BTN.RIGHT) ? 1 : 0;
     // sprint: click the left stick (stays on until you stop moving) or hold LB
     if (this.pressed(BTN.L3)) {
       this.sprintOn = !this.sprintOn;
@@ -247,6 +250,7 @@ export class PadState {
     this.fire = this.jump = this.sprint = this.crouch = this.prone = this.scoreboard = this.talk = false;
     this.bHeld = -1;
     this.reloadPressed = this.viewPressed = this.startPressed = this.aPressed = this.bPressed = false;
+    this.shoulderPressed = 0;
     this.nav = this.navDir = null;
     this.held = [];
     this.prev = [];

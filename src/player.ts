@@ -11,11 +11,17 @@ import type { Target } from './paintballs';
 import { walkOffInput } from '../shared/walkoff';
 
 export type View = 'first' | 'third';
+/** which shoulder the third-person camera looks over; auto follows the way you strafe */
+export type Shoulder = 'right' | 'left' | 'auto';
 
 /** over the shoulder: how far behind, to the right and above the eyes the camera sits */
 const THIRD_BACK = 2.6;
 const THIRD_RIGHT = 0.6;
 const THIRD_UP = 0.3;
+/** how quickly the camera moves across to the other shoulder (1/s: most of the way in about 0.2 s) */
+const SWAP_RATE = 12;
+/** auto shoulder: strafe one way this long (seconds) and the camera goes over that shoulder */
+const AUTO_STRAFE = 0.15;
 /** how far the crosshair looks for something to aim at in third person */
 const AIM_RANGE = 150;
 
@@ -51,6 +57,14 @@ export class LocalPlayer {
   private figScene: THREE.Object3D | null = null;
   /** fired since the figure last drew (so it plays the shot) */
   private fired = false;
+  /** which shoulder to look over (Settings, Q, d-pad left / right) */
+  shoulder: Shoulder = 'right';
+  /** the shoulder being looked over: 1 right, -1 left (auto changes it) */
+  private side = 1;
+  /** where the camera is between the shoulders now (-1..1), easing to `side` */
+  private sideNow = 1;
+  /** auto: how long you've strafed one way (seconds; negative is left) */
+  private strafeFor = 0;
   /** how far back the third-person camera is now (it pulls in when a bunker is behind you, and eases out) */
   private camBack = THIRD_BACK;
   private v1 = new THREE.Vector3();
@@ -170,6 +184,22 @@ export class LocalPlayer {
     this.pumpLen = seconds;
   }
 
+  /**
+   * Look over the other shoulder ('swap', Q) or a given one (-1 left, 1 right: d-pad). With a fixed
+   * shoulder that changes the setting; on auto it moves the camera until you strafe the other way.
+   */
+  pickShoulder(to: 'swap' | -1 | 1): void {
+    const side = to === 'swap' ? -this.side : to;
+    this.side = side;
+    this.strafeFor = 0;
+    if (this.shoulder !== 'auto') this.shoulder = side < 0 ? 'left' : 'right';
+  }
+
+  /** the shoulder being looked over now */
+  get lookingOver(): 'left' | 'right' {
+    return this.side < 0 ? 'left' : 'right';
+  }
+
   /** the marker in front of the camera (hidden while the main menu shows the field), and your figure */
   showGun(v: boolean): void {
     this.gun.visible = v && this.alive && this.view === 'first';
@@ -239,7 +269,12 @@ export class LocalPlayer {
     this.gun.visible = this.alive;
   }
 
-  /** camera behind your right shoulder, pulled in if a bunker (or the ground) is in the way; your figure drawn */
+  /**
+   * camera behind your shoulder, pulled in if a bunker (or the ground) is in the way; your figure
+   * drawn. The shoulder is the one picked, or on auto the side you last strafed toward (unless a
+   * bunker's right against it and the other side is clear: peeking out of the left of a bunker
+   * looks over your left shoulder). Swapping slides the camera across rather than jumping.
+   */
   private thirdPerson(dt: number, fired: boolean): void {
     const cam = this.camera.position;
     this.gun.visible = false;
@@ -247,10 +282,21 @@ export class LocalPlayer {
     const fwd = this.aimDir(this.v1);
     const rx = Math.cos(this.yaw);
     const rz = -Math.sin(this.yaw);
-    // the shoulder (or just above your head, if you're right up against something on your right)
-    let shx = cam.x + rx * THIRD_RIGHT;
     const shy = cam.y + THIRD_UP;
-    let shz = cam.z + rz * THIRD_RIGHT;
+    const blocked = (side: number) => traceWorld(cam.x, cam.y, cam.z, cam.x + rx * THIRD_RIGHT * side, shy, cam.z + rz * THIRD_RIGHT * side) !== null;
+    if (this.shoulder !== 'auto') {
+      this.side = this.shoulder === 'left' ? -1 : 1;
+    } else {
+      const r = this.move.right;
+      this.strafeFor = r < -0.3 ? Math.min(0, this.strafeFor) - dt : r > 0.3 ? Math.max(0, this.strafeFor) + dt : this.strafeFor;
+      if (this.strafeFor <= -AUTO_STRAFE) this.side = -1;
+      else if (this.strafeFor >= AUTO_STRAFE) this.side = 1;
+      if (blocked(this.side) && !blocked(-this.side)) this.side = -this.side;
+    }
+    this.sideNow += (this.side - this.sideNow) * Math.min(1, dt * SWAP_RATE);
+    // the shoulder (or just above your head, if you're right up against something on that side)
+    let shx = cam.x + rx * THIRD_RIGHT * this.sideNow;
+    let shz = cam.z + rz * THIRD_RIGHT * this.sideNow;
     if (traceWorld(cam.x, cam.y, cam.z, shx, shy, shz)) {
       shx = cam.x;
       shz = cam.z;

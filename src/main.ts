@@ -128,6 +128,27 @@ function setView(v: string, announce: boolean) {
   }
 }
 hud.bindView(player.view, (v) => setView(v, false));
+
+// which shoulder in third person, remembered too (Settings, Q, d-pad left / right)
+const SHOULDER_KEY = 'splat-arena.shoulder';
+try {
+  const s = localStorage.getItem(SHOULDER_KEY);
+  if (s === 'left' || s === 'auto') player.shoulder = s;
+} catch {
+  // storage blocked: right
+}
+function saveShoulder() {
+  hud.setShoulder(player.shoulder);
+  try {
+    localStorage.setItem(SHOULDER_KEY, player.shoulder);
+  } catch {
+    // ignore
+  }
+}
+hud.bindShoulder(player.shoulder, (v) => {
+  player.shoulder = v === 'left' || v === 'auto' ? v : 'right';
+  saveShoulder();
+});
 const balls = new Paintballs(scene);
 const fx = new Fx(scene);
 const sound = new SoundSystem(camera);
@@ -679,6 +700,12 @@ function frame(now: number) {
   const look = input.takeLook();
   if (input.locked) player.look(look.dx, look.dy);
   if (input.active && input.viewPressed) setView(player.view === 'third' ? 'first' : 'third', true);
+  const shoulder = input.active && player.view === 'third' ? input.shoulderPressed : null;
+  if (shoulder !== null) {
+    player.pickShoulder(shoulder);
+    saveShoulder();
+    hud.toast(`${player.lookingOver === 'left' ? 'Left' : 'Right'} shoulder${player.shoulder === 'auto' ? ' (auto)' : ''}`);
+  }
 
   // who can be hit this frame
   if (online) updateRemotes(now);
