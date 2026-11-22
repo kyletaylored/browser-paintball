@@ -1,6 +1,7 @@
 // How does play hold up on a lossy connection? Starts a server, joins one fake player
 // that strafes back and forth near its start box with client-side prediction (src/prediction.ts),
-// and fakes latency and TCP-style packet loss on its connection (shared/netsim.ts). Reports:
+// and fakes latency and packet loss on its connection (shared/netsim.ts): TCP-style on the
+// WebSocket, or dropped packets on a data channel with --rtc. Reports:
 //
 //  - snapshot gaps over 100 ms: the interpolation buffer is 100 ms deep, so other players freeze
 //  - buffer dry: share of 60 fps frames where the newest snapshot is older than the draw time
@@ -10,10 +11,13 @@
 //
 //   npm run measure:net                 → the full table (50 / 150 ms × 0, 1, 2, 5 % loss)
 //   npm run measure:net -- 150 2 60     → one run: lag ms, loss %, seconds
+//   npm run measure:net -- --rtc        → the same over a data channel (server/rtc.ts)
 
 import { Prediction } from '../src/prediction';
 import { stepMovement, INPUT_DT, INTERP_DELAY, WALK_SPEED, PLAYER_RADIUS, type MoveInput } from '../shared/sim';
-import { join, send, startServer, wait, type Ack, type Snap } from './test-client';
+import { join, send, startServer, wait, fastOpen, type Ack, type Snap } from './test-client';
+
+const RTC = process.argv.includes('--rtc');
 
 const INTERP_MS = INTERP_DELAY * 1000;
 /** stale by more than this and a walking target is drawn a body width off */
@@ -32,7 +36,8 @@ interface Result {
 }
 
 async function run(url: string, lag: number, loss: number, seconds: number): Promise<Result> {
-  const c = await join(url, lag, loss);
+  const c = await join(url, lag, loss, RTC);
+  if (RTC && !(await fastOpen(c, 8000))) throw new Error("the data channel didn't open");
   const prediction = new Prediction();
   const move: MoveInput = { forward: 0, right: 0, jump: false, sprint: false, crouch: false, yaw: c.yaw };
   let read = 0;
@@ -93,7 +98,7 @@ async function run(url: string, lag: number, loss: number, seconds: number): Pro
 const row = (r: Result) =>
   `| ${r.lag} ms | ${r.loss}% | ${r.gaps.toFixed(1)} | ${Math.round(r.longest)} ms | ${r.dry.toFixed(1)}% | ${r.offByBody.toFixed(1)}% | ${r.corrections.toFixed(1)} | ${(r.maxCorrection * 100).toFixed(0)} cm |`;
 
-const [lagArg, lossArg, secArg] = process.argv.slice(2).map(Number);
+const [lagArg, lossArg, secArg] = process.argv.slice(2).filter((a) => !a.startsWith('--')).map(Number);
 const plan: [number, number][] = Number.isFinite(lagArg)
   ? [[lagArg, Number.isFinite(lossArg) ? lossArg : 0]]
   : [50, 150].flatMap((lag) => [0, 1, 2, 5].map((loss): [number, number] => [lag, loss]));
@@ -102,7 +107,7 @@ const seconds = Number.isFinite(secArg) ? secArg : 30;
 // alone on the server: warm-up, free to move the whole time. SERVER_URL measures against your own (bots off)
 const server = process.env.SERVER_URL ? { url: process.env.SERVER_URL, stop() {} } : await startServer({ BOT_TEAM_SIZE: '0' });
 try {
-  console.log(`${seconds} s per run, one strafing player\n`);
+  console.log(`${seconds} s per run, one strafing player, over ${RTC ? 'a data channel' : 'the WebSocket'}\n`);
   console.log('| lag | loss | gaps >100 ms /min | longest gap | buffer dry | off by a body | corrections >5 cm /min | largest |');
   console.log('|---|---|---|---|---|---|---|---|');
   for (const [lag, loss] of plan) console.log(row(await run(server.url, lag, loss, seconds)));

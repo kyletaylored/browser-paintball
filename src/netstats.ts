@@ -4,8 +4,19 @@
 //    interpolation buffer ran dry and other players froze for a moment
 //  - buffer dry: the share of frames where at least one other player was drawn from a stale snapshot
 //  - corrections: how often (and how far) the server moved you away from where you'd predicted
+//  - link: whether snapshots come over the data channel or the WebSocket (and why)
 
 import { FAKE_LAG_MS, FAKE_LOSS_PCT, type Net } from './net';
+import type { LinkState } from './fastlink';
+
+const LINK_NAMES: Record<LinkState, string> = {
+  websocket: 'WebSocket',
+  trying: 'WebSocket (opening data channel…)',
+  open: 'data channel',
+  failed: "WebSocket (data channel couldn't connect: UDP blocked?)",
+  off: 'WebSocket (server has data channels off)',
+  unsupported: 'WebSocket (no WebRTC in this browser)',
+};
 
 const SHOW = import.meta.env.DEV && (new URLSearchParams(location.search).has('net') || FAKE_LAG_MS > 0 || FAKE_LOSS_PCT > 0);
 
@@ -65,7 +76,7 @@ export class NetStats {
     const ping = n.roster.get(n.id)?.ping ?? 0;
     this.el.textContent = [
       fake,
-      `link WebSocket · ping ${ping} ms`,
+      `link ${LINK_NAMES[n.fast?.state ?? 'websocket']} · ping ${ping} ms`,
       `snapshot gaps >100 ms: ${t.over100} (${(t.over100 / mins).toFixed(1)}/min) · longest ${Math.round(t.longest)} ms`,
       `interp buffer dry: ${this.frames ? ((this.dryFrames / this.frames) * 100).toFixed(1) : '0.0'}% of frames`,
       `corrections >5 cm: ${this.corrections} · largest ${(this.maxCorrection * 100).toFixed(0)} cm`,

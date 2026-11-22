@@ -11,6 +11,8 @@
 //    screen (their ping + the interpolation delay ago), using a short history of everyone's positions.
 
 import { createServer } from 'node:http';
+import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { makeHttpHandler } from './http';
 import { spawnPoint } from '../shared/field';
@@ -21,6 +23,7 @@ import {
 } from '../shared/sim';
 import { BotBrain, NavGrid, SKILLS, botName, type CoverSpot, type Seen } from './bots';
 import { decodeClient, encodeAck, encodeBall, encodeSnap } from '../shared/codec';
+import { FastLink, type RtcOptions } from './rtc';
 import {
   DEFAULT_PORT, TEAM_NAMES, cleanName, INPUT_JUMP, INPUT_SPRINT, INPUT_CROUCH,
   type ClientMsg, type ServerMsg, type Team, type V3, type RoundPhase, type RoundState, type RosterEntry,
@@ -62,10 +65,26 @@ const MAX_REWIND = envNum('MAX_REWIND_MS', 300) / 1000;
 const HISTORY_SECONDS = 1;
 /** WIRE_FORMAT=json sends snapshots, acks and balls as JSON instead of binary (for debugging / comparing) */
 const BINARY = process.env.WIRE_FORMAT !== 'json';
+/**
+ * Data channels (server/rtc.ts): the one UDP port they all use. 0 turns them off. Unset: on, on the
+ * game port + 1, in development; off in production until you open a UDP port (see docs/DEPLOY.md).
+ */
+const RTC_PORT = process.env.RTC_UDP_PORT !== undefined
+  ? Math.max(0, Math.min(65535, Math.floor(Number(process.env.RTC_UDP_PORT) || 0)))
+  : process.env.NODE_ENV === 'production' ? 0 : PORT + 1;
+/** RTC_PUBLIC_IP: the address browsers send UDP to, when it isn't this machine's own (NAT, platform proxy) */
+const RTC_PUBLIC_IP = process.env.RTC_PUBLIC_IP?.trim() || null;
+/** RTC_BIND_ADDRESS: local address (or host name) for the UDP port, e.g. fly-global-services on Fly.io */
+const RTC_BIND = process.env.RTC_BIND_ADDRESS?.trim() || null;
+const rtc: RtcOptions | null = RTC_PORT && BINARY
+  ? { port: RTC_PORT, publicIp: RTC_PUBLIC_IP, bindAddress: RTC_BIND && !isIP(RTC_BIND) ? (await lookup(RTC_BIND)).address : RTC_BIND }
+  : null;
 
 interface Player {
   /** null for bots */
   ws: WebSocket | null;
+  /** data channel for snapshots, acks and input frames, once the browser asks for one (humans only) */
+  fast: FastLink | null;
   bot: { brain: BotBrain } | null;
   /** authoritative movement state; x/y/z below mirror it */
   body: Body;
@@ -176,7 +195,7 @@ wss.on('connection', (ws) => {
   // joining while a point is being played: sit out until the next one
   const alive = match.phase !== 'live';
   const p: Player = {
-    ws, bot: null, body: newBody(sp.x, sp.y, sp.z), lastSeq: -1, budget: 0.1, history: [], id, team, slot, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw, pitch: 0,
+    ws, fast: null, bot: null, body: newBody(sp.x, sp.y, sp.z), lastSeq: -1, budget: 0.1, history: [], id, team, slot, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw, pitch: 0,
     crouch: false, alive, outUntil: alive ? 0 : Infinity, lastFire: 0,
     name: `Player ${id}`, wantName: `Player ${id}`, lastRename: -Infinity, k: 0, d: 0, ping: 0,
   };
@@ -198,6 +217,8 @@ wss.on('connection', (ws) => {
   });
 
   ws.on('close', () => {
+    p.fast?.close();
+    p.fast = null;
     players.delete(id);
     broadcast({ t: 'leave', id });
     log(`- player ${id} left (${humans().length} online)`);
@@ -219,6 +240,17 @@ function handle(p: Player, msg: ClientMsg) {
   } else if (msg.t === 'input') {
     if (!Array.isArray(msg.i) || msg.i.length > 64) return;
     for (const f of msg.i) applyInput(p, f);
+  } else if (msg.t === 'rtc') {
+    if (!rtc || !p.ws) return;
+    if (msg.sdp === undefined) {
+      if (p.fast) return; // one per connection
+      p.fast = new FastLink(`p${p.id}`, rtc, (m) => send(p.ws, m), (data) => onFast(p, data), (open) => {
+        log(`  player ${p.id} data channel ${open ? 'open' : 'closed'}`);
+      });
+    } else if (typeof msg.sdp === 'string' && msg.sdp.length < 4000) p.fast?.answer(msg.sdp);
+  } else if (msg.t === 'ice') {
+    if (typeof msg.c !== 'string' || typeof msg.mid !== 'string' || msg.c.length > 512 || msg.mid.length > 32) return;
+    p.fast?.candidate(msg.c, msg.mid);
   } else if (msg.t === 'fire') {
     if (!p.alive || !isV3(msg.o) || !isV3(msg.d)) return;
     if (match.phase !== 'live' && match.phase !== 'waiting') return; // no shooting during countdowns and pauses
@@ -232,6 +264,18 @@ function handle(p: Player, msg: ClientMsg) {
     p.lastFire = t;
     spawnBall(p, msg.o, [msg.d[0] / len, msg.d[1] / len, msg.d[2] / len]);
   }
+}
+
+/** a binary message on a player's data channel: only input frames are accepted there */
+function onFast(p: Player, data: Buffer) {
+  if (!players.has(p.id)) return;
+  let msg: ClientMsg;
+  try {
+    msg = decodeClient(data);
+  } catch {
+    return;
+  }
+  if (msg.t === 'input') handle(p, msg);
 }
 
 const moveIn: MoveInput = { forward: 0, right: 0, jump: false, sprint: false, crouch: false, yaw: 0 };
@@ -328,7 +372,7 @@ function addBot(team: Team) {
   brain.reset(sp.yaw);
   const alive = match.phase !== 'live';
   players.set(id, {
-    ws: null, bot: { brain }, body: newBody(sp.x, sp.y, sp.z), lastSeq: -1, budget: 0, history: [], id, team, slot, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw, pitch: 0,
+    ws: null, fast: null, bot: { brain }, body: newBody(sp.x, sp.y, sp.z), lastSeq: -1, budget: 0, history: [], id, team, slot, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw, pitch: 0,
     crouch: false, alive, outUntil: alive ? 0 : Infinity, lastFire: 0,
     name, wantName: name, lastRename: 0, k: 0, d: 0, ping: 0,
   });
@@ -567,23 +611,31 @@ function roundState(): RoundState {
   };
 }
 
+let snapSeq = 0;
 function snapshot() {
   if (!players.size) return;
   const snap: Extract<ServerMsg, { t: 'snap' }> = {
     t: 'snap',
-    time: now(),
+    seq: ++snapSeq,
     score,
     round: roundState(),
     players: [...players.values()].map((p) => ({
       id: p.id, team: p.team, x: p.x, y: p.y, z: p.z, yaw: p.yaw, pitch: p.pitch, c: p.crouch, alive: p.alive,
     })),
   };
-  broadcast(BINARY ? encodeSnap(snap) : snap);
-  // and tell each browser where the server has *them*, so it can correct its prediction
+  const data = BINARY ? encodeSnap(snap) : JSON.stringify(snap);
   for (const p of players.values()) {
     if (!p.ws) continue;
+    // and tell each browser where the server has *them*, so it can correct its prediction
     const b = p.body;
     const ack: Extract<ServerMsg, { t: 'ack' }> = { t: 'ack', seq: p.lastSeq, b: [b.x, b.y, b.z, b.vx, b.vy, b.vz, b.height, b.onGround ? 1 : 0] };
+    if (data instanceof Uint8Array && p.fast?.send(data)) {
+      // over the data channel; if the ack can't go that way, the WebSocket still gets it there
+      const a = encodeAck(ack);
+      if (!p.fast.send(a)) send(p.ws, a);
+      continue;
+    }
+    if (p.ws.readyState === p.ws.OPEN) p.ws.send(data);
     send(p.ws, BINARY ? encodeAck(ack) : ack);
   }
 }
@@ -606,6 +658,7 @@ httpServer.listen(PORT, HOST, () => {
 });
 log(`  allowed origins: ${ALLOWED_ORIGINS.length ? ALLOWED_ORIGINS.join(', ') : 'any'}`);
 log(`  wire format: ${BINARY ? 'binary' : 'json'}`);
+log(`  data channels: ${rtc ? `UDP ${rtc.port}${rtc.publicIp ? `, advertised as ${rtc.publicIp}` : ''}${rtc.bindAddress ? `, bound to ${rtc.bindAddress}` : ''}` : 'off (WebSocket only)'}`);
 log(`  lag compensation: ${LAG_COMPENSATION ? `on, up to ${MAX_REWIND * 1000} ms` : 'off'}`);
 log(`  bots: ${BOT_TEAM_SIZE ? `fill teams to ${BOT_TEAM_SIZE}, ${process.env.BOT_SKILL ?? 'normal'} skill` : 'off'}`);
 
@@ -617,7 +670,10 @@ function shutdown(signal: string) {
   stopping = true;
   log(`${signal}: shutting down (${humans().length} players connected)`);
   httpServer.close();
-  for (const p of players.values()) p.ws?.close(1001, 'server restarting');
+  for (const p of players.values()) {
+    p.fast?.close();
+    p.ws?.close(1001, 'server restarting');
+  }
   setTimeout(() => process.exit(0), 1500).unref();
 }
 process.on('SIGTERM', () => shutdown('SIGTERM'));

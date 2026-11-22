@@ -8,13 +8,16 @@
 //     hits; with LAG_COMPENSATION=0 the same shot misses.
 //  3. Bots: one fake player joins, bots fill both teams, move off their start box and play the
 //     point out; a second player takes a bot's place.
+//  4. Data channel: a player asks for one, snapshots and acks arrive on it, and with 5% of packets
+//     lost each way its movement still matches the server exactly (inputs are sent with redundancy)
+//     and no snapshot is held up. With data channels off on the server, it plays over the WebSocket.
 //
 // Set SERVER_URL to run only the rules check against a server you started yourself (bots off).
 
 import { cleanName, type ServerMsg, type InputFrame } from '../shared/protocol';
 import { EYE_FROM_TOP } from '../shared/sim';
 import {
-  join, send, viewOf, wait, waitFor, walkTo, lastAck, snapWhere, rosterWhere, startServer,
+  join, send, viewOf, wait, waitFor, walkTo, lastAck, snapWhere, rosterWhere, startServer, fastOpen,
   type Client, type Ack, type Hit,
 } from './test-client';
 
@@ -215,6 +218,61 @@ async function botTest(url: string) {
   human.ws.close();
 }
 
+// ---- 4. data channel -----------------------------------------------------------------------
+
+/** walk a client somewhere and back, then check the server's last ack matches its prediction */
+async function walkAndAgree(c: Client): Promise<boolean> {
+  await walkTo(c, c.body.x + (c.team === 0 ? 4 : -4), c.body.z + 3);
+  await walkTo(c, c.body.x, c.body.z - 3);
+  await wait(300);
+  const a = lastAck(c);
+  return a !== undefined && Math.hypot(a.b[0] - c.body.x, a.b[1] - c.body.y, a.b[2] - c.body.z) < 1e-6;
+}
+
+/** longest gap between snapshot arrivals, ms, after the first `skip` */
+function longestGap(c: Client, skip: number): number {
+  let g = 0;
+  for (let i = skip + 1; i < c.snaps.length; i++) g = Math.max(g, c.snaps[i].at - c.snaps[i - 1].at);
+  return g;
+}
+
+async function rtcTest(url: string) {
+  console.log('-- data channel');
+  const c = await join(url, 0, 0, true);
+  const opened = await fastOpen(c);
+  check('a data channel opens to the server', opened);
+  if (!opened) {
+    c.ws.close();
+    return;
+  }
+  await wait(500);
+  const via = { ...c.fast!.via };
+  check(`snapshots arrive on the data channel (${via.fast} of ${via.fast + via.ws})`, via.fast > 0 && via.fast >= via.ws);
+  check('movement over the data channel matches the client prediction', await walkAndAgree(c));
+  c.ws.close();
+
+  // 5% of packets lost each way on the data channel: dropped, not resent
+  const lossy = await join(url, 60, 5, true);
+  check('a data channel opens with 5% loss', await fastOpen(lossy, 8000));
+  const skip = lossy.snaps.length;
+  check('with 5% loss, movement still matches exactly (redundant input frames)', await walkAndAgree(lossy));
+  const gap = longestGap(lossy, skip);
+  // over TCP a lost packet holds everything up for a round trip (~180 ms here); here it's one skipped snapshot
+  check(`with 5% loss no snapshot is held up (longest gap ${Math.round(gap)} ms)`, gap < 160);
+  lossy.ws.close();
+}
+
+async function noRtcTest(url: string) {
+  console.log('-- data channels off: WebSocket only');
+  const c = await join(url, 0, 0, true);
+  const opened = await fastOpen(c, 1500);
+  await wait(300);
+  check('no data channel is offered when the server has them off', !opened && !c.fast!.offered);
+  check('snapshots keep coming over the WebSocket', c.fast!.via.ws > 10 && c.fast!.via.fast === 0);
+  check('movement over the WebSocket matches the client prediction', await walkAndAgree(c));
+  c.ws.close();
+}
+
 // ---- run -----------------------------------------------------------------------------------
 
 try {
@@ -240,6 +298,18 @@ try {
       } finally {
         lag.stop();
       }
+    }
+    const withRtc = await startServer({ BOT_TEAM_SIZE: '0' }); // data channels are on by default in development
+    try {
+      await rtcTest(withRtc.url);
+    } finally {
+      withRtc.stop();
+    }
+    const noRtc = await startServer({ BOT_TEAM_SIZE: '0', RTC_UDP_PORT: '0' });
+    try {
+      await noRtcTest(noRtc.url);
+    } finally {
+      noRtc.stop();
     }
     const bots = await startServer({ BOT_TEAM_SIZE: '2', BOT_SKILL: 'hard' });
     try {
