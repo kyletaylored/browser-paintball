@@ -112,6 +112,8 @@ export class PadState {
   /** d-pad up held: push-to-talk */
   talk = false;
   reloadPressed = false;
+  /** right stick clicked: switch first / third person */
+  viewPressed = false;
   startPressed = false;
   aPressed = false;
   bPressed = false;
@@ -186,11 +188,7 @@ export class PadState {
       }
       this.bHeld = -1;
     }
-    if (this.pressed(BTN.R3)) {
-      this.crouch = !this.crouch;
-      this.prone = false;
-      if (this.crouch) this.sprintOn = false;
-    }
+    this.viewPressed = this.pressed(BTN.R3);
     // sprint: click the left stick (stays on until you stop moving) or hold LB
     if (this.pressed(BTN.L3)) {
       this.sprintOn = !this.sprintOn;
@@ -248,7 +246,7 @@ export class PadState {
     this.moveX = this.moveY = this.yawRate = this.pitchRate = 0;
     this.fire = this.jump = this.sprint = this.crouch = this.prone = this.scoreboard = this.talk = false;
     this.bHeld = -1;
-    this.reloadPressed = this.startPressed = this.aPressed = this.bPressed = false;
+    this.reloadPressed = this.viewPressed = this.startPressed = this.aPressed = this.bPressed = false;
     this.nav = this.navDir = null;
     this.held = [];
     this.prev = [];

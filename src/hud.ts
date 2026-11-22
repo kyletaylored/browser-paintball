@@ -207,6 +207,17 @@ export class Hud {
   }
 
   /** graphics quality picker; it takes effect after a reload, so say so when it changes */
+  /** Settings: first or third person; onChange also runs when the key or right stick switches it (via setView) */
+  bindView(view: string, onChange: (v: string) => void): void {
+    const sel = $('viewsel') as HTMLSelectElement;
+    sel.value = view;
+    sel.addEventListener('change', () => onChange(sel.value));
+  }
+
+  setView(view: string): void {
+    ($('viewsel') as HTMLSelectElement).value = view;
+  }
+
   bindQuality(): void {
     const sel = $('quality') as HTMLSelectElement;
     const note = $('quality-note');

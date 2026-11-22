@@ -238,6 +238,11 @@ export class Input {
     return (this.locked && this.mouseFire) || (this.active && this.pad.state.fire);
   }
 
+  /** switch first / third person: H, or click the right stick */
+  get viewPressed(): boolean {
+    return this.wasPressed('KeyH') || (this.active && this.pad.state.viewPressed);
+  }
+
   get reloadPressed(): boolean {
     return this.wasPressed('KeyR') || (this.active && this.pad.state.reloadPressed);
   }
