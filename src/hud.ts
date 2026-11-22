@@ -13,6 +13,8 @@ const FEED_SECONDS = 5;
 const FEED_MAX = 5;
 
 const $ = (id: string) => document.getElementById(id)!;
+/** text made safe to put in HTML */
+const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 export class Hud {
   readonly playButton = $('play');
@@ -356,7 +358,18 @@ export class Hud {
     this.ammo.innerHTML = html;
   }
 
-  setScore(html: string): void {
+  /**
+   * The score bar. Online: each team's points in its colour block, with a pip per player under it
+   * (lit while they're still in), and the clock or what's happening in the middle. Practice
+   * (teams null): just the middle, with your hits.
+   */
+  setScoreBar(s: { teams: [number, number] | null; clock: string; sub: string; alive: [boolean[], boolean[]] }): void {
+    const pips = (a: boolean[]) => `<div class="pips">${a.map((on) => `<i class="pip${on ? ' in' : ''}"></i>`).join('')}</div>`;
+    const mid = `<div class="mid${s.teams ? '' : ' solo'}"><span class="clock">${esc(s.clock)}</span>${s.sub ? `<span class="sub">${esc(s.sub)}</span>` : ''}</div>`;
+    const html = s.teams
+      ? `<div class="team r"><div class="block"><span>Red</span><span class="n">${s.teams[0]}</span></div>${pips(s.alive[0])}</div>${mid}` +
+        `<div class="team b"><div class="block"><span>Blue</span><span class="n">${s.teams[1]}</span></div>${pips(s.alive[1])}</div>`
+      : mid;
     if (this.last.score === html) return;
     this.last.score = html;
     this.score.innerHTML = html;

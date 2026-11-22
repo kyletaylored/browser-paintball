@@ -69,6 +69,8 @@ export class Net {
   /** the server's firing mode, and whether players vote for it */
   mode: FireMode = DEFAULT_FIRE_MODE;
   modeVotes = false;
+  /** everyone in the latest snapshot, you included (who's still in, for the score bar) */
+  players: PlayerSnap[] = [];
   /** latest match state from the server, and when it arrived (performance.now ms) */
   round: RoundState | null = null;
   roundAt = 0;
@@ -169,6 +171,7 @@ export class Net {
     this.votes = false;
     this.modeVotes = false;
     this.round = null;
+    this.players = [];
     this.score = [0, 0];
     this.remotes.clear();
     this.roster.clear();
@@ -304,6 +307,7 @@ export class Net {
         this.score = m.score;
         this.round = m.round;
         this.roundAt = now;
+        this.players = m.players;
         const seen = new Set<number>();
         for (const p of m.players) {
           if (p.id === this.id) continue;
