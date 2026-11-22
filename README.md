@@ -29,8 +29,7 @@ plays offline against three strafing targets on the field you pick. Esc (or Star
 Settings, Controls, or Leave match. Online, you're still in the match while paused.
 
 **Fields** (`shared/maps.ts`). Pick one with the arrows at the top of the main menu: it shows behind the menu,
-Practice plays on it, and Play online votes for it. Online, everyone gets a vote (change it from the pause menu):
-when every player wants the same other field it switches at the next break between points, and otherwise the field with
+Practice plays on it, and Play online votes for it. Online, everyone gets a vote: the pause menu has a card per field with its layout drawn from above, and after a match the cards come up on screen for 12 s (press a card's number to vote). When every player wants the same other field it switches at the next break between points, and otherwise the field with
 the most votes comes up after the match (the next one in turn if nobody voted). `MAP=<id>` on the server plays one
 field only, with no vote.
 

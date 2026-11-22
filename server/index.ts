@@ -58,7 +58,8 @@ const ROUND_SECONDS = envNum('ROUND_SECONDS', 120);
 const COUNTDOWN_SECONDS = envNum('COUNTDOWN_SECONDS', 3);
 /** long enough for out players to finish walking off, and for the camera shots between points */
 const POINT_PAUSE_SECONDS = envNum('POINT_PAUSE_SECONDS', 8);
-const MATCH_OVER_SECONDS = envNum('MATCH_OVER_SECONDS', 6);
+/** time to vote for the next field after a match (and for the camera shots) */
+const MATCH_OVER_SECONDS = envNum('MATCH_OVER_SECONDS', 12);
 /** while anyone is connected, fill each team up to this many players with bots (0 turns bots off) */
 const BOT_TEAM_SIZE = Math.max(0, Math.min(6, Math.floor(Number(process.env.BOT_TEAM_SIZE ?? 3) || 0)));
 const BOT_SKILL = SKILLS[process.env.BOT_SKILL ?? 'normal'] ?? SKILLS.normal;

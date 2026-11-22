@@ -253,6 +253,12 @@ export class Input {
     return p === 0 ? null : p;
   }
 
+  /** a number key pressed this frame (1–9 on the top row or the number pad), or 0 for none */
+  get numberPressed(): number {
+    for (let n = 1; n <= 9; n++) if (this.wasPressed(`Digit${n}`) || this.wasPressed(`Numpad${n}`)) return n;
+    return 0;
+  }
+
   /** spectating: watch the next player (Space, or A) */
   get nextPressed(): boolean {
     return this.wasPressed('Space') || (this.active && this.pad.state.aPressed);
