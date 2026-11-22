@@ -552,7 +552,7 @@ function scoreHtml(now: number): string {
 }
 
 function outLine(phase: RoundPhase | null, now: number): string {
-  if (phase === 'live') return 'spectating until the point ends';
+  if (phase === 'live') return 'walking off the field · out until the point ends';
   if (phase === 'point' || phase === 'matchover' || phase === 'countdown') return 'next point coming up';
   return `back in ${Math.max(1, Math.ceil((outUntil - now) / 1000))}…`;
 }

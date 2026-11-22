@@ -42,6 +42,10 @@ jobs:
       - name: Controller input tests
         run: npm run test:input
 
+      # every field's layout, collision, paint and out players walking off; starts its own server for the vote
+      - name: Field tests
+        run: npm run test:maps
+
       # starts its own game servers (one without bots, one with) on spare ports
       - name: Server smoke test
         run: npm run test:server

@@ -12,7 +12,7 @@
 //   bunkers.glb  one node per bunker shape, named bunkerKey() from shared/field.ts
 //   marker.glb   "marker" (origin at the trigger, barrel along -Z), "muzzle" empty at the barrel tip
 //   player.glb   "player" root, bones "hips" "torso" "head" "shoulderL/R" "elbowL/R" "thighL/R"
-//                "kneeL/R" "gun", animations "idle" "run" "crouch" "crouchMove" "shoot" "out"
+//                "kneeL/R" "gun", animations "idle" "run" "crouch" "crouchMove" "shoot" "out" "outWalk"
 // Materials named "team" are recoloured per team in the game.
 
 import * as THREE from 'three';
@@ -359,6 +359,24 @@ const CLIPS: Record<string, { length: number; frames: number; pose: (t: number) 
         hipY: HIP_Y,
         rot: { torso: [0.04, 0, 0], head: [-0.1, 0, 0], shoulderR: [2.85 + 0.03 * b, 0, -0.15], elbowR: [0.25, 0, 0], shoulderL: [2.9 - 0.03 * b, 0, 0.15], elbowL: [0.3, 0, 0] },
         gun: [0.12, 0.98, -0.02], gunRot: [1.25, 0, 0],
+      };
+    },
+  },
+  // eliminated and walking off the field: marker still up, an easy walk (about 3 m/s)
+  outWalk: {
+    length: 0.9, frames: 17, pose: (t) => {
+      const ph = (t / 0.9) * Math.PI * 2;
+      const s = sin(ph);
+      const knee = (x: number) => -(0.12 + 0.6 * Math.max(0, sin(x)));
+      return {
+        hipY: HIP_Y - 0.02 + 0.015 * Math.abs(s),
+        rot: {
+          torso: [0.02, 0.05 * s, 0], head: [-0.08, -0.04 * s, 0],
+          shoulderR: [2.85, 0, -0.15], elbowR: [0.25, 0, 0], shoulderL: [2.9, 0, 0.15], elbowL: [0.3, 0, 0],
+          thighL: [0.45 * s, 0, 0], thighR: [-0.45 * s, 0, 0],
+          kneeL: [knee(ph + Math.PI / 2 + Math.PI), 0, 0], kneeR: [knee(ph + Math.PI / 2), 0, 0],
+        },
+        gun: [0.12, 0.98 + 0.01 * Math.abs(s), -0.02], gunRot: [1.25, 0, 0],
       };
     },
   },

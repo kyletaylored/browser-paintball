@@ -21,6 +21,7 @@
 import { createHmac } from 'node:crypto';
 import { cleanName, type ServerMsg, type InputFrame } from '../shared/protocol';
 import { EYE_FROM_TOP } from '../shared/sim';
+import { field } from '../shared/field';
 import {
   join, send, viewOf, wait, waitFor, walkTo, lastAck, snapWhere, rosterWhere, startServer, fastOpen,
   type Client, type Ack, type Hit,
@@ -206,6 +207,14 @@ async function botTest(url: string) {
 
   const botHit = await waitFor(human.inbox, (m): m is Hit => m.t === 'hit' && botIds.has(m.shooter), 60000, liveAt);
   check('a bot eliminates someone', botHit !== null);
+  // out bots walk off past the side line (the human here sends no input, so it stands)
+  const walkedOff = await waitFor(
+    human.inbox,
+    snapWhere((m) => m.players.some((p) => botIds.has(p.id) && !p.alive && Math.abs(p.z) > field.halfW)),
+    30000,
+    liveAt,
+  );
+  check('an eliminated bot walks off past the side line', walkedOff !== null);
   const decided = await waitFor(human.inbox, snapWhere((m) => m.round.phase === 'point' || m.round.phase === 'matchover'), 90000, liveAt);
   check(`the point is played out (${decided ? `winner ${decided.round.winner}` : 'timed out'})`, decided !== null);
 

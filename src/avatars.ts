@@ -18,7 +18,7 @@ export function makeAvatar(models: Models | null, color: number): Avatar {
   return models ? new ModelAvatar(models, color) : new PrimitiveAvatar(color);
 }
 
-type State = 'idle' | 'run' | 'crouch' | 'crouchMove' | 'out';
+type State = 'idle' | 'run' | 'crouch' | 'crouchMove' | 'out' | 'outWalk';
 
 /**
  * Lying down, for both kinds of figure: the whole figure tips forward onto its front, feet where the
@@ -43,7 +43,8 @@ class Lying {
 
 /**
  * The player.glb figure, driven by network state: speed and crouch pick the base animation
- * (crossfaded), "out" plays when eliminated, and each shot plays the additive "shoot" kick on top.
+ * (crossfaded), "out" / "outWalk" play when eliminated (marker up, walking off the field), and each
+ * shot plays the additive "shoot" kick on top.
  * Aim pitch bends the torso and head after the animation is applied.
  */
 export class ModelAvatar implements Avatar {
@@ -91,10 +92,12 @@ export class ModelAvatar implements Avatar {
 
     const crouched = height < STAND_HEIGHT - 0.2;
     // lying flat: a straight figure (rocked by Lying while it crawls)
-    const state: State = !alive ? 'out' : prone ? 'idle' : crouched ? (this.speed > 0.6 ? 'crouchMove' : 'crouch') : this.speed > 1 ? 'run' : 'idle';
+    const state: State = !alive ? (this.speed > 0.6 && this.actions.has('outWalk') ? 'outWalk' : 'out') : prone ? 'idle' : crouched ? (this.speed > 0.6 ? 'crouchMove' : 'crouch') : this.speed > 1 ? 'run' : 'idle';
     if (state !== this.state) this.play(state, 0.2);
     const run = this.actions.get('run');
     if (run) run.timeScale = Math.max(0.6, Math.min(1.4, this.speed / 6.5));
+    const walk = this.actions.get('outWalk');
+    if (walk) walk.timeScale = Math.max(0.6, Math.min(1.4, this.speed / 3.1));
 
     this.mixer.update(dt);
     // aim up/down: bend at the waist and neck on top of whatever the animation did
@@ -105,7 +108,7 @@ export class ModelAvatar implements Avatar {
   }
 
   fire(): void {
-    if (this.state === 'out' || !this.shoot) return;
+    if (this.state === 'out' || this.state === 'outWalk' || !this.shoot) return;
     this.shoot.reset().play();
   }
 

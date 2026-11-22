@@ -8,6 +8,7 @@ import type { Input } from './input';
 import { paintTeam } from './models';
 import type { Avatar } from './avatars';
 import type { Target } from './paintballs';
+import { walkOffInput } from '../shared/walkoff';
 
 export type View = 'first' | 'third';
 
@@ -116,9 +117,16 @@ export class LocalPlayer {
     this.pitch = Math.max(-1.5, Math.min(1.5, this.pitch + dpitch));
   }
 
-  /** read the controls into this step's movement input; null input = stand still (menu open, eliminated, countdown) */
+  /**
+   * read the controls into this step's movement input; null input = stand still (menu open,
+   * countdown). Eliminated, you walk off the field whatever you press: the server does the same.
+   */
   sample(input: Input | null): MoveInput {
     const m = this.move;
+    if (!this.alive) {
+      walkOffInput(this.body, m);
+      return m;
+    }
     const on = input !== null && this.alive;
     m.forward = on ? input.forward : 0;
     m.right = on ? input.right : 0;
@@ -258,7 +266,9 @@ export class LocalPlayer {
       // pulled right in against a bunker, the camera would be inside your own head: don't draw it then
       f.root.visible = this.camBack > 0.6;
       const b = this.body;
-      f.set(b.x + this.smooth.x, b.y + this.smooth.y, b.z + this.smooth.z, this.yaw, this.pitch, b.height, this.alive, this.move.prone);
+      // out, the figure faces the way it walks off (you can still look round)
+      const yaw = this.alive ? this.yaw : this.move.yaw;
+      f.set(b.x + this.smooth.x, b.y + this.smooth.y, b.z + this.smooth.z, yaw, this.pitch, b.height, this.alive, this.move.prone);
       if (fired) f.fire();
     }
   }
