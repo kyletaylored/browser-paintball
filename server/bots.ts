@@ -10,8 +10,9 @@
 
 import { field, footprintDistance, topOf, type Bunker } from '../shared/field';
 import {
-  traceWorld, stanceHeight, BALL_SPEED, GRAVITY, FIRE_INTERVAL, PLAYER_RADIUS, STAND_HEIGHT, CROUCH_HEIGHT, EYE_FROM_TOP, type MoveInput,
+  traceWorld, stanceHeight, BALL_SPEED, GRAVITY, PLAYER_RADIUS, STAND_HEIGHT, CROUCH_HEIGHT, EYE_FROM_TOP, type MoveInput,
 } from '../shared/sim';
+import { MODE_RULES, DEFAULT_FIRE_MODE, type FireMode } from '../shared/fire';
 import type { Team } from '../shared/protocol';
 
 // ---- skill -------------------------------------------------------------------------------------
@@ -347,6 +348,9 @@ export class BotBrain {
     fire: null,
   };
 
+  /** the server's firing mode: sets how bots fire (bursts on a ramp, single shots on a pump) */
+  fireMode: FireMode = DEFAULT_FIRE_MODE;
+
   constructor(
     private nav: NavGrid,
     private skill: BotSkill,
@@ -513,9 +517,11 @@ export class BotBrain {
     // in cover, wait until we're fully stood up so the shot clears the bunker
     const exposed = this.mode !== 'hold' || (!crouch && me.height > STAND_HEIGHT - 0.1);
     if (target && canShoot && exposed && aimed && now - this.targetSince >= this.skill.reaction && !suppressed) {
-      if (this.burstLeft <= 0 && now >= this.nextBurstAt) this.burstLeft = 3 + Math.floor(Math.random() * 6);
+      const rules = MODE_RULES[this.fireMode];
+      const [lo, hi] = rules.botBurst;
+      if (this.burstLeft <= 0 && now >= this.nextBurstAt) this.burstLeft = lo + Math.floor(Math.random() * (hi - lo + 1));
       if (this.burstLeft > 0 && now >= this.nextShotAt) {
-        this.nextShotAt = now + FIRE_INTERVAL;
+        this.nextShotAt = now + rules.botGap;
         this.burstLeft--;
         if (this.burstLeft === 0) {
           this.nextBurstAt = now + 0.25 + Math.random() * 0.6;

@@ -5,6 +5,7 @@ import type { ClientMsg, ServerMsg, PlayerSnap, RosterEntry, RoundState, Spawn, 
 import { decodeServer, encodeInput } from '../shared/codec';
 import { FakeLink, fakeNumber } from '../shared/netsim';
 import { BrowserFastLink } from './fastlink';
+import { DEFAULT_FIRE_MODE, isFireMode, type FireMode } from '../shared/fire';
 
 export interface RemotePlayer {
   id: number;
@@ -16,6 +17,8 @@ export interface NetEvents {
   welcome(id: number, team: Team, spawn: Spawn, map: string): void;
   /** the server moved to another field */
   map(id: string): void;
+  /** the server changed the firing mode (it's in net.mode) */
+  mode(): void;
   ball(m: Extract<ServerMsg, { t: 'ball' }>): void;
   hit(m: Extract<ServerMsg, { t: 'hit' }>): void;
   respawn(spawn: Spawn): void;
@@ -63,6 +66,9 @@ export class Net {
   voice = false;
   /** players choose the field by voting (false when the server pins one) */
   votes = false;
+  /** the server's firing mode, and whether players vote for it */
+  mode: FireMode = DEFAULT_FIRE_MODE;
+  modeVotes = false;
   /** latest match state from the server, and when it arrived (performance.now ms) */
   round: RoundState | null = null;
   roundAt = 0;
@@ -161,6 +167,7 @@ export class Net {
     this.id = -1;
     this.voice = false;
     this.votes = false;
+    this.modeVotes = false;
     this.round = null;
     this.score = [0, 0];
     this.remotes.clear();
@@ -252,6 +259,8 @@ export class Net {
         this.team = m.team;
         this.voice = m.voice === true;
         this.votes = m.vote === true;
+        this.mode = isFireMode(m.mode) ? m.mode : DEFAULT_FIRE_MODE;
+        this.modeVotes = m.modeVote === true;
         this.round = m.round;
         this.roundAt = performance.now();
         Object.assign(this.timing, { last: 0, longest: 0, over100: 0, count: 0, since: this.roundAt });
@@ -325,6 +334,10 @@ export class Net {
       case 'map':
         this.remotes.clear(); // everyone's about to respawn on the new field
         this.ev.map(m.id);
+        break;
+      case 'mode':
+        if (isFireMode(m.mode)) this.mode = m.mode;
+        this.ev.mode();
         break;
     }
   }

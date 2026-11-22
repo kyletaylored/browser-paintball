@@ -8,6 +8,8 @@
 // resent: see server/rtc.ts), and over the WebSocket otherwise. So they can arrive out of order or
 // not at all: receivers skip anything older than what they already have.
 
+import type { FireMode } from './fire';
+
 export type Team = 0 | 1;
 export type V3 = [number, number, number];
 
@@ -70,6 +72,8 @@ export interface RosterEntry {
   bot: boolean;
   /** the field this player voted for (humans; only when the server lets players choose) */
   vote?: string;
+  /** the firing mode this player voted for (humans; only when the server lets players choose) */
+  modeVote?: FireMode;
 }
 
 /**
@@ -94,6 +98,8 @@ export type ClientMsg =
   | { t: 'pong'; s: number }
   /** vote for a field (an id from shared/maps.ts), or null for no preference */
   | { t: 'vote'; map: string | null }
+  /** vote for a firing mode (shared/fire.ts), or null for no preference */
+  | { t: 'mode'; mode: FireMode | null }
   /**
    * Data channel signalling (server/rtc.ts). Without sdp: "please open a data channel" (the server
    * replies with an offer if it has them on); with sdp: our answer to the server's offer.
@@ -106,8 +112,14 @@ export type ClientMsg =
 
 /** server → browser */
 export type ServerMsg =
-  /** map: the field being played (an id from shared/maps.ts); vote: players choose the field (false when the server pins one); voice: this server has team voice chat (ask for a token with { t: 'voice' }) */
-  | { t: 'welcome'; id: number; team: Team; spawn: Spawn; round: RoundState; map: string; voice: boolean; vote: boolean }
+  /**
+   * map: the field being played (an id from shared/maps.ts); vote: players choose the field (false
+   * when the server pins one); mode / modeVote: the firing mode (shared/fire.ts), and whether players
+   * choose it; voice: this server has team voice chat (ask for a token with { t: 'voice' })
+   */
+  | { t: 'welcome'; id: number; team: Team; spawn: Spawn; round: RoundState; map: string; voice: boolean; vote: boolean; mode: FireMode; modeVote: boolean }
+  /** the firing mode changed (between points) */
+  | { t: 'mode'; mode: FireMode }
   /** the field changed (between matches); a respawn on the new field follows */
   | { t: 'map'; id: string }
   /** seq counts up by one per snapshot (to skip late ones); score is points won this match */

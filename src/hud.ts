@@ -7,6 +7,7 @@ import { QUALITY_KEY, savedQuality, type Quality } from './render';
 import { TEAM_NAMES, type RosterEntry, type Team } from '../shared/protocol';
 import { MAP_LIST, MAPS, unanimousVote, voteWinner } from '../shared/maps';
 import type { Voice, VoiceSettings } from './voice';
+import { FIRE_MODES, MODE_RULES, DEFAULT_FIRE_MODE, isFireMode, modeVoteWinner, type FireMode } from '../shared/fire';
 
 const FEED_SECONDS = 5;
 const FEED_MAX = 5;
@@ -166,6 +167,75 @@ export class Hud {
     return now ? `${name} · switching to ${MAPS[now].name}` : `${name} · next: ${MAPS[next]?.name}`;
   }
 
+  /**
+   * The main menu's marker chooser (the firing mode). Practice uses it; online it's your vote once
+   * you've changed it, and untouched it follows the server's mode.
+   */
+  bindModePicker(start: FireMode, onPick: (m: FireMode) => void): void {
+    const sel = $('modesel') as HTMLSelectElement;
+    sel.replaceChildren(...FIRE_MODES.map((m) => new Option(MODE_RULES[m].name, m)));
+    sel.value = start;
+    sel.addEventListener('change', () => {
+      this.modeTouched = true;
+      this.showModeBlurb();
+      onPick(this.pickedMode());
+    });
+    this.showModeBlurb();
+  }
+
+  /** the player chose a firing mode on the main menu (so Play online votes for it) */
+  modeTouched = false;
+
+  pickedMode(): FireMode {
+    const v = ($('modesel') as HTMLSelectElement).value;
+    return isFireMode(v) ? v : DEFAULT_FIRE_MODE;
+  }
+
+  /** the mode that's on; the chooser follows it until you pick one */
+  setModePick(m: FireMode): void {
+    const sel = $('modesel') as HTMLSelectElement;
+    if (!this.modeTouched && sel.value !== m) {
+      sel.value = m;
+      this.showModeBlurb();
+    }
+  }
+
+  private showModeBlurb(): void {
+    $('mode-blurb').textContent = MODE_RULES[this.pickedMode()].blurb;
+  }
+
+  /** the pause menu's vote for the firing mode */
+  bindModeVote(onVote: (m: FireMode | null) => void): void {
+    const sel = $('modevotesel') as HTMLSelectElement;
+    sel.replaceChildren(new Option('No preference', ''), ...FIRE_MODES.map((m) => new Option(MODE_RULES[m].name, m)));
+    sel.addEventListener('change', () => onVote(isFireMode(sel.value) ? sel.value : null));
+  }
+
+  private modeVoteKey = '';
+
+  /** show the firing mode vote in the pause menu and say what it will do; returns the scoreboard line */
+  setModeVote(show: boolean, rows: RosterEntry[], myId: number, current: FireMode): string {
+    const name = MODE_RULES[current].name;
+    $('mode-vote-box').hidden = !show;
+    if (!show) return name;
+    const humans = rows.filter((r) => !r.bot);
+    const votes = humans.map((r) => r.modeVote ?? null);
+    const mine = humans.find((r) => r.id === myId)?.modeVote ?? '';
+    const next = modeVoteWinner(votes, current);
+    const key = JSON.stringify([votes, mine, current]);
+    if (key !== this.modeVoteKey) {
+      this.modeVoteKey = key;
+      const sel = $('modevotesel') as HTMLSelectElement;
+      if (document.activeElement !== sel) sel.value = mine;
+      const tally = FIRE_MODES.map((m) => [m, votes.filter((v) => v === m).length] as const)
+        .filter(([, n]) => n > 0).map(([m, n]) => `${MODE_RULES[m].name} ${n}`).join(', ');
+      $('mode-vote-info').textContent = next !== current
+        ? `Most players want ${MODE_RULES[next].name}: switching after this point.`
+        : `${tally ? `Votes: ${tally}. ` : ''}Playing ${name}. A mode more than half the players vote for takes over after the point.`;
+    }
+    return next !== current ? `${name} · switching to ${MODE_RULES[next].name}` : name;
+  }
+
   private showBlurb(): void {
     $('map-blurb').textContent = MAPS[this.pickedMap()]?.blurb ?? '';
   }
@@ -267,8 +337,9 @@ export class Hud {
     this.statusText.textContent = text;
   }
 
-  setAmmo(n: number, max: number, reloading: boolean): void {
-    const html = reloading ? `RELOADING<small>…</small>` : `${n}<small>/ ${max}</small>`;
+  /** balls left, and the marker: its name, or that it's ramping / mid-pump */
+  setAmmo(n: number, max: number, reloading: boolean, marker: string): void {
+    const html = reloading ? `RELOADING<small>…</small>` : `${n}<small>/ ${max} · ${marker}</small>`;
     if (this.last.ammo === html) return;
     this.last.ammo = html;
     this.ammo.innerHTML = html;

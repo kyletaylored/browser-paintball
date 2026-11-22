@@ -43,6 +43,17 @@ field only, with no vote.
 
 Each half is the mirror image of the other, so neither team has an advantage.
 
+**Markers** (`shared/fire.ts`). How the trigger works is part of the game, so everyone on a server plays the same one.
+Pick it under the field on the main menu: Practice plays it, and Play online votes for it (change your vote from the
+pause menu). A mode more than half the players vote for takes over after the point. `FIRE_MODE=<mode>` on the server
+plays one mode only, with no vote. The server holds every shooter, bots included, to the mode's rate.
+
+| marker | |
+|---|---|
+| Ramp (`ramp`, the default) | one ball per pull; three quick pulls in a row (each within 0.3 s) and you can hold the trigger for 10 a second, until you let go |
+| Semi-auto (`semi`) | a mechanical marker: one ball every time you pull, never more than 10 a second. Holding does nothing |
+| Pump (`pump`) | one ball, then a half-second pump stroke before the next (pulls during it are lost). A 20-ball tube |
+
 - **Playing alone?** The server fills both teams with bots (3 a side by default), so you can play a match on your own.
   A friend who joins takes a bot's place.
 - **No server running?** Practice works without one, and if the server drops mid-match you practise until it's back.
@@ -62,10 +73,10 @@ Each half is the mirror image of the other, so neither team has an advantage.
 
 | Controls | |
 |---|---|
-| Mouse / click | aim / fire (hold for 10 balls a second) |
+| Mouse / click | aim / fire (one ball per pull; on a ramp marker, three quick pulls then hold for 10 a second) |
 | WASD, Shift | move, sprint |
 | Space, C, Z | jump (you can jump onto the low walls), crouch, lie down and crawl. Tap C or Z to stay down until you tap again (or jump), or hold it to stay down only while held |
-| R | reload (200-ball hopper) |
+| R | reload (200-ball hopper, or a 20-ball tube on a pump) |
 | Tab (hold) | scoreboard |
 | V (hold) | talk to your team (voice chat) |
 | H | first person / third person (over the shoulder) |

@@ -105,6 +105,43 @@ async function rulesTest(url: string) {
   check('server sent a latency probe', target.inbox.some((m) => m.t === 'ping'));
 }
 
+// ---- firing modes ------------------------------------------------------------------------------
+
+/** players vote the firing mode in (straight away in the warm-up) */
+async function modeVoteTest(url: string) {
+  console.log('-- firing mode vote');
+  const c = await join(url);
+  const welcome = c.inbox.find((m): m is Extract<ServerMsg, { t: 'welcome' }> => m.t === 'welcome');
+  check('the welcome says the firing mode, and that players vote for it', welcome?.mode === 'ramp' && welcome?.modeVote === true);
+  send(c.ws, { t: 'mode', mode: 'semi' });
+  const changed = await waitFor(c.inbox, (m): m is Extract<ServerMsg, { t: 'mode' }> => m.t === 'mode' && m.mode === 'semi', 2000);
+  const roster = await waitFor(c.inbox, rosterWhere((m) => m.players.some((p) => p.id === c.id && p.modeVote === 'semi')), 2000);
+  check('one player voting semi-auto in the warm-up switches to it', changed !== null && roster !== null);
+  c.ws.close();
+}
+
+/** a pump server holds shooters to one ball per stroke, whatever they send */
+async function pumpRateTest(url: string) {
+  console.log('-- pump rate limit');
+  const a = await join(url);
+  const b = await join(url);
+  const welcome = a.inbox.find((m): m is Extract<ServerMsg, { t: 'welcome' }> => m.t === 'welcome');
+  check('FIRE_MODE=pump pins the mode', welcome?.mode === 'pump' && welcome?.modeVote === false);
+  await waitFor(a.inbox, snapWhere((m) => m.round.phase === 'live'), 8000);
+  const from = b.inbox.length;
+  const eyeY = a.body.y + a.body.height - EYE_FROM_TOP;
+  // ten shots a tenth of a second apart, straight up (nobody to hit)
+  for (let i = 0; i < 10; i++) {
+    send(a.ws, { t: 'fire', o: [a.body.x, eyeY + 0.3, a.body.z], d: [0, 1, 0] });
+    await wait(100);
+  }
+  await wait(300);
+  const balls = b.inbox.slice(from).filter((m) => m.t === 'ball' && m.owner === a.id).length;
+  check(`a pump fires about one ball per stroke (${balls} of 10 sent in a second)`, balls >= 2 && balls <= 3);
+  a.ws.close();
+  b.ws.close();
+}
+
 // ---- 2. lag compensation -------------------------------------------------------------------
 
 async function lagTest(url: string, compensated: boolean) {
@@ -365,6 +402,18 @@ try {
       await rulesTest(rules.url);
     } finally {
       rules.stop();
+    }
+    const vote = await startServer({ BOT_TEAM_SIZE: '0' });
+    try {
+      await modeVoteTest(vote.url);
+    } finally {
+      vote.stop();
+    }
+    const pump = await startServer({ BOT_TEAM_SIZE: '0', FIRE_MODE: 'pump' });
+    try {
+      await pumpRateTest(pump.url);
+    } finally {
+      pump.stop();
     }
     const speed = await startServer({ BOT_TEAM_SIZE: '0' });
     try {

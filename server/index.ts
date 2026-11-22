@@ -19,12 +19,13 @@ import { field, setMap, spawnPoint } from '../shared/field';
 import { MAPS, MAP_LIST, DEFAULT_MAP, voteWinner, unanimousVote } from '../shared/maps';
 import {
   advanceBall, traceWorld, segmentHitsPlayer, stanceHeight, isOutOfBounds, stepMovement, hitWorld, ballSeed, BALL_DT,
-  BALL_SPEED, BALL_LIFETIME, FIRE_INTERVAL, STAND_HEIGHT, CROUCH_HEIGHT, EYE_FROM_TOP,
+  BALL_SPEED, BALL_LIFETIME, STAND_HEIGHT, CROUCH_HEIGHT, EYE_FROM_TOP,
   RESPAWN_SECONDS, SERVER_TICK_HZ, SNAPSHOT_HZ, INPUT_DT, INTERP_DELAY, type Ball, type Body, type MoveInput,
 } from '../shared/sim';
 import { BotBrain, NavGrid, SKILLS, botName, type CoverSpot, type Seen } from './bots';
 import { decodeClient, encodeAck, encodeBall, encodeSnap } from '../shared/codec';
 import { walkOffInput } from '../shared/walkoff';
+import { MODE_RULES, DEFAULT_FIRE_MODE, isFireMode, modeVoteWinner, type FireMode } from '../shared/fire';
 import { FastLink, type RtcOptions } from './rtc';
 import { voiceConfig, voiceToken } from './voice';
 import {
@@ -70,6 +71,10 @@ const HISTORY_SECONDS = 1;
 const MAP_SETTING = (process.env.MAP ?? 'rotate').trim().toLowerCase();
 const ROTATE = !MAPS[MAP_SETTING];
 setMap(ROTATE ? DEFAULT_MAP : MAP_SETTING);
+/** FIRE_MODE=ramp|semi|pump plays one firing mode (see shared/fire.ts); unset, players vote for it */
+const MODE_SETTING = (process.env.FIRE_MODE ?? 'vote').trim().toLowerCase();
+const MODE_VOTE = !isFireMode(MODE_SETTING);
+let fireMode: FireMode = isFireMode(MODE_SETTING) ? MODE_SETTING : DEFAULT_FIRE_MODE;
 /** team voice chat through a LiveKit server (server/voice.ts); null = off */
 const VOICE = voiceConfig(process.env);
 /** WIRE_FORMAT=json sends snapshots, acks and balls as JSON instead of binary (for debugging / comparing) */
@@ -131,6 +136,8 @@ interface Player {
   lastVoiceToken: number;
   /** the field this human wants to play (null: no preference); bots don't vote */
   vote: string | null;
+  /** the firing mode this human wants (null: no preference) */
+  modeVote: FireMode | null;
 }
 
 interface Pose {
@@ -191,7 +198,7 @@ const httpServer = createServer(
   makeHttpHandler({
     staticDir: STATIC_DIR,
     health: () => ({
-      players: humans().length, bots: players.size - humans().length, phase: match.phase, map: field.map.id, vote: ROTATE, voice: VOICE !== null,
+      players: humans().length, bots: players.size - humans().length, phase: match.phase, map: field.map.id, vote: ROTATE, mode: fireMode, modeVote: MODE_VOTE, voice: VOICE !== null,
       uptime: Math.round((Date.now() - startedAt) / 1000),
     }),
   }),
@@ -219,10 +226,10 @@ wss.on('connection', (ws) => {
   const p: Player = {
     ws, fast: null, bot: null, body: newBody(sp.x, sp.y, sp.z), lastSeq: -1, budget: 0.1, history: [], id, team, slot, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw, pitch: 0,
     crouch: false, prone: false, alive, outUntil: alive ? 0 : Infinity, lastFire: 0,
-    name: `Player ${id}`, wantName: `Player ${id}`, lastRename: -Infinity, k: 0, d: 0, ping: 0, lastVoiceToken: -Infinity, vote: null,
+    name: `Player ${id}`, wantName: `Player ${id}`, lastRename: -Infinity, k: 0, d: 0, ping: 0, lastVoiceToken: -Infinity, vote: null, modeVote: null,
   };
   players.set(id, p);
-  send(ws, { t: 'welcome', id, team, spawn: sp, round: roundState(), map: field.map.id, voice: VOICE !== null, vote: ROTATE });
+  send(ws, { t: 'welcome', id, team, spawn: sp, round: roundState(), map: field.map.id, voice: VOICE !== null, vote: ROTATE, mode: fireMode, modeVote: MODE_VOTE });
   log(`+ player ${id} joined ${TEAM_NAMES[team]} (${humans().length} online)`);
   balanceBots();
   updateMatch();
@@ -247,6 +254,7 @@ wss.on('connection', (ws) => {
     balanceBots();
     updateMatch();
     checkVotes(); // the one holding out may have left
+    checkModeVotes();
     sendRoster();
   });
 });
@@ -282,6 +290,14 @@ function handle(p: Player, msg: ClientMsg) {
     log(`  player ${p.id} votes for ${v ? MAPS[v].name : 'no field in particular'}`);
     sendRoster();
     checkVotes();
+  } else if (msg.t === 'mode') {
+    if (!MODE_VOTE || !p.ws) return; // the server plays one firing mode
+    const v = isFireMode(msg.mode) ? msg.mode : null;
+    if (v === p.modeVote) return;
+    p.modeVote = v;
+    log(`  player ${p.id} votes for ${v ? MODE_RULES[v].name : 'no firing mode in particular'}`);
+    sendRoster();
+    checkModeVotes();
   } else if (msg.t === 'voice') {
     // a token naming this player and their team (the browser can't pick its own); at most one every 5 s
     const t = now();
@@ -292,7 +308,9 @@ function handle(p: Player, msg: ClientMsg) {
     if (!p.alive || !isV3(msg.o) || !isV3(msg.d)) return;
     if (match.phase !== 'live' && match.phase !== 'waiting') return; // no shooting during countdowns and pauses
     const t = now();
-    if (t - p.lastFire < FIRE_INTERVAL * 0.75) return; // rate limit (with slack for network jitter)
+    // the firing mode's rate (with slack for network jitter). Ramping, a pump's stroke: all just a
+    // shortest time between balls here, as the server can't see the trigger
+    if (t - p.lastFire < MODE_RULES[fireMode].interval * 0.75) return;
     // The shot has to start near the shooter's eyes (where the server has them).
     const eyeY = p.body.y + p.body.height - EYE_FROM_TOP;
     if (Math.hypot(msg.o[0] - p.x, msg.o[1] - eyeY, msg.o[2] - p.z) > 1.5) return;
@@ -438,6 +456,20 @@ function checkVotes() {
   else startCountdown();
 }
 
+/**
+ * A different firing mode with more than half the humans behind it takes over, straight away unless
+ * a point is being played (then when it ends: nobody's marker changes mid-point).
+ */
+function checkModeVotes() {
+  if (!MODE_VOTE) return;
+  const want = modeVoteWinner(humans().map((h) => h.modeVote), fireMode);
+  if (want === fireMode || match.phase === 'live') return;
+  fireMode = want;
+  log(`  firing mode: ${MODE_RULES[want].name}`);
+  for (const p of players.values()) if (p.bot) p.bot.brain.fireMode = want;
+  broadcast({ t: 'mode', mode: want });
+}
+
 /** move everyone to another field: new bot navigation, bots replaced, browsers told to rebuild */
 function changeMap(id: string) {
   if (!setMap(id)) return;
@@ -461,12 +493,13 @@ function addBot(team: Team) {
   const sp = spawnPoint(team, slot);
   const name = botName(botCount++);
   const brain = new BotBrain(nav, BOT_SKILL, claimed[team]);
+  brain.fireMode = fireMode;
   brain.reset(sp.yaw);
   const alive = match.phase !== 'live';
   players.set(id, {
     ws: null, fast: null, bot: { brain, walkLeft: 0 }, body: newBody(sp.x, sp.y, sp.z), lastSeq: -1, budget: 0, history: [], id, team, slot, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw, pitch: 0,
     crouch: false, prone: false, alive, outUntil: alive ? 0 : Infinity, lastFire: 0,
-    name, wantName: name, lastRename: 0, k: 0, d: 0, ping: 0, lastVoiceToken: -Infinity, vote: null,
+    name, wantName: name, lastRename: 0, k: 0, d: 0, ping: 0, lastVoiceToken: -Infinity, vote: null, modeVote: null,
   });
 }
 
@@ -523,7 +556,7 @@ function updateBots(dt: number) {
     p.pitch = out.pitch;
     p.crouch = out.move.crouch;
     p.prone = out.move.prone;
-    if (out.fire && t - p.lastFire >= FIRE_INTERVAL * 0.95) {
+    if (out.fire && t - p.lastFire >= MODE_RULES[fireMode].interval * 0.95) {
       p.lastFire = t;
       const eyeY = body.y + body.height - EYE_FROM_TOP;
       const d = out.fire;
@@ -630,6 +663,7 @@ function roster(): RosterEntry[] {
   return [...players.values()].map((p) => ({
     id: p.id, name: p.name, team: p.team, k: p.k, d: p.d, ping: Math.round(p.ping), bot: p.bot !== null,
     ...(p.vote ? { vote: p.vote } : {}),
+    ...(p.modeVote ? { modeVote: p.modeVote } : {}),
   }));
 }
 function sendRoster() {
@@ -701,6 +735,7 @@ function updateMatch() {
         const over = winner !== -1 && score[winner] >= POINTS_TO_WIN;
         setPhase(over ? 'matchover' : 'point', over ? MATCH_OVER_SECONDS : POINT_PAUSE_SECONDS, winner);
         if (!over) checkVotes(); // a switch everyone asked for waits for the break between points
+        checkModeVotes();
       }
       break;
     }
