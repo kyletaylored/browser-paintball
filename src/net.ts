@@ -3,6 +3,7 @@
 
 import type { ClientMsg, ServerMsg, PlayerSnap, RosterEntry, RoundState, Spawn, Team } from '../shared/protocol';
 import { decodeServer, encodeInput } from '../shared/codec';
+import { FakeLink, fakeNumber } from '../shared/netsim';
 
 export interface RemotePlayer {
   id: number;
@@ -23,10 +24,26 @@ export interface NetEvents {
 export type NetStatus = 'idle' | 'connecting' | 'online' | 'offline';
 
 /**
- * Development only: add ?lag=150 to the URL to fake 150 ms of round-trip latency (half each way),
- * to see how prediction and interpolation cope. Stripped from production builds.
+ * Development only: ?lag=150 fakes 150 ms of round-trip latency (half each way) and ?loss=2 loses 2% of
+ * messages each way, the way TCP does: held up for about a round trip along with everything behind
+ * them (see shared/netsim.ts). Use them together to see how prediction and interpolation cope.
+ * Stripped from production builds.
  */
-const FAKE_LAG_MS = import.meta.env.DEV ? Math.max(0, Number(new URLSearchParams(location.search).get('lag')) || 0) : 0;
+const params = import.meta.env.DEV ? new URLSearchParams(location.search) : null;
+export const FAKE_LAG_MS = fakeNumber(params?.get('lag'), 2000);
+export const FAKE_LOSS_PCT = fakeNumber(params?.get('loss'), 50);
+
+/** snapshot timing since joining, for the dev network overlay (src/netstats.ts) */
+export interface SnapTiming {
+  /** when the last snapshot arrived (performance.now ms), 0 before the first */
+  last: number;
+  /** longest gap between two snapshots, ms */
+  longest: number;
+  /** gaps longer than 100 ms (twice the normal 50): the interpolation buffer runs dry in those */
+  over100: number;
+  count: number;
+  since: number;
+}
 
 export class Net {
   status: NetStatus = 'idle';
@@ -40,6 +57,10 @@ export class Net {
   /** names and stats for everyone, including you */
   readonly roster = new Map<number, RosterEntry>();
   private ws: WebSocket | null = null;
+  /** fake network each way (development only; inactive otherwise) */
+  private up = new FakeLink(FAKE_LAG_MS, FAKE_LOSS_PCT);
+  private down = new FakeLink(FAKE_LAG_MS, FAKE_LOSS_PCT);
+  readonly timing: SnapTiming = { last: 0, longest: 0, over100: 0, count: 0, since: 0 };
   private retryTimer = 0;
   /** we want to be connected (Play online); false after stop() */
   private wanted = false;
@@ -83,9 +104,9 @@ export class Net {
     // input frames go 60 times a second: binary; the rest is rare, so JSON
     const data = m.t === 'input' ? encodeInput(m.i) : JSON.stringify(m);
     this.bytesOut += typeof data === 'string' ? data.length : data.byteLength;
-    if (FAKE_LAG_MS) {
+    if (this.up.active) {
       const ws = this.ws;
-      setTimeout(() => ws?.readyState === WebSocket.OPEN && ws.send(data), FAKE_LAG_MS / 2);
+      this.up.send(() => ws?.readyState === WebSocket.OPEN && ws.send(data));
     } else if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(data);
   }
 
@@ -122,7 +143,7 @@ export class Net {
       } catch {
         return;
       }
-      if (FAKE_LAG_MS) setTimeout(() => this.ws === ws && this.handle(m), FAKE_LAG_MS / 2);
+      if (this.down.active) this.down.send(() => this.ws === ws && this.handle(m));
       else this.handle(m);
     };
     ws.onclose = () => {
@@ -156,6 +177,7 @@ export class Net {
         this.team = m.team;
         this.round = m.round;
         this.roundAt = performance.now();
+        Object.assign(this.timing, { last: 0, longest: 0, over100: 0, count: 0, since: this.roundAt });
         this.sendName();
         this.ev.welcome(m.id, m.team, m.spawn);
         break;
@@ -171,6 +193,14 @@ export class Net {
         break;
       case 'snap': {
         const now = performance.now();
+        const t = this.timing;
+        if (t.last) {
+          const gap = now - t.last;
+          t.longest = Math.max(t.longest, gap);
+          if (gap > 100) t.over100++;
+        }
+        t.last = now;
+        t.count++;
         this.score = m.score;
         this.round = m.round;
         this.roundAt = now;

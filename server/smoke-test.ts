@@ -11,151 +11,18 @@
 //
 // Set SERVER_URL to run only the rules check against a server you started yourself (bots off).
 
-import WebSocket from 'ws';
-import { spawn, type ChildProcess } from 'node:child_process';
-import { cleanName, type ClientMsg, type ServerMsg, type Team, type InputFrame } from '../shared/protocol';
-import { decodeServer, encodeInput, quantizeInput } from '../shared/codec';
-import { EYE_FROM_TOP, INPUT_DT, STAND_HEIGHT, stepMovement, type Body, type MoveInput } from '../shared/sim';
-
-type Snap = Extract<ServerMsg, { t: 'snap' }>;
-type Roster = Extract<ServerMsg, { t: 'roster' }>;
-type Hit = Extract<ServerMsg, { t: 'hit' }>;
-interface Client {
-  ws: WebSocket;
-  id: number;
-  team: Team;
-  inbox: ServerMsg[];
-  /** our own prediction of where we are, run with the same code the server uses */
-  body: Body;
-  yaw: number;
-  seq: number;
-  /** snapshots with the (local) time they arrived, for drawing others like a browser does */
-  snaps: { at: number; m: Snap }[];
-}
-type Ack = Extract<ServerMsg, { t: 'ack' }>;
+import { cleanName, type ServerMsg, type InputFrame } from '../shared/protocol';
+import { EYE_FROM_TOP } from '../shared/sim';
+import {
+  join, send, viewOf, wait, waitFor, walkTo, lastAck, snapWhere, rosterWhere, startServer,
+  type Client, type Ack, type Hit,
+} from './test-client';
 
 const results: [string, boolean][] = [];
 const check = (name: string, ok: boolean) => {
   results.push([name, ok]);
   console.log(`${ok ? 'PASS' : 'FAIL'}  ${name}`);
 };
-
-/** fake round-trip latency per socket (half each way), like the browser's ?lag= */
-const lagOf = new WeakMap<WebSocket, number>();
-
-function join(url: string, lagMs = 0): Promise<Client> {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(url);
-    lagOf.set(ws, lagMs);
-    const inbox: ServerMsg[] = [];
-    const snaps: { at: number; m: Snap }[] = [];
-    ws.on('error', reject);
-    const handle = (m: ServerMsg) => {
-      inbox.push(m);
-      if (m.t === 'snap') snaps.push({ at: performance.now(), m });
-      if (m.t === 'ping') send(ws, { t: 'pong', s: m.s });
-      if (m.t === 'welcome') {
-        const sp = m.spawn;
-        resolve({
-          ws, id: m.id, team: m.team, inbox, snaps, yaw: sp.yaw, seq: 0,
-          body: { x: sp.x, y: sp.y, z: sp.z, vx: 0, vy: 0, vz: 0, height: STAND_HEIGHT, onGround: true },
-        });
-      }
-    };
-    ws.on('message', (data, isBinary) => {
-      // snapshots, acks and balls arrive as binary frames, the rest as JSON, just like in the browser
-      const m = isBinary ? decodeServer(data as Buffer) : (JSON.parse(data.toString()) as ServerMsg);
-      if (lagMs) setTimeout(() => handle(m), lagMs / 2);
-      else handle(m);
-    });
-  });
-}
-function send(ws: WebSocket, m: ClientMsg) {
-  const data = m.t === 'input' ? encodeInput(m.i) : JSON.stringify(m);
-  const lag = lagOf.get(ws) ?? 0;
-  if (lag) setTimeout(() => ws.readyState === ws.OPEN && ws.send(data), lag / 2);
-  else ws.send(data);
-}
-
-/** where `c` sees player `id` at local time `at`: blended between snapshots, exactly like the browser */
-function viewOf(c: Client, id: number, at: number): { x: number; z: number } | null {
-  const s = c.snaps;
-  for (let i = s.length - 1; i > 0; i--) {
-    if (s[i - 1].at > at) continue;
-    const a = s[i - 1].m.players.find((p) => p.id === id);
-    const b = s[i].m.players.find((p) => p.id === id);
-    if (!a || !b) return null;
-    const k = Math.min(1, (at - s[i - 1].at) / (s[i].at - s[i - 1].at));
-    return { x: a.x + (b.x - a.x) * k, z: a.z + (b.z - a.z) * k };
-  }
-  return null;
-}
-const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
-async function waitFor<T extends ServerMsg>(
-  inbox: ServerMsg[], pred: (m: ServerMsg) => m is T, ms: number, from = 0,
-): Promise<T | null> {
-  const end = Date.now() + ms;
-  while (Date.now() < end) {
-    for (let i = inbox.length - 1; i >= from; i--) if (pred(inbox[i])) return inbox[i] as T;
-    await wait(20);
-  }
-  return null;
-}
-/**
- * Walk to (x, z) the way a browser would: one input frame per INPUT_DT, sent in real time, predicted
- * locally with stepMovement. Stops and settles when close.
- */
-async function walkTo(c: Client, x: number, z: number, sprint = false): Promise<void> {
-  const move: MoveInput = { forward: 0, right: 0, jump: false, sprint, crouch: false, yaw: c.yaw };
-  let settle = 0;
-  for (let n = 0; n < 120 * 15 && settle < 40; ) {
-    const batch: InputFrame[] = [];
-    for (let k = 0; k < 4; k++, n++) {
-      const dx = x - c.body.x;
-      const dz = z - c.body.z;
-      const d = Math.hypot(dx, dz);
-      // world direction → forward/right for our yaw (forward = (-sin, -cos), right = (cos, -sin))
-      const s = Math.sin(c.yaw);
-      const co = Math.cos(c.yaw);
-      const go = d > 0.12 ? Math.min(1, d / 0.6) : 0;
-      // round to what the wire carries before predicting, exactly like the browser does
-      const q = quantizeInput(go ? ((dx * -s + dz * -co) / d) * go : 0, go ? ((dx * co + dz * -s) / d) * go : 0, c.yaw, 0);
-      move.forward = q.forward;
-      move.right = q.right;
-      move.yaw = q.yaw;
-      if (!go) settle++;
-      stepMovement(c.body, move, INPUT_DT);
-      batch.push([++c.seq, move.forward, move.right, sprint ? 2 : 0, move.yaw, 0]);
-    }
-    send(c.ws, { t: 'input', i: batch });
-    await wait(INPUT_DT * 4 * 1000);
-  }
-}
-const lastAck = (c: Client) => [...c.inbox].reverse().find((m): m is Ack => m.t === 'ack' && m.seq === c.seq);
-
-const snapWhere = (f: (m: Snap) => boolean) => (m: ServerMsg): m is Snap => m.t === 'snap' && f(m);
-const rosterWhere = (f: (m: Roster) => boolean) => (m: ServerMsg): m is Roster => m.t === 'roster' && f(m);
-
-/** start server/index.ts on a spare port with extra environment variables */
-async function startServer(env: Record<string, string>): Promise<{ url: string; stop: () => void }> {
-  const port = 20000 + Math.floor(Math.random() * 20000);
-  const child: ChildProcess = spawn(process.execPath, ['--import', 'tsx', 'server/index.ts'], {
-    env: { ...process.env, PORT: String(port), ...env },
-    stdio: ['ignore', 'pipe', 'pipe'],
-  });
-  let log = '';
-  child.stdout!.on('data', (d) => (log += d));
-  child.stderr!.on('data', (d) => (log += d));
-  const end = Date.now() + 15000;
-  while (!log.includes('server on ws://')) {
-    if (Date.now() > end || child.exitCode !== null) {
-      child.kill();
-      throw new Error(`server didn't start:\n${log}`);
-    }
-    await wait(50);
-  }
-  return { url: `ws://localhost:${port}`, stop: () => child.kill() };
-}
 
 // ---- 1. rules ------------------------------------------------------------------------------
 
