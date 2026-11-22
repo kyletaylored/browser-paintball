@@ -974,8 +974,15 @@ function frame(now: number) {
       hud.setCinema({
         caption: director.caption, team: w, next: phase === 'matchover' ? 'NEW MATCH' : 'NEXT POINT', time: clock(phaseSecondsLeft(net, now)),
       });
+      // after a match: vote for the next field right there (number keys; the pause menu has the same cards)
+      const voting = phase === 'matchover' && net.votes;
+      hud.setVoteNow(voting ? clock(phaseSecondsLeft(net, now)) : null);
+      const n = voting && input.active ? input.numberPressed : 0;
+      const pick = n ? hud.voteKey(n) : undefined;
+      if (pick !== undefined) net.send({ t: 'vote', map: pick });
     } else {
       hud.setCinema(null);
+      hud.setVoteNow(null);
       spectate(online, phase, now, dt);
     }
   }

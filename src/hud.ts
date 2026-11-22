@@ -7,12 +7,51 @@ import { QUALITY_KEY, savedQuality, type Quality } from './render';
 import { TEAM_NAMES, type RosterEntry, type Team } from '../shared/protocol';
 import { MAP_LIST, MAPS, unanimousVote, voteWinner } from '../shared/maps';
 import type { Voice, VoiceSettings } from './voice';
+import { layoutImage } from './fieldmap';
 import { FIRE_MODES, MODE_RULES, DEFAULT_FIRE_MODE, isFireMode, modeVoteWinner, type FireMode } from '../shared/fire';
 
 const FEED_SECONDS = 5;
 const FEED_MAX = 5;
 
 const $ = (id: string) => document.getElementById(id)!;
+/** one vote card: a picture (or none), a name, a line under it, and the votes; id '' is "no preference" */
+function voteCard(id: string, key: number, name: string, line: string, img: string | null): HTMLButtonElement {
+  const b = document.createElement('button');
+  b.type = 'button';
+  b.className = 'vcard';
+  b.dataset.id = id;
+  const pic = document.createElement('div');
+  pic.className = 'pic';
+  if (img) pic.style.backgroundImage = `url(${img})`;
+  else pic.textContent = id ? name.slice(0, 1) : '?';
+  const k = document.createElement('span');
+  k.className = 'key';
+  k.textContent = String(key);
+  const nm = document.createElement('span');
+  nm.className = 'nm';
+  nm.textContent = name;
+  const ln = document.createElement('span');
+  ln.className = 'ln';
+  ln.textContent = line;
+  const n = document.createElement('span');
+  n.className = 'cnt';
+  n.textContent = '0';
+  b.append(pic, k, nm, ln, n);
+  return b;
+}
+
+/** refresh every card in the matching boxes: its votes, and whether it's mine / on now / up next */
+function updateCards(sel: string, state: (id: string) => { n: number; mine: boolean; on: boolean; next: boolean }): void {
+  for (const c of document.querySelectorAll<HTMLButtonElement>(`${sel} .vcard`)) {
+    const s = state(c.dataset.id ?? '');
+    c.querySelector('.cnt')!.textContent = String(s.n);
+    c.classList.toggle('mine', s.mine);
+    c.classList.toggle('on', s.on);
+    c.classList.toggle('next', s.next);
+    c.setAttribute('aria-pressed', String(s.mine));
+  }
+}
+
 /** text made safe to put in HTML */
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
@@ -132,14 +171,37 @@ export class Hud {
     }
   }
 
-  /** the pause menu's vote: "No preference" or a field */
+  /**
+   * The field vote: a card per field (its layout from above, name, size, votes) and a "no
+   * preference" card, in the pause menu and on screen after a match (number keys there).
+   */
   bindVote(onVote: (id: string | null) => void): void {
-    const sel = $('votesel') as HTMLSelectElement;
-    sel.replaceChildren(new Option('No preference', ''), ...MAP_LIST.map((m) => new Option(m.name, m.id)));
-    sel.addEventListener('change', () => onVote(sel.value || null));
+    const make = () => [
+      ...MAP_LIST.map((m, i) => voteCard(m.id, i + 1, m.name, `${m.length} × ${m.width} m`, layoutImage(m))),
+      voteCard('', MAP_LIST.length + 1, 'No preference', 'any field', null),
+    ];
+    for (const box of [$('vote-cards'), $('vote-now-cards')]) {
+      box.replaceChildren(...make());
+      box.addEventListener('click', (e) => {
+        const card = (e.target as HTMLElement).closest<HTMLButtonElement>('.vcard');
+        if (card) onVote(card.dataset.id || null);
+      });
+    }
   }
 
-  private voteKey = '';
+  /** the field card for number key n (1 = the first field; the last is "no preference"), or undefined */
+  voteKey(n: number): string | null | undefined {
+    if (n < 1 || n > MAP_LIST.length + 1) return undefined;
+    return n <= MAP_LIST.length ? MAP_LIST[n - 1].id : null;
+  }
+
+  /** after a match: the field cards on screen, with the time left to vote; null to hide */
+  setVoteNow(time: string | null): void {
+    $('vote-now').hidden = time === null;
+    if (time !== null) $('vote-now-time').textContent = time;
+  }
+
+  private voteState = '';
 
   /**
    * Show the vote in the pause menu (online, when the server lets players choose), and say what the
@@ -155,12 +217,11 @@ export class Hud {
     const now = unanimousVote(votes, current);
     const next = voteWinner(votes, current);
     const key = JSON.stringify([votes, mine, current]);
-    if (key !== this.voteKey) {
-      this.voteKey = key;
-      const sel = $('votesel') as HTMLSelectElement;
-      if (document.activeElement !== sel) sel.value = mine;
+    if (key !== this.voteState) {
+      this.voteState = key;
       const count = new Map<string, number>();
       for (const v of votes) if (v) count.set(v, (count.get(v) ?? 0) + 1);
+      updateCards('.vcards.fields', (id) => ({ n: id ? count.get(id) ?? 0 : votes.filter((v) => !v).length, mine: id === mine, on: id === current, next: id === (now ?? next) }));
       const tally = [...count].sort((a, b) => b[1] - a[1]).map(([id, n]) => `${MAPS[id]?.name} ${n}`).join(', ');
       $('vote-info').textContent = now
         ? `Everyone wants ${MAPS[now].name}: switching after this point.`
@@ -206,11 +267,17 @@ export class Hud {
     $('mode-blurb').textContent = MODE_RULES[this.pickedMode()].blurb;
   }
 
-  /** the pause menu's vote for the firing mode */
+  /** the pause menu's vote for the firing mode: a card per mode, and "no preference" */
   bindModeVote(onVote: (m: FireMode | null) => void): void {
-    const sel = $('modevotesel') as HTMLSelectElement;
-    sel.replaceChildren(new Option('No preference', ''), ...FIRE_MODES.map((m) => new Option(MODE_RULES[m].name, m)));
-    sel.addEventListener('change', () => onVote(isFireMode(sel.value) ? sel.value : null));
+    const box = $('mode-cards');
+    box.replaceChildren(
+      ...FIRE_MODES.map((m, i) => voteCard(m, i + 1, MODE_RULES[m].name, `${MODE_RULES[m].hopper}-ball ${m === 'pump' ? 'tube' : 'hopper'}`, null)),
+      voteCard('', FIRE_MODES.length + 1, 'No preference', 'any marker', null),
+    );
+    box.addEventListener('click', (e) => {
+      const card = (e.target as HTMLElement).closest<HTMLButtonElement>('.vcard');
+      if (card) onVote(isFireMode(card.dataset.id) ? card.dataset.id : null);
+    });
   }
 
   private modeVoteKey = '';
@@ -227,8 +294,9 @@ export class Hud {
     const key = JSON.stringify([votes, mine, current]);
     if (key !== this.modeVoteKey) {
       this.modeVoteKey = key;
-      const sel = $('modevotesel') as HTMLSelectElement;
-      if (document.activeElement !== sel) sel.value = mine;
+      updateCards('.vcards.modes', (id) => ({
+        n: id ? votes.filter((v) => v === id).length : votes.filter((v) => !v).length, mine: id === mine, on: id === current, next: id === next && next !== current,
+      }));
       const tally = FIRE_MODES.map((m) => [m, votes.filter((v) => v === m).length] as const)
         .filter(([, n]) => n > 0).map(([m, n]) => `${MODE_RULES[m].name} ${n}`).join(', ');
       $('mode-vote-info').textContent = next !== current
