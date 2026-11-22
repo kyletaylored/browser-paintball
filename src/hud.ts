@@ -288,6 +288,17 @@ export class Hud {
     ($('viewsel') as HTMLSelectElement).value = view;
   }
 
+  /** Settings: which shoulder the third-person camera looks over (Q and the d-pad change it too, via setShoulder) */
+  bindShoulder(value: string, onChange: (v: string) => void): void {
+    const sel = $('shouldersel') as HTMLSelectElement;
+    sel.value = value;
+    sel.addEventListener('change', () => onChange(sel.value));
+  }
+
+  setShoulder(value: string): void {
+    ($('shouldersel') as HTMLSelectElement).value = value;
+  }
+
   bindQuality(): void {
     const sel = $('quality') as HTMLSelectElement;
     const note = $('quality-note');

@@ -80,6 +80,7 @@ plays one mode only, with no vote. The server holds every shooter, bots included
 | Tab (hold) | scoreboard |
 | V (hold) | talk to your team (voice chat) |
 | H | first person / third person (over the shoulder) |
+| Q | third person: look over the other shoulder (Settings also has Auto: the side you strafe or peek toward) |
 | Esc | pause (menu) |
 
 | Controller | |
@@ -92,10 +93,13 @@ plays one mode only, with no vote. The server holds every shooter, bots included
 | Select (hold) | scoreboard |
 | Start | pause (menu); on a phone there's also a Menu button |
 | D-pad up (hold) | talk to your team (voice chat) |
+| D-pad left / right | third person: look over your left / right shoulder |
 
-Look speed, invert Y, vibration, volume, graphics quality and the view (first or third person) are under Settings and
-saved in your browser. In third person the camera sits over your right shoulder and pulls in when a bunker is behind
-you; paint still flies from your marker to whatever the crosshair is on. `npm run test:input` checks
+Look speed, invert Y, vibration, volume, graphics quality, the view (first or third person) and the shoulder are under
+Settings and saved in your browser. In third person the camera sits over your shoulder and pulls in when a bunker is
+behind you; paint still flies from your marker to whatever the crosshair is on. Q (or the d-pad) slides it over to the
+other shoulder, for peeking out of the other side of a bunker. On Auto it follows the way you strafe, and moves off a
+shoulder that's right up against a bunker if the other side is clear. `npm run test:input` checks
 the deadzones, response curve and buttons.
 
 ## How it's put together

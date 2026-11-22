@@ -243,6 +243,16 @@ export class Input {
     return this.wasPressed('KeyH') || (this.active && this.pad.state.viewPressed);
   }
 
+  /**
+   * third person: which shoulder to look over now. 'swap' (Q) for the other one, -1 / 1 for left /
+   * right (d-pad left / right), or null
+   */
+  get shoulderPressed(): 'swap' | -1 | 1 | null {
+    if (this.wasPressed('KeyQ')) return 'swap';
+    const p = this.active ? this.pad.state.shoulderPressed : 0;
+    return p === 0 ? null : p;
+  }
+
   get reloadPressed(): boolean {
     return this.wasPressed('KeyR') || (this.active && this.pad.state.reloadPressed);
   }

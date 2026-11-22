@@ -133,6 +133,14 @@ const viewFirst = s.viewPressed;
 s.update(pad([BTN.R3]), 1 / 60);
 check('clicking the right stick switches the view, once per click (and leaves crouch alone)', viewFirst && !s.viewPressed && s.crouch === crouchBefore);
 s.update(pad(), 1 / 60);
+s.update(pad([BTN.LEFT]), 1 / 60);
+const leftFirst = s.shoulderPressed;
+s.update(pad([BTN.LEFT]), 1 / 60);
+const leftHeld = s.shoulderPressed;
+s.update(pad(), 1 / 60);
+s.update(pad([BTN.RIGHT]), 1 / 60);
+check('d-pad left / right pick the shoulder, once per press', leftFirst === -1 && leftHeld === 0 && s.shoulderPressed === 1);
+s.update(pad(), 1 / 60);
 
 s.update(pad([BTN.START]), 1 / 60);
 check('Start is reported once', s.startPressed);
