@@ -39,7 +39,7 @@ async function run(url: string, lag: number, loss: number, seconds: number): Pro
   const c = await join(url, lag, loss, RTC);
   if (RTC && !(await fastOpen(c, 8000))) throw new Error("the data channel didn't open");
   const prediction = new Prediction();
-  const move: MoveInput = { forward: 0, right: 0, jump: false, sprint: false, crouch: false, yaw: c.yaw };
+  const move: MoveInput = { forward: 0, right: 0, jump: false, sprint: false, crouch: false, prone: false, yaw: c.yaw };
   let read = 0;
   let corrections = 0;
   let maxCorrection = 0;

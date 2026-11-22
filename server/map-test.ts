@@ -12,11 +12,13 @@
 // Choosing the field: the vote rules, and a real server switching fields when players vote.
 //
 // Paint: glancing hits bounce and square ones break, and every machine rolls the same bounces.
+// Lying down: the body is hit along the ground, not as a short upright stub.
 
 import { MAP_LIST, DEFAULT_MAP, nextMap, unanimousVote, voteWinner } from '../shared/maps';
 import { field, setMap, spawnPoint, footprintDistance, topOf, type Bunker } from '../shared/field';
 import {
-  traceWorld, stepMovement, advanceBall, hitWorld, ballSeed, bounceChance, BALL_DT, STAND_HEIGHT, PLAYER_RADIUS,
+  traceWorld, stepMovement, advanceBall, hitWorld, ballSeed, bounceChance, segmentHitsPlayer, BALL_DT, STAND_HEIGHT,
+  PRONE_HEIGHT, PLAYER_RADIUS,
   type Ball, type Body, type MoveInput, type Contact,
 } from '../shared/sim';
 import { NavGrid } from './bots';
@@ -112,7 +114,7 @@ for (const m of MAP_LIST) {
   bs.forEach((b, i) => {
     if (topOf(b) < 0.5) return;
     const body: Body = { x: b.x - field.bounds[i].r - 1.2, y: 0, z: b.z + 0.05, vx: 0, vy: 0, vz: 0, height: STAND_HEIGHT, onGround: true };
-    const move: MoveInput = { forward: 0, right: 1, jump: false, sprint: true, crouch: false, yaw: 0 }; // yaw 0: right is +x
+    const move: MoveInput = { forward: 0, right: 1, jump: false, sprint: true, crouch: false, prone: false, yaw: 0 }; // yaw 0: right is +x
     for (let s = 0; s < 240; s++) stepMovement(body, move, 1 / 120);
     if (footprintDistance(b, body.x, body.z, i) < PLAYER_RADIUS - 0.02 && body.y < topOf(b) - 0.1) inside.push(`${b.kind} at ${b.x},${b.z}`);
   });
@@ -274,7 +276,23 @@ function paintRules() {
   check('so the same ball bounces the same way on every machine', a !== null && b !== null && a.c === b.c && a.ball.vx === b.ball.vx && a.ball.vy === b.ball.vy);
 }
 
+function lyingDown() {
+  console.log('-- lying down');
+  // a player at the origin facing -z (yaw 0): head toward -z, legs out toward +z
+  const across = (y: number, z: number, prone: boolean) =>
+    segmentHitsPlayer(-3, y, z, 3, y, z, 0, 0, 0, prone ? PRONE_HEIGHT : STAND_HEIGHT, 0, prone) !== null;
+  check('a ball at chest height over someone lying down misses them', !across(1.0, 0, true) && across(1.0, 0, false));
+  check('one along the ground at their legs, a metre behind, hits', across(0.15, 1.0, true) && !across(0.15, 1.0, false));
+  check('one at their head, just ahead of where they stand, hits', across(0.25, -0.3, true));
+  check('one past their feet misses', !across(0.15, 1.8, true));
+  // facing +x (yaw -π/2) the legs go out toward -x
+  check('the body turns with where they face',
+    segmentHitsPlayer(-1, 0.15, -3, -1, 0.15, 3, 0, 0, 0, PRONE_HEIGHT, -Math.PI / 2, true) !== null &&
+    segmentHitsPlayer(1, 0.15, -3, 1, 0.15, 3, 0, 0, 0, PRONE_HEIGHT, -Math.PI / 2, true) === null);
+}
+
 paintRules();
+lyingDown();
 voteRules();
 await voting();
 

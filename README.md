@@ -64,7 +64,7 @@ Each half is the mirror image of the other, so neither team has an advantage.
 |---|---|
 | Mouse / click | aim / fire (hold for 10 balls a second) |
 | WASD, Shift | move, sprint |
-| Space, C | jump (you can jump onto the low walls), crouch |
+| Space, C, Z | jump (you can jump onto the low walls), crouch, lie down and crawl. Tap C or Z to stay down until you tap again (or jump), or hold it to stay down only while held |
 | R | reload (200-ball hopper) |
 | Tab (hold) | scoreboard |
 | V (hold) | talk to your team (voice chat) |
@@ -75,7 +75,7 @@ Each half is the mirror image of the other, so neither team has an advantage.
 | Left stick | move (how far you push sets your speed); click it to sprint until you stop |
 | Right stick | aim, slowed a little while your crosshair is on an opponent |
 | RT (or RB) | fire |
-| A / B / X | jump / crouch (toggles) / reload |
+| A / B / X | jump / crouch (tap B) or lie down (hold B; tap again to get up to a crouch) / reload |
 | LB (hold) | sprint |
 | Select (hold) | scoreboard |
 | Start | pause (menu); on a phone there's also a Menu button |
@@ -117,7 +117,7 @@ src/          the browser game
   paintballs.ts all balls in flight, drawn as glowing streaks (three InstancedMeshes); near-miss whizzes
   fx.ts         paint splat decals + droplet bursts
   models.ts     loads the models (with a loading bar); falls back to code-drawn shapes if they fail
-  avatars.ts    other players: the animated model, driven by speed / crouch / eliminated / shots
+  avatars.ts    other players: the animated model, driven by speed / crouch / lying down / eliminated / shots
   net.ts        WebSocket client + snapshot interpolation
   netstats.ts   development network overlay (?net, ?lag=, ?loss=)
   fastlink.ts   the browser's end of the data channel

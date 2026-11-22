@@ -10,7 +10,7 @@
 
 import { field, footprintDistance, topOf, type Bunker } from '../shared/field';
 import {
-  traceWorld, BALL_SPEED, GRAVITY, FIRE_INTERVAL, PLAYER_RADIUS, STAND_HEIGHT, CROUCH_HEIGHT, EYE_FROM_TOP, type MoveInput,
+  traceWorld, stanceHeight, BALL_SPEED, GRAVITY, FIRE_INTERVAL, PLAYER_RADIUS, STAND_HEIGHT, CROUCH_HEIGHT, EYE_FROM_TOP, type MoveInput,
 } from '../shared/sim';
 import type { Team } from '../shared/protocol';
 
@@ -274,6 +274,7 @@ export interface Seen {
   y: number;
   z: number;
   crouch: boolean;
+  prone: boolean;
   alive: boolean;
 }
 
@@ -340,7 +341,7 @@ export class BotBrain {
   private strafeUntil = 0;
   private lastSeenPos = new Map<number, { x: number; z: number; t: number; vx: number; vz: number }>();
   private readonly out: BotOutput = {
-    move: { forward: 0, right: 0, jump: false, sprint: false, crouch: false, yaw: 0 },
+    move: { forward: 0, right: 0, jump: false, sprint: false, crouch: false, prone: false, yaw: 0 },
     yaw: 0,
     pitch: 0,
     fire: null,
@@ -389,9 +390,10 @@ export class BotBrain {
       if (!s.alive || s.team === me.team) continue;
       const d = Math.hypot(s.x - me.x, s.z - me.z);
       if (d > this.skill.sight) continue;
-      const h = s.crouch ? CROUCH_HEIGHT : STAND_HEIGHT;
-      // try the chest, then the head (a crouched player's head can poke over a bunker)
-      for (const y of [s.y + h * 0.6, s.y + h - 0.15]) {
+      const h = stanceHeight(s.crouch, s.prone);
+      // try the chest, then the head (a crouched player's head can poke over a bunker); someone
+      // lying down is a low target all along the ground
+      for (const y of s.prone ? [s.y + 0.2, s.y + 0.35] : [s.y + h * 0.6, s.y + h - 0.15]) {
         if (traceWorld(me.x, spotY, me.z, s.x, y, s.z)) continue;
         // track their velocity so we can lead them
         const prev = this.lastSeenPos.get(s.id);

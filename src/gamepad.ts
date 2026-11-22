@@ -82,6 +82,9 @@ const RUMBLES: Record<Rumble, { duration: number; strongMagnitude: number; weakM
   out: { duration: 320, strongMagnitude: 0.9, weakMagnitude: 0.5 },
 };
 
+/** hold B this long (seconds) to lie down; a shorter press is a tap (crouch / stand) */
+export const PRONE_HOLD = 0.35;
+
 /**
  * One frame's worth of controller state, turned into game actions. Call update() once per
  * frame; the *Pressed fields are true only on the frame a button went down.
@@ -103,6 +106,8 @@ export class PadState {
   jump = false;
   sprint = false;
   crouch = false;
+  /** lying down: hold B */
+  prone = false;
   scoreboard = false;
   /** d-pad up held: push-to-talk */
   talk = false;
@@ -118,6 +123,8 @@ export class PadState {
   private lastStamp = -1;
   private edgeTime = 0;
   private sprintOn = false;
+  /** how long B has been held (it's a tap, or a hold to lie down), -1 when up */
+  private bHeld = -1;
   private navDir: NavDir | null = null;
   private navNext = 0;
 
@@ -159,8 +166,29 @@ export class PadState {
 
     this.fire = this.down(BTN.RT) || this.down(BTN.RB);
     this.jump = this.down(BTN.A);
-    if (this.pressed(BTN.B) || this.pressed(BTN.R3)) {
+    // B: a tap crouches or stands (from lying down, a tap gets you up to a crouch); hold it to lie down
+    if (this.down(BTN.B)) {
+      if (this.bHeld >= 0) this.bHeld += dt;
+      else if (this.pressed(BTN.B)) this.bHeld = 0;
+      if (this.bHeld >= PRONE_HOLD && !this.prone) {
+        this.prone = true;
+        this.crouch = false;
+        this.sprintOn = false;
+        this.bHeld = Infinity; // used up: letting go doesn't also tap
+      }
+    } else if (this.bHeld >= 0) {
+      if (this.bHeld < PRONE_HOLD) {
+        if (this.prone) {
+          this.prone = false;
+          this.crouch = true;
+        } else this.crouch = !this.crouch;
+        if (this.crouch) this.sprintOn = false;
+      }
+      this.bHeld = -1;
+    }
+    if (this.pressed(BTN.R3)) {
       this.crouch = !this.crouch;
+      this.prone = false;
       if (this.crouch) this.sprintOn = false;
     }
     // sprint: click the left stick (stays on until you stop moving) or hold LB
@@ -170,8 +198,8 @@ export class PadState {
     }
     if (m.mag < 0.3) this.sprintOn = false;
     this.sprint = this.sprintOn || this.down(BTN.LB);
-    if (this.sprint && this.down(BTN.LB)) this.crouch = false;
-    if (this.jump) this.crouch = false;
+    if (this.sprint && this.down(BTN.LB)) this.crouch = this.prone = false;
+    if (this.jump) this.crouch = this.prone = false;
     this.scoreboard = this.down(BTN.SELECT);
     this.talk = this.down(BTN.UP);
     this.reloadPressed = this.pressed(BTN.X);
@@ -201,6 +229,8 @@ export class PadState {
   /** drop toggles (crouch, sprint) when play stops, so you don't come back crouched */
   clearToggles(): void {
     this.crouch = false;
+    this.prone = false;
+    this.bHeld = -1;
     this.sprintOn = false;
     this.edgeTime = 0;
   }
@@ -216,7 +246,8 @@ export class PadState {
     this.index = -1;
     this.id = '';
     this.moveX = this.moveY = this.yawRate = this.pitchRate = 0;
-    this.fire = this.jump = this.sprint = this.crouch = this.scoreboard = this.talk = false;
+    this.fire = this.jump = this.sprint = this.crouch = this.prone = this.scoreboard = this.talk = false;
+    this.bHeld = -1;
     this.reloadPressed = this.startPressed = this.aPressed = this.bPressed = false;
     this.nav = this.navDir = null;
     this.held = [];

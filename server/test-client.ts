@@ -197,8 +197,8 @@ export async function waitFor<T extends ServerMsg>(
  * Walk to (x, z) the way a browser would: one input frame per INPUT_DT, sent in real time, predicted
  * locally with stepMovement. Stops and settles when close.
  */
-export async function walkTo(c: Client, x: number, z: number, sprint = false): Promise<void> {
-  const move: MoveInput = { forward: 0, right: 0, jump: false, sprint, crouch: false, yaw: c.yaw };
+export async function walkTo(c: Client, x: number, z: number, sprint = false, prone = false): Promise<void> {
+  const move: MoveInput = { forward: 0, right: 0, jump: false, sprint, crouch: false, prone, yaw: c.yaw };
   let settle = 0;
   for (let n = 0; n < 120 * 15 && settle < 40; ) {
     const batch: InputFrame[] = [];
@@ -217,7 +217,7 @@ export async function walkTo(c: Client, x: number, z: number, sprint = false): P
       move.yaw = q.yaw;
       if (!go) settle++;
       stepMovement(c.body, move, INPUT_DT);
-      batch.push([++c.seq, move.forward, move.right, sprint ? 2 : 0, move.yaw, 0]);
+      batch.push([++c.seq, move.forward, move.right, (sprint ? 2 : 0) | (prone ? 8 : 0), move.yaw, 0]);
     }
     send(c.ws, { t: 'input', i: batch });
     await wait(INPUT_DT * 4 * 1000);
