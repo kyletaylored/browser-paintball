@@ -189,6 +189,25 @@
       #feed .row.mine { outline: 1px solid var(--accent); }
       #feed .x { color: var(--dim); }
       #feed .r { color: var(--red); } #feed .b { color: var(--blue); }
+      #feed .tag { font-size: 11px; font-weight: 900; color: #0b0a10; background: #ffd23f; padding: 1px 6px; border-radius: 4px; letter-spacing: 0.05em; text-transform: uppercase; }
+      #feed .note { color: var(--ink); font-style: italic; }
+      #feed .row.big { font-size: 15px; outline: 2px solid #ffd23f; }
+      /* your streak: big arcade numbers off to the side, popping in and fading */
+      #streak {
+        position: absolute; left: 62%; top: 36%; display: flex; align-items: baseline; gap: 8px; opacity: 0; pointer-events: none;
+        font-weight: 900; font-style: italic; color: #ffd23f; -webkit-text-stroke: 3px #0b0a10; paint-order: stroke fill;
+        filter: drop-shadow(0 4px 0 rgba(0, 0, 0, 0.6));
+      }
+      #streak b { font-size: 84px; line-height: 1; }
+      #streak span { font-size: 30px; }
+      #streak.show { animation: streak 1.8s ease-out forwards; }
+      @keyframes streak {
+        0% { opacity: 0; transform: scale(2.2) rotate(-8deg); }
+        12% { opacity: 1; transform: scale(0.92) rotate(-4deg); }
+        20% { transform: scale(1) rotate(-4deg); }
+        75% { opacity: 1; }
+        100% { opacity: 0; transform: scale(1) translateY(-14px) rotate(-4deg); }
+      }
       @keyframes feedin { from { opacity: 0; translate: 12px 0; } }
       #board {
         position: absolute; left: 50%; top: 50%; translate: -50% -50%; width: min(760px, calc(100vw - 32px));
@@ -297,6 +316,7 @@
       <div id="out" hidden></div>
       <div id="banner" hidden></div>
       <div id="feed"></div>
+      <div id="streak" aria-hidden="true"></div>
       <div id="board" hidden></div>
       <button id="menubtn" class="chip" type="button" hidden aria-label="Menu">Menu</button>
       <button id="voice" class="chip" type="button" hidden aria-label="Push to talk"></button>

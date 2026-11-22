@@ -125,8 +125,13 @@ export type ServerMsg =
   /** seq counts up by one per snapshot (to skip late ones); score is points won this match */
   | { t: 'snap'; seq: number; players: PlayerSnap[]; score: [number, number]; round: RoundState }
   | { t: 'ball'; owner: number; team: Team; o: V3; v: V3 }
-  /** tp: where the victim's hitbox was tested [x, y, z, height] (after lag compensation) */
-  | { t: 'hit'; victim: number; shooter: number; team: Team; p: V3; tp: [number, number, number, number] }
+  /**
+   * tp: where the victim's hitbox was tested [x, y, z, height] (after lag compensation); bounced: the
+   * ball had bounced off something first (a bunker, the ground, another player)
+   */
+  | { t: 'hit'; victim: number; shooter: number; team: Team; p: V3; tp: [number, number, number, number]; bounced?: boolean }
+  /** a ball bounced off a player without breaking: they play on */
+  | { t: 'bounce'; victim: number; shooter: number; p: V3 }
   | { t: 'respawn'; spawn: Spawn }
   | { t: 'leave'; id: number }
   /** names and stats; sent when they change and every couple of seconds (for ping) */

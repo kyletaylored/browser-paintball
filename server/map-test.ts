@@ -12,13 +12,14 @@
 // Choosing the field: the vote rules, and a real server switching fields when players vote.
 //
 // Paint: glancing hits bounce and square ones break, and every machine rolls the same bounces.
+// Paint off players: most hits break, glancing ones often skip off (and the player plays on).
 // Lying down: the body is hit along the ground, not as a short upright stub.
 // Out: from anywhere on every field, an eliminated player walks off past the side line.
 
 import { MAP_LIST, DEFAULT_MAP, nextMap, unanimousVote, voteWinner } from '../shared/maps';
 import { field, setMap, spawnPoint, footprintDistance, topOf, type Bunker } from '../shared/field';
 import {
-  traceWorld, stepMovement, advanceBall, hitWorld, ballSeed, bounceChance, segmentHitsPlayer, BALL_DT, STAND_HEIGHT,
+  traceWorld, stepMovement, advanceBall, hitWorld, hitPlayer, ballSeed, bounceChance, playerBounceChance, segmentHitsPlayer, BALL_DT, STAND_HEIGHT,
   PRONE_HEIGHT, PLAYER_RADIUS, INPUT_DT,
   type Ball, type Body, type MoveInput, type Contact,
 } from '../shared/sim';
@@ -278,6 +279,46 @@ function paintRules() {
   check('so the same ball bounces the same way on every machine', a !== null && b !== null && a.c === b.c && a.ball.vx === b.ball.vx && a.ball.vy === b.ball.vy);
 }
 
+/** a ball fired along +x at a standing player at the origin, `off` metres to the side of their middle */
+function atPlayer(off: number, seed: number, prone = false): { c: Contact; ball: Ball } | null {
+  const ball: Ball = { x: -3, y: prone ? 0.2 : 1.2, z: off, vx: 85, vy: 0, vz: 0, age: 0, owner: 1, team: 0, seed, bounces: 0 };
+  const h = prone ? PRONE_HEIGHT : STAND_HEIGHT;
+  const t = segmentHitsPlayer(ball.x, ball.y, ball.z, 3, ball.y, ball.z, 0, 0, 0, h, 0, prone);
+  if (t === null) return null;
+  const x = ball.x + 6 * t;
+  return { c: hitPlayer(ball, x, ball.y, ball.z, 0, 0, 0, h, 0, prone), ball };
+}
+
+function playerBounces() {
+  console.log('-- paint bouncing off players');
+  let square = 0;
+  let glancing = 0;
+  let away = true;
+  let same = true;
+  for (let s = 1; s <= 1000; s++) {
+    const seed = s * 2654435761;
+    if (atPlayer(0, seed)?.c !== 'break') square++;
+    const g = atPlayer(PLAYER_RADIUS * 0.97, seed);
+    if (g && g.c !== 'break') {
+      glancing++;
+      away &&= g.ball.vz > 0; // pushed out to the side it skimmed
+    }
+    same &&= atPlayer(0.2, seed)?.c === atPlayer(0.2, seed)?.c;
+  }
+  check(`a square hit on a player almost always breaks (${square} of 1000 bounced)`, square > 5 && square < 70);
+  check(`a glancing one often skips off (${glancing} of 1000)`, glancing > 200 && glancing < 450);
+  // shots spread evenly across the body: a few in a hundred bounce, like real paint
+  let any = 0;
+  for (let s = 1; s <= 2000; s++) if (atPlayer(((s % 200) / 200) * (PLAYER_RADIUS + 0.008), s * 2246822519)?.c !== 'break') any++;
+  check(`across the whole body, a few hits in a hundred bounce (${(any / 20).toFixed(1)}%)`, any > 60 && any < 260);
+  check('a ball skipping off flies on away from the body', away);
+  check('the same ball does the same thing on every machine', same);
+  check('slow paint bounces off players more easily', playerBounceChance(0.9, 20) > playerBounceChance(0.9, 80));
+  let proneOk = 0;
+  for (let s = 1; s <= 200; s++) if (atPlayer(0.5, s * 2654435761, true) !== null) proneOk++;
+  check('someone lying down can be hit and bounced off along their body', proneOk === 200);
+}
+
 function lyingDown() {
   console.log('-- lying down');
   // a player at the origin facing -z (yaw 0): head toward -z, legs out toward +z
@@ -323,6 +364,7 @@ function walkingOff() {
 }
 
 paintRules();
+playerBounces();
 lyingDown();
 walkingOff();
 voteRules();

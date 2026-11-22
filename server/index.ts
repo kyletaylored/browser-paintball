@@ -18,7 +18,7 @@ import { makeHttpHandler } from './http';
 import { field, setMap, spawnPoint } from '../shared/field';
 import { MAPS, MAP_LIST, DEFAULT_MAP, voteWinner, unanimousVote } from '../shared/maps';
 import {
-  advanceBall, traceWorld, segmentHitsPlayer, stanceHeight, isOutOfBounds, stepMovement, hitWorld, ballSeed, BALL_DT,
+  advanceBall, traceWorld, segmentHitsPlayer, stanceHeight, isOutOfBounds, stepMovement, hitWorld, hitPlayer, ballSeed, BALL_DT,
   BALL_SPEED, BALL_LIFETIME, STAND_HEIGHT, CROUCH_HEIGHT, EYE_FROM_TOP,
   RESPAWN_SECONDS, SERVER_TICK_HZ, SNAPSHOT_HZ, INPUT_DT, INTERP_DELAY, type Ball, type Body, type MoveInput,
 } from '../shared/sim';
@@ -617,8 +617,17 @@ function stepBalls(dt: number) {
     }
     if (victim) {
       const hp: V3 = [x0 + (b.x - x0) * bestT, y0 + (b.y - y0) * bestT, z0 + (b.z - z0) * bestT];
-      eliminate(victim, b, hp, victimPose!);
-      balls.splice(i, 1);
+      const vp = victimPose!;
+      const bouncedBefore = b.bounces > 0;
+      const c = hitPlayer(b, hp[0], hp[1], hp[2], vp.x, vp.y, vp.z, vp.height, vp.yaw, vp.prone);
+      if (c === 'break') {
+        eliminate(victim, b, hp, vp, bouncedBefore);
+        balls.splice(i, 1);
+      } else {
+        // it skipped off them: they play on, and the ball carries on (unless it's spent)
+        broadcast({ t: 'bounce', victim: victim.id, shooter: b.owner, p: hp });
+        if (c === 'stop') balls.splice(i, 1);
+      }
     } else if (world) {
       // breaks, or bounces on (and can still eliminate someone)
       if (hitWorld(b, world) !== 'bounce') balls.splice(i, 1);
@@ -646,11 +655,11 @@ function respawn(p: Player) {
   send(p.ws, { t: 'respawn', spawn: sp });
 }
 
-function eliminate(victim: Player, ball: Ball, p: V3, pose: Pose) {
+function eliminate(victim: Player, ball: Ball, p: V3, pose: Pose, bounced: boolean) {
   victim.alive = false;
   // during warm-up you come back after a few seconds; during a point you're out until it ends
   victim.outUntil = match.phase === 'waiting' ? now() + RESPAWN_SECONDS : Infinity;
-  broadcast({ t: 'hit', victim: victim.id, shooter: ball.owner, team: ball.team as Team, p, tp: [pose.x, pose.y, pose.z, pose.height] });
+  broadcast({ t: 'hit', victim: victim.id, shooter: ball.owner, team: ball.team as Team, p, tp: [pose.x, pose.y, pose.z, pose.height], ...(bounced ? { bounced } : {}) });
   if (match.phase !== 'waiting') {
     victim.d++;
     const shooter = players.get(ball.owner);
