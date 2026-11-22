@@ -5,12 +5,14 @@
 
 import type { PadState } from './gamepad';
 
-export type Screen = 'main' | 'pause' | 'settings' | 'controls';
+export type Screen = 'main' | 'pause' | 'settings' | 'controls' | 'players';
 /** what the game does when a menu button is picked; viaPad = it was picked with a controller */
 export type MenuAction = 'online' | 'practice' | 'resume' | 'leave';
 
 const $ = (id: string) => document.getElementById(id)!;
-const SCREENS: readonly Screen[] = ['main', 'pause', 'settings', 'controls'];
+const SCREENS: readonly Screen[] = ['main', 'pause', 'settings', 'controls', 'players'];
+/** screens reached from main or pause, with a Back button */
+const SUB: readonly Screen[] = ['settings', 'controls', 'players'];
 
 export class Menu {
   /** the screen showing, or null while playing */
@@ -35,7 +37,7 @@ export class Menu {
         e.preventDefault();
         this.move(e.code === 'ArrowDown' ? 1 : -1);
       } else if (e.code === 'Escape' || e.code === 'Backspace') {
-        if (this.screen === 'settings' || this.screen === 'controls') this.show(this.parent);
+        if (this.screen && SUB.includes(this.screen)) this.show(this.parent);
       }
     });
     // show the focus ring for controller navigation; the mouse or a tap hides it again
@@ -48,7 +50,7 @@ export class Menu {
   }
 
   show(screen: Screen | null): void {
-    if (screen === 'settings' || screen === 'controls') {
+    if (screen && SUB.includes(screen)) {
       if (this.screen === 'main' || this.screen === 'pause') this.parent = this.screen;
     }
     this.screen = screen;
@@ -94,14 +96,14 @@ export class Menu {
       } else target?.focus();
     }
     if (p.bPressed) {
-      if (this.screen === 'settings' || this.screen === 'controls') this.show(this.parent);
+      if (this.screen && SUB.includes(this.screen)) this.show(this.parent);
       else if (this.screen === 'pause') this.onAction('resume', true);
     }
     if (p.startPressed && this.screen === 'pause') this.onAction('resume', true);
   }
 
   private act(name: string, viaPad: boolean): void {
-    if (name === 'settings' || name === 'controls') this.show(name);
+    if (name === 'settings' || name === 'controls' || name === 'players') this.show(name);
     else if (name === 'back') this.show(this.parent);
     else this.onAction(name as MenuAction, viaPad);
   }

@@ -186,6 +186,14 @@ export class Input {
     return this.isDown('Tab') || (this.active && this.pad.state.scoreboard);
   }
 
+  /** the on-screen Talk button (phones) is held */
+  touchTalk = false;
+
+  /** push-to-talk: V, d-pad up, or the Talk button */
+  get talkHeld(): boolean {
+    return this.active && (this.isDown('KeyV') || this.pad.state.talk || this.touchTalk);
+  }
+
   takeLook(): { dx: number; dy: number } {
     const out = { dx: this.dx, dy: this.dy };
     this.dx = 0;

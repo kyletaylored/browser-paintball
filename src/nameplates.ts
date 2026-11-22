@@ -10,6 +10,8 @@ export interface PlateTarget {
   id: number;
   name: string;
   team: Team;
+  /** talking on voice chat right now */
+  speaking?: boolean;
   /** world position of the top of the head */
   x: number;
   y: number;
@@ -41,6 +43,7 @@ export class Nameplates {
         this.plates.set(t.id, el);
       }
       if (el.textContent !== t.name) el.textContent = t.name; // textContent: names are never parsed as HTML
+      el.classList.toggle('speaking', !!t.speaking);
       el.style.color = hex(TEAM_COLORS[t.team]);
 
       const dist = Math.hypot(t.x - cam.x, t.y - cam.y, t.z - cam.z);

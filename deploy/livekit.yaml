@@ -1,0 +1,15 @@
+# LiveKit media server settings for team voice chat (docker-compose.yml). The API key and secret are
+# not in here: they come from the LIVEKIT_KEYS environment variable, which compose fills in from .env.
+port: 7880
+rtc:
+  tcp_port: 7881
+  # one UDP port for everyone's audio
+  udp_port: 7882
+  # find the public address with STUN, so browsers outside the host can reach it
+  use_external_ip: true
+room:
+  # a match has at most 12 players
+  max_participants: 16
+  empty_timeout: 300
+logging:
+  level: info

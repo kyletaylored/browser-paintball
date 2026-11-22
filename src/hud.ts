@@ -6,6 +6,7 @@ import type { Device } from './input';
 import { QUALITY_KEY, savedQuality, type Quality } from './render';
 import { TEAM_NAMES, type RosterEntry, type Team } from '../shared/protocol';
 import { MAP_LIST, MAPS } from '../shared/maps';
+import type { Voice, VoiceSettings } from './voice';
 
 const FEED_SECONDS = 5;
 const FEED_MAX = 5;
@@ -137,6 +138,7 @@ export class Hud {
   setPause(online: boolean): void {
     $('pause-note').textContent = online ? "You're still in the match: other players can see and hit you." : 'Practice is paused.';
     $('leave').textContent = online ? 'Leave match' : 'Main menu';
+    $('players-btn').hidden = !online;
   }
 
   /** graphics quality picker; it takes effect after a reload, so say so when it changes */
@@ -241,14 +243,117 @@ export class Hud {
     window.setTimeout(() => row.remove(), FEED_SECONDS * 1000);
   }
 
+  // ---- voice ------------------------------------------------------------------------------
+
+  /** voice settings, and the Talk button (held on phones) */
+  bindVoice(settings: VoiceSettings, onChange: () => void, onTalk: (held: boolean) => void): void {
+    const on = $('voiceon') as HTMLInputElement;
+    const vol = $('voicevol') as HTMLInputElement;
+    on.checked = settings.enabled;
+    vol.value = String(Math.round(settings.volume * 100));
+    on.addEventListener('change', () => {
+      settings.enabled = on.checked;
+      onChange();
+    });
+    vol.addEventListener('input', () => {
+      settings.volume = Number(vol.value) / 100;
+      onChange();
+    });
+    const btn = $('voice');
+    btn.addEventListener('pointerdown', (e) => {
+      e.preventDefault();
+      btn.setPointerCapture(e.pointerId);
+      onTalk(true);
+    });
+    for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture'] as const) btn.addEventListener(ev, () => onTalk(false));
+  }
+
+  /** the server has voice: show its settings */
+  setVoiceAvailable(on: boolean): void {
+    $('voice-settings').hidden = !on;
+  }
+
+  private voiceKey = '';
+  private playersKey = '';
+
+  /** the talk chip at the bottom: hidden unless voice is up and you're playing */
+  setVoice(v: Voice, playing: boolean, touch: boolean): void {
+    const btn = $('voice');
+    const show = playing && v.available && v.settings.enabled && v.state !== 'off';
+    const who = v.teamOnly ? 'team' : 'everyone';
+    let text: string;
+    if (v.state === 'idle') text = 'Voice: nobody else here yet';
+    else if (v.state === 'connecting') text = 'Voice: connecting…';
+    else if (v.state === 'failed') text = "Voice: can't connect";
+    else if (v.talking) text = `● Talking to ${who}`;
+    else text = touch ? `Hold to talk (${who})` : `Hold V to talk (${who})`;
+    const key = [show, text, v.talking, v.state].join('|');
+    if (this.voiceKey === key) return;
+    this.voiceKey = key;
+    btn.hidden = !show;
+    btn.textContent = text;
+    btn.classList.toggle('talking', v.talking);
+    btn.classList.toggle('failed', v.state === 'failed');
+  }
+
+  /** the pause menu's Players screen: both teams, with a mute button for each other human */
+  setPlayers(rows: RosterEntry[], myId: number, voice: Voice, onMute: (id: number) => void): void {
+    const key = JSON.stringify([rows, myId, [...voice.speaking], [...voice.muted], voice.available]);
+    if (this.playersKey === key) return;
+    this.playersKey = key;
+    const root = $('players');
+    const focused = (document.activeElement as HTMLElement | null)?.dataset.mute;
+    root.replaceChildren(
+      ...([0, 1] as const).map((team) => {
+        const col = document.createElement('section');
+        col.className = team === 0 ? 'r' : 'b';
+        const h = document.createElement('h3');
+        h.textContent = TEAM_NAMES[team];
+        col.append(h);
+        const mine = rows.filter((r) => r.team === team).sort((a, b) => b.k - a.k || a.id - b.id);
+        for (const r of mine) {
+          const row = document.createElement('div');
+          row.className = 'player-row';
+          const who = document.createElement('span');
+          who.className = voice.speaking.has(r.id) ? 'who speaking' : 'who';
+          who.textContent = r.id === myId ? `${r.name} (you)` : r.name;
+          const stat = document.createElement('span');
+          stat.className = 'stat';
+          stat.textContent = r.bot ? 'bot' : `${r.k} / ${r.d}`;
+          row.append(who, stat);
+          if (voice.available && !r.bot && r.id !== myId) {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.dataset.mute = String(r.id);
+            const muted = voice.muted.has(r.id);
+            b.setAttribute('aria-pressed', String(muted));
+            b.textContent = muted ? 'Muted' : 'Mute';
+            b.addEventListener('click', () => onMute(r.id));
+            row.append(b);
+          }
+          col.append(row);
+        }
+        if (!mine.length) {
+          const p = document.createElement('p');
+          p.className = 'note';
+          p.textContent = 'no players';
+          col.append(p);
+        }
+        return col;
+      }),
+    );
+    // keep the controller's place when the list redraws
+    if (focused) (root.querySelector(`[data-mute="${focused}"]`) as HTMLElement | null)?.focus();
+  }
+
   /** hold-Tab scoreboard; null hides it */
-  setScoreboard(rows: RosterEntry[] | null, myId: number, score: [number, number], mapName = ''): void {
+  setScoreboard(rows: RosterEntry[] | null, myId: number, score: [number, number], mapName = '', speaking: ReadonlySet<number> = new Set()): void {
     if (!rows) {
       this.board.hidden = true;
       this.boardKey = '';
       return;
     }
-    const key = JSON.stringify([rows, myId, score, mapName]);
+    const key = JSON.stringify([rows, myId, score, mapName, [...speaking]]);
     this.board.hidden = false;
     if (key === this.boardKey) return;
     this.boardKey = key;
@@ -274,6 +379,7 @@ export class Hud {
           const tr = table.insertRow();
           if (r.id === myId) tr.className = 'me';
           for (const v of [r.name, String(r.k), String(r.d), r.bot ? 'BOT' : String(r.ping)]) tr.insertCell().textContent = v;
+          if (speaking.has(r.id)) tr.cells[0].className = 'speaking';
         }
         if (!mine.length) {
           const td = table.insertRow().insertCell();

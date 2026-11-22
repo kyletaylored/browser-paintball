@@ -138,6 +138,28 @@
         position: absolute; left: 0; top: 0; padding: 2px 6px; border-radius: 6px; background: rgba(10, 8, 14, 0.55);
         font-size: 12px; font-weight: 800; white-space: nowrap; will-change: transform;
       }
+      .plate.speaking { box-shadow: 0 0 0 2px #5ee07a; }
+      .plate.speaking::before { content: '🔊 '; }
+      #voice {
+        left: 50%; translate: -50% 0; bottom: calc(16px + var(--sb)); pointer-events: auto; border: 0; color: var(--dim);
+        font: inherit; font-size: 13px; font-weight: 700; padding: 8px 12px; cursor: pointer; touch-action: none; user-select: none;
+      }
+      #voice.talking { color: #0c1a10; background: #5ee07a; }
+      #voice.failed { color: var(--accent); }
+      #board .speaking::before, .player-row .speaking::before { content: '🔊 '; }
+      #players { display: grid; grid-template-columns: 1fr 1fr; gap: 12px 24px; text-align: left; }
+      @media (max-width: 620px) { #players { grid-template-columns: 1fr; } }
+      #players h3 { margin: 4px 0; font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; }
+      #players .r h3 { color: var(--red); } #players .b h3 { color: var(--blue); }
+      .player-row { display: flex; align-items: center; gap: 8px; min-height: 36px; font-size: 15px; }
+      .player-row .who { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .player-row .stat { color: var(--dim); font-variant-numeric: tabular-nums; font-size: 13px; }
+      .player-row button {
+        font: inherit; font-size: 13px; font-weight: 700; padding: 5px 10px; border-radius: 8px; cursor: pointer;
+        color: var(--ink); background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.18);
+      }
+      .player-row button[aria-pressed='true'] { background: var(--accent); color: #1b1300; }
+      .pad-nav .player-row button:focus { outline: 2px solid var(--accent); }
       #feed { position: absolute; top: calc(16px + var(--st)); right: calc(16px + var(--sr)); display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
       #feed .row {
         padding: 5px 10px; border-radius: 8px; background: var(--panel); font-size: 13px; font-weight: 700;
@@ -237,6 +259,7 @@
       <div id="feed"></div>
       <div id="board" hidden></div>
       <button id="menubtn" class="chip" type="button" hidden aria-label="Menu">Menu</button>
+      <button id="voice" class="chip" type="button" hidden aria-label="Push to talk"></button>
     </div>
 
     <div id="rotate"><div>Turn your phone sideways<small>Splat Arena plays in landscape</small></div></div>
@@ -268,9 +291,16 @@
         <h2>Paused</h2>
         <p id="pause-note" class="sub"></p>
         <button class="mbtn primary" type="button" data-act="resume">Resume</button>
+        <button id="players-btn" class="mbtn" type="button" data-act="players">Players<small>scores, and muting voices</small></button>
         <button class="mbtn" type="button" data-act="settings">Settings</button>
         <button class="mbtn" type="button" data-act="controls">Controls</button>
         <button id="leave" class="mbtn" type="button" data-act="leave">Leave match</button>
+      </section>
+
+      <section id="m-players" class="screen panel wide" hidden>
+        <h2>Players</h2>
+        <div id="players"></div>
+        <button class="mbtn" type="button" data-act="back">Back</button>
       </section>
 
       <section id="m-settings" class="screen panel wide" hidden>
@@ -296,6 +326,12 @@
             <div class="row"><label for="padsens">Look speed</label><input id="padsens" type="range" min="0.4" max="2" step="0.05" value="1" /></div>
             <label class="row check"><input id="padinv" type="checkbox" /> Invert Y</label>
             <label class="row check"><input id="padvib" type="checkbox" checked /> Vibration</label>
+            <div id="voice-settings" hidden>
+              <h3>Voice chat</h3>
+              <label class="row check"><input id="voiceon" type="checkbox" checked /> Voice chat on</label>
+              <div class="row"><label for="voicevol">Voices</label><input id="voicevol" type="range" min="0" max="100" step="5" value="90" /></div>
+              <p class="note">Hold V (d-pad up, or the Talk button on a phone) to talk to your team. The microphone only opens while you hold it.</p>
+            </div>
           </div>
         </div>
         <button class="mbtn" type="button" data-act="back">Back</button>
@@ -310,7 +346,7 @@
               <li><b>Mouse</b> aim · <b>Click</b> fire (hold for 10 a second)</li>
               <li><b>WASD</b> move · <b>Shift</b> sprint</li>
               <li><b>Space</b> jump · <b>C</b> crouch (hold)</li>
-              <li><b>R</b> reload · <b>Tab</b> scoreboard</li>
+              <li><b>R</b> reload · <b>Tab</b> scoreboard · <b>V</b> talk (hold)</li>
               <li><b>Esc</b> pause</li>
             </ul>
           </div>
@@ -320,7 +356,7 @@
               <li><b>Left stick</b> move · <b>click it</b> to sprint</li>
               <li><b>Right stick</b> aim · <b>RT</b> fire</li>
               <li><b>A</b> jump · <b>B</b> crouch · <b>X</b> reload</li>
-              <li><b>LB</b> sprint · <b>Select</b> scoreboard</li>
+              <li><b>LB</b> sprint · <b>Select</b> scoreboard · <b>d-pad up</b> talk</li>
               <li><b>Start</b> pause · in menus <b>A</b> picks, <b>B</b> goes back</li>
             </ul>
           </div>

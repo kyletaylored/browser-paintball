@@ -25,6 +25,7 @@ import {
 import { BotBrain, NavGrid, SKILLS, botName, type CoverSpot, type Seen } from './bots';
 import { decodeClient, encodeAck, encodeBall, encodeSnap } from '../shared/codec';
 import { FastLink, type RtcOptions } from './rtc';
+import { voiceConfig, voiceToken } from './voice';
 import {
   DEFAULT_PORT, TEAM_NAMES, cleanName, INPUT_JUMP, INPUT_SPRINT, INPUT_CROUCH,
   type ClientMsg, type ServerMsg, type Team, type V3, type RoundPhase, type RoundState, type RosterEntry,
@@ -68,6 +69,8 @@ const HISTORY_SECONDS = 1;
 const MAP_SETTING = (process.env.MAP ?? 'rotate').trim().toLowerCase();
 const ROTATE = !MAPS[MAP_SETTING];
 setMap(ROTATE ? DEFAULT_MAP : MAP_SETTING);
+/** team voice chat through a LiveKit server (server/voice.ts); null = off */
+const VOICE = voiceConfig(process.env);
 /** WIRE_FORMAT=json sends snapshots, acks and balls as JSON instead of binary (for debugging / comparing) */
 const BINARY = process.env.WIRE_FORMAT !== 'json';
 /**
@@ -120,6 +123,8 @@ interface Player {
   d: number;
   /** smoothed round-trip time, ms */
   ping: number;
+  /** when we last handed out a voice token (rate limit) */
+  lastVoiceToken: number;
 }
 
 interface Pose {
@@ -177,7 +182,7 @@ const httpServer = createServer(
   makeHttpHandler({
     staticDir: STATIC_DIR,
     health: () => ({
-      players: humans().length, bots: players.size - humans().length, phase: match.phase, map: field.map.id,
+      players: humans().length, bots: players.size - humans().length, phase: match.phase, map: field.map.id, voice: VOICE !== null,
       uptime: Math.round((Date.now() - startedAt) / 1000),
     }),
   }),
@@ -205,10 +210,10 @@ wss.on('connection', (ws) => {
   const p: Player = {
     ws, fast: null, bot: null, body: newBody(sp.x, sp.y, sp.z), lastSeq: -1, budget: 0.1, history: [], id, team, slot, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw, pitch: 0,
     crouch: false, alive, outUntil: alive ? 0 : Infinity, lastFire: 0,
-    name: `Player ${id}`, wantName: `Player ${id}`, lastRename: -Infinity, k: 0, d: 0, ping: 0,
+    name: `Player ${id}`, wantName: `Player ${id}`, lastRename: -Infinity, k: 0, d: 0, ping: 0, lastVoiceToken: -Infinity,
   };
   players.set(id, p);
-  send(ws, { t: 'welcome', id, team, spawn: sp, round: roundState(), map: field.map.id });
+  send(ws, { t: 'welcome', id, team, spawn: sp, round: roundState(), map: field.map.id, voice: VOICE !== null });
   log(`+ player ${id} joined ${TEAM_NAMES[team]} (${humans().length} online)`);
   balanceBots();
   updateMatch();
@@ -259,6 +264,12 @@ function handle(p: Player, msg: ClientMsg) {
   } else if (msg.t === 'ice') {
     if (typeof msg.c !== 'string' || typeof msg.mid !== 'string' || msg.c.length > 512 || msg.mid.length > 32) return;
     p.fast?.candidate(msg.c, msg.mid);
+  } else if (msg.t === 'voice') {
+    // a token naming this player and their team (the browser can't pick its own); at most one every 5 s
+    const t = now();
+    if (!VOICE || t - p.lastVoiceToken < 5) return;
+    p.lastVoiceToken = t;
+    send(p.ws, { t: 'voice', url: VOICE.url, token: voiceToken(VOICE, p.id, p.name, p.team) });
   } else if (msg.t === 'fire') {
     if (!p.alive || !isV3(msg.o) || !isV3(msg.d)) return;
     if (match.phase !== 'live' && match.phase !== 'waiting') return; // no shooting during countdowns and pauses
@@ -398,7 +409,7 @@ function addBot(team: Team) {
   players.set(id, {
     ws: null, fast: null, bot: { brain }, body: newBody(sp.x, sp.y, sp.z), lastSeq: -1, budget: 0, history: [], id, team, slot, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw, pitch: 0,
     crouch: false, alive, outUntil: alive ? 0 : Infinity, lastFire: 0,
-    name, wantName: name, lastRename: 0, k: 0, d: 0, ping: 0,
+    name, wantName: name, lastRename: 0, k: 0, d: 0, ping: 0, lastVoiceToken: -Infinity,
   });
 }
 
@@ -685,6 +696,7 @@ log(`  allowed origins: ${ALLOWED_ORIGINS.length ? ALLOWED_ORIGINS.join(', ') : 
 log(`  wire format: ${BINARY ? 'binary' : 'json'}`);
 log(`  data channels: ${rtc ? `UDP ${rtc.port}${rtc.publicIp ? `, advertised as ${rtc.publicIp}` : ''}${rtc.bindAddress ? `, bound to ${rtc.bindAddress}` : ''}` : 'off (WebSocket only)'}`);
 log(`  map: ${ROTATE ? `${MAP_LIST.map((m) => m.name).join(' → ')}, a new one every match` : field.map.name}`);
+log(`  voice: ${VOICE ? `${VOICE.url}, room ${VOICE.room}` : 'off (LIVEKIT_URL / LIVEKIT_API_KEY / LIVEKIT_API_SECRET not set)'}`);
 log(`  lag compensation: ${LAG_COMPENSATION ? `on, up to ${MAX_REWIND * 1000} ms` : 'off'}`);
 log(`  bots: ${BOT_TEAM_SIZE ? `fill teams to ${BOT_TEAM_SIZE}, ${process.env.BOT_SKILL ?? 'normal'} skill` : 'off'}`);
 

@@ -45,6 +45,9 @@ Each half is the mirror image of the other, so neither team has an advantage.
 - **No server running?** Practice works without one, and if the server drops mid-match you practise until it's back.
 - **Slow machine?** Add `?low` to the URL to turn off shadows, bloom and anti-aliasing. Phones and tablets start
   that way; add `?high` to turn it back on.
+- **Voice chat?** If the server has a voice server set up (docs/DEPLOY.md), hold **V** (d-pad up on a controller, the
+  Talk button on a phone) to talk to your team. The microphone only opens while you hold it, and the browser asks
+  first. Settings has a volume slider and an off switch, and Players in the pause menu mutes anyone.
 - **Controller?** Connect one (Bluetooth or USB) and press any button: the main menu says when it's found. The d-pad
   or left stick moves through the menus, A picks and B goes back. On a phone, clip it on or pair it, open the game in
   the phone's browser, turn the phone sideways and pick Play online. "Add to home screen" opens it fullscreen like an app.
@@ -61,6 +64,7 @@ Each half is the mirror image of the other, so neither team has an advantage.
 | Space, C | jump (you can jump onto the low walls), crouch |
 | R | reload (200-ball hopper) |
 | Tab (hold) | scoreboard |
+| V (hold) | talk to your team (voice chat) |
 | Esc | pause (menu) |
 
 | Controller | |
@@ -72,6 +76,7 @@ Each half is the mirror image of the other, so neither team has an advantage.
 | LB (hold) | sprint |
 | Select (hold) | scoreboard |
 | Start | pause (menu); on a phone there's also a Menu button |
+| D-pad up (hold) | talk to your team (voice chat) |
 
 Look speed, invert Y, vibration, volume and graphics quality are under Settings and saved in your browser. `npm run test:input` checks
 the deadzones, response curve and buttons.
@@ -88,6 +93,7 @@ shared/       code BOTH sides run, so they agree
   netsim.ts     fake latency and packet loss for development and tests
 server/
   index.ts      authoritative game server: simulates paintballs, decides hits, runs the match, sends snapshots
+  voice.ts      voice chat tokens for the LiveKit media server (who's in the room, on which team)
   bots.ts       server-side bots: navigation grid + A*, cover spots, aim with reaction delay and error
   rtc.ts        WebRTC data channel to each browser, for snapshots, acks and input (UDP, never resent)
   smoke-test.ts headless end-to-end checks (starts its own servers)
@@ -113,7 +119,8 @@ src/          the browser game
   netstats.ts   development network overlay (?net, ?lag=, ?loss=)
   fastlink.ts   the browser's end of the data channel
   hud.ts        HTML overlay (no UI framework)
-  menu.ts       main, pause, settings and controls menus; controller navigation
+  menu.ts       main, pause, players, settings and controls menus; controller navigation
+  voice.ts      team voice chat: push-to-talk, team/everyone channels, speaking indicators, muting
 ```
 
 **Who decides what:**

@@ -104,6 +104,8 @@ export class PadState {
   sprint = false;
   crouch = false;
   scoreboard = false;
+  /** d-pad up held: push-to-talk */
+  talk = false;
   reloadPressed = false;
   startPressed = false;
   aPressed = false;
@@ -171,6 +173,7 @@ export class PadState {
     if (this.sprint && this.down(BTN.LB)) this.crouch = false;
     if (this.jump) this.crouch = false;
     this.scoreboard = this.down(BTN.SELECT);
+    this.talk = this.down(BTN.UP);
     this.reloadPressed = this.pressed(BTN.X);
     this.startPressed = this.pressed(BTN.START);
     this.aPressed = this.pressed(BTN.A);
@@ -213,7 +216,7 @@ export class PadState {
     this.index = -1;
     this.id = '';
     this.moveX = this.moveY = this.yawRate = this.pitchRate = 0;
-    this.fire = this.jump = this.sprint = this.crouch = this.scoreboard = false;
+    this.fire = this.jump = this.sprint = this.crouch = this.scoreboard = this.talk = false;
     this.reloadPressed = this.startPressed = this.aPressed = this.bPressed = false;
     this.nav = this.navDir = null;
     this.held = [];
