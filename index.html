@@ -117,6 +117,26 @@
       #watch .who.r { color: var(--red); } #watch .who.b { color: var(--blue); }
       #watch .how { font-size: 11px; letter-spacing: 0.06em; color: var(--dim); font-weight: 700; }
       body.watching #crosshair, body.watching #out, body.watching #ammo { display: none; }
+      /* between points: letterbox bars, a caption and the time to the next point, over the camera shots */
+      #cinema { position: absolute; inset: 0; pointer-events: none; }
+      #cinema[hidden] { display: none; }
+      #cinema::before, #cinema::after {
+        content: ''; position: absolute; left: 0; right: 0; height: 11vh; background: #050408; animation: bars 0.45s ease-out;
+      }
+      #cinema::before { top: 0; } #cinema::after { bottom: 0; }
+      @keyframes bars { from { height: 0; } }
+      #cinema .cap {
+        position: absolute; left: calc(5vw + var(--sl)); bottom: calc(11vh + 14px); z-index: 1; font-weight: 900; font-style: italic;
+        font-size: clamp(22px, 4.2vw, 46px); text-transform: uppercase; color: #fff; -webkit-text-stroke: 2px #0b0a10;
+        paint-order: stroke fill; filter: drop-shadow(0 3px 0 rgba(0, 0, 0, 0.6));
+      }
+      #cinema .cap.r { color: var(--red); } #cinema .cap.b { color: var(--blue); }
+      #cinema .next {
+        position: absolute; right: calc(5vw + var(--sr)); bottom: calc(3.5vh); z-index: 1; display: flex; align-items: center; gap: 10px;
+        font-weight: 900; letter-spacing: 0.16em; font-size: 13px; color: #f3efe4;
+      }
+      #cinema .next b { font-size: 26px; font-style: italic; letter-spacing: 0; color: #0b0a10; background: #ffd23f; padding: 2px 10px; }
+      body.cinema #crosshair, body.cinema #out, body.cinema #ammo, body.cinema #watch, body.cinema #banner, body.cinema .plate { display: none; }
 
       /* menus: the main menu sits on the left over the field; the others are centred panels */
       .menu {
@@ -328,6 +348,7 @@
       <div id="out" hidden></div>
       <div id="banner" hidden></div>
       <div id="feed"></div>
+      <div id="cinema" hidden><div class="cap"></div><div class="next"><span></span><b></b></div></div>
       <div id="watch" hidden><span class="k">Spectating</span><span class="who"></span><span class="how"></span></div>
       <div id="streak" aria-hidden="true"></div>
       <div id="board" hidden></div>

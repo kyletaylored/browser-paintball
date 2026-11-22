@@ -190,7 +190,7 @@ all with their defaults. For a local run you can copy it to `.env` (git ignores 
 | `MAP` | `rotate` | a field id from `shared/maps.ts` (`arena`, `tournament`, `beach`, `woods`) to play only that one (no vote); `rotate` lets players vote, and moves to the most-voted (or next) field after every match |
 | `POINTS_TO_WIN` | 5 | |
 | `ROUND_SECONDS` | 120 | time limit per point |
-| `COUNTDOWN_SECONDS` / `POINT_PAUSE_SECONDS` / `MATCH_OVER_SECONDS` | 3 / 3 / 6 | |
+| `COUNTDOWN_SECONDS` / `POINT_PAUSE_SECONDS` / `MATCH_OVER_SECONDS` | 3 / 8 / 6 | the break between points is long enough for out players to walk off and for the camera shots |
 | `BOT_TEAM_SIZE` | 3 | fill each team to this many with bots while anyone is connected; `0` = off |
 | `BOT_SKILL` | `normal` | `easy`, `normal`, `hard` |
 | `LAG_COMPENSATION` | on | `0` turns it off |

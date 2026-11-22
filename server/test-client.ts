@@ -232,7 +232,8 @@ export const rosterWhere = (f: (m: Roster) => boolean) => (m: ServerMsg): m is R
 export async function startServer(env: Record<string, string>): Promise<{ url: string; stop: () => void }> {
   const port = 20000 + Math.floor(Math.random() * 20000);
   const child: ChildProcess = spawn(process.execPath, ['--import', 'tsx', 'server/index.ts'], {
-    env: { ...process.env, PORT: String(port), ...env },
+    // short breaks between points, so the tests don't wait on the camera shots (a test can still set it)
+    env: { ...process.env, PORT: String(port), POINT_PAUSE_SECONDS: '3', ...env },
     stdio: ['ignore', 'pipe', 'pipe'],
   });
   let log = '';

@@ -33,7 +33,7 @@ export class Hud {
   private loading = $('loading');
   private loadingBar = this.loading.querySelector('.bar') as HTMLElement;
   private toastTimer = 0;
-  private last = { status: '', ammo: '', score: '', out: '', banner: '', controls: '', watch: '' };
+  private last = { status: '', ammo: '', score: '', out: '', banner: '', controls: '', watch: '', cinema: '' };
   private playLabel = 'Play online';
 
   /** model download progress (0..1), or null when done: the play button waits for it */
@@ -373,6 +373,22 @@ export class Hud {
     if (this.last.score === html) return;
     this.last.score = html;
     this.score.innerHTML = html;
+  }
+
+  /** between points: the letterbox, the shot's caption (team: colour it) and "NEXT POINT 0:07", or null */
+  setCinema(c: { caption: string; team: number; next: string; time: string } | null): void {
+    const key = c ? JSON.stringify(c) : '';
+    if (this.last.cinema === key) return;
+    this.last.cinema = key;
+    document.body.classList.toggle('cinema', c !== null);
+    const el = $('cinema');
+    el.hidden = c === null;
+    if (!c) return;
+    const cap = el.querySelector('.cap')!;
+    cap.className = `cap${c.team === 0 ? ' r' : c.team === 1 ? ' b' : ''}`;
+    cap.textContent = c.caption;
+    el.querySelector('.next span')!.textContent = c.next;
+    el.querySelector('.next b')!.textContent = c.time;
   }
 
   /** who you're watching while out (name, team, a line about them and how to switch), or null */
