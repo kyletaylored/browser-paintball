@@ -105,6 +105,18 @@
       #banner.r { color: var(--red); } #banner.b { color: var(--blue); }
       #banner.count { font-size: 96px; color: var(--accent); }
       #out small { display: block; font-size: 16px; font-weight: 600; color: var(--dim); letter-spacing: 0; }
+      /* watching a teammate while you're out: a card at the bottom, and no crosshair of your own */
+      #watch {
+        position: absolute; left: 50%; bottom: calc(22px + var(--sb)); translate: -50% 0; display: flex; flex-direction: column;
+        align-items: center; padding: 8px 22px 9px; background: #0b0a10; border: 3px solid #0b0a10; border-left: 8px solid #ffd23f;
+        transform: skewX(-8deg); filter: drop-shadow(0 3px 0 rgba(0, 0, 0, 0.55)); font-weight: 900; text-transform: uppercase;
+      }
+      #watch[hidden] { display: none; }
+      #watch .k { font-size: 11px; letter-spacing: 0.14em; color: #ffd23f; }
+      #watch .who { font-size: 26px; font-style: italic; line-height: 1.1; }
+      #watch .who.r { color: var(--red); } #watch .who.b { color: var(--blue); }
+      #watch .how { font-size: 11px; letter-spacing: 0.06em; color: var(--dim); font-weight: 700; }
+      body.watching #crosshair, body.watching #out, body.watching #ammo { display: none; }
 
       /* menus: the main menu sits on the left over the field; the others are centred panels */
       .menu {
@@ -316,6 +328,7 @@
       <div id="out" hidden></div>
       <div id="banner" hidden></div>
       <div id="feed"></div>
+      <div id="watch" hidden><span class="k">Spectating</span><span class="who"></span><span class="how"></span></div>
       <div id="streak" aria-hidden="true"></div>
       <div id="board" hidden></div>
       <button id="menubtn" class="chip" type="button" hidden aria-label="Menu">Menu</button>
