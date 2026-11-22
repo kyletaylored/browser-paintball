@@ -18,6 +18,8 @@ import { Hud } from './hud';
 import { SoundSystem, Footsteps } from './audio';
 import { Nameplates, type PlateTarget } from './nameplates';
 import { Prediction } from './prediction';
+import { Spectator } from './spectate';
+import { waitLine } from '../shared/walkoff';
 import { Net, sampleRemote, phaseSecondsLeft } from './net';
 import { NetStats } from './netstats';
 import { Voice, type VoiceSettings } from './voice';
@@ -214,6 +216,11 @@ hud.bindModePicker(savedMode, (m) => {
 });
 hud.bindModeVote((m) => net.send({ t: 'mode', mode: m }));
 let outUntil = 0;
+/** when you were last hit (performance.now ms), for when to start spectating */
+let outAt = 0;
+const spectator = new Spectator();
+/** out this long (ms) without reaching the side line, and you start watching a teammate anyway */
+const SPECTATE_AFTER_MS = 2500;
 let practiceHits = 0;
 
 // ---- practice dummies (only while there's no server) --------------------------------------
@@ -255,7 +262,7 @@ function updateDummies(now: number) {
 
 // ---- networking ---------------------------------------------------------------------------
 
-const remoteAvatars = new Map<number, { avatar: Avatar; target: Target; feet: Footsteps; lx: number; ly: number; lz: number }>();
+const remoteAvatars = new Map<number, { avatar: Avatar; target: Target; feet: Footsteps; lx: number; ly: number; lz: number; pitch: number }>();
 
 function clearRemotes() {
   for (const ra of remoteAvatars.values()) {
@@ -320,6 +327,7 @@ const net = new Net(serverUrl, {
       hud.toast(`${net.nameOf(m.shooter)} got you`);
       player.alive = false;
       outUntil = performance.now() + RESPAWN_SECONDS * 1000;
+      outAt = performance.now();
       hud.damageFlash();
       input.pad.rumble('out');
       sound.play('out', { volume: VOL.out, rate: 1 });
@@ -398,7 +406,7 @@ function updateRemotes(now: number) {
     if (!ra) {
       const avatar = makeAvatar(models, TEAM_COLORS[r.team]);
       scene.add(avatar.root);
-      ra = { avatar, target: { id, team: r.team, x: 0, y: 0, z: 0, height: STAND_HEIGHT, yaw: 0, prone: false, alive: true }, feet: new Footsteps(), lx: NaN, ly: 0, lz: NaN };
+      ra = { avatar, target: { id, team: r.team, x: 0, y: 0, z: 0, height: STAND_HEIGHT, yaw: 0, prone: false, alive: true }, feet: new Footsteps(), lx: NaN, ly: 0, lz: NaN, pitch: 0 };
       remoteAvatars.set(id, ra);
     }
     const s = sampleRemote(r, at);
@@ -406,6 +414,7 @@ function updateRemotes(now: number) {
     const h = stanceHeight(s.c, s.pr);
     ra.avatar.set(s.x, s.y, s.z, s.yaw, s.pitch, h, s.alive, s.pr);
     Object.assign(ra.target, { x: s.x, y: s.y, z: s.z, height: h, yaw: s.yaw, prone: s.pr, alive: s.alive });
+    ra.pitch = s.pitch;
     // footsteps you can hear from around a bunker (crouch-walking and crawling are silent)
     const moved = Number.isNaN(ra.lx) ? 0 : Math.hypot(s.x - ra.lx, s.z - ra.lz);
     const grounded = Math.abs(s.y - ra.ly) < 0.01;
@@ -761,6 +770,35 @@ function startReload() {
   sound.play('reload', { volume: VOL.reload, rate: 1 });
 }
 
+/**
+ * Out during a point: once you've walked off (or after SPECTATE_AFTER_MS), watch someone still in
+ * over their shoulder; Space or A moves on to the next. Your own figure keeps walking off meanwhile.
+ */
+function spectate(online: boolean, phase: RoundPhase | null, now: number, dt: number) {
+  const offLine = Math.abs(player.body.z) >= waitLine() - 0.05;
+  if (!online || phase !== 'live' || player.alive || (!offLine && now - outAt < SPECTATE_AFTER_MS)) {
+    spectator.stop();
+    hud.setWatching(null);
+    return;
+  }
+  const watchable = [...remoteAvatars.values()].map((ra) => ({ ...ra.target, pitch: ra.pitch }));
+  const w = spectator.choose(watchable, net.team, input.active && input.nextPressed, now);
+  if (!w) {
+    hud.setWatching(null);
+    return;
+  }
+  spectator.view(camera, w, dt);
+  player.hideGun();
+  const r = net.roster.get(w.id);
+  const others = watchable.filter((p) => p.alive && p.id !== w.id).length;
+  const how = input.device === 'pad' ? 'A' : TOUCH ? 'Jump' : 'Space';
+  hud.setWatching({
+    name: net.nameOf(w.id),
+    team: w.team === 0 ? 0 : 1,
+    line: `${r ? `${r.k} elims · ` : ''}${w.alive ? '' : 'out · '}${others ? `${how} to switch` : 'last one in'}`,
+  });
+}
+
 // ---- loop ---------------------------------------------------------------------------------
 
 const targets: Target[] = [];
@@ -896,7 +934,11 @@ function frame(now: number) {
   if (menu.screen === 'main') {
     flyAround(dt);
     player.showGun(false);
-  } else player.updateCamera(dt);
+    hud.setWatching(null);
+  } else {
+    player.updateCamera(dt);
+    spectate(online, phase, now, dt);
+  }
   updatePlates(online);
   netStats.update(now);
   fx.update(dt);

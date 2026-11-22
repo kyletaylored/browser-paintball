@@ -33,7 +33,7 @@ export class Hud {
   private loading = $('loading');
   private loadingBar = this.loading.querySelector('.bar') as HTMLElement;
   private toastTimer = 0;
-  private last = { status: '', ammo: '', score: '', out: '', banner: '', controls: '' };
+  private last = { status: '', ammo: '', score: '', out: '', banner: '', controls: '', watch: '' };
   private playLabel = 'Play online';
 
   /** model download progress (0..1), or null when done: the play button waits for it */
@@ -373,6 +373,21 @@ export class Hud {
     if (this.last.score === html) return;
     this.last.score = html;
     this.score.innerHTML = html;
+  }
+
+  /** who you're watching while out (name, team, a line about them and how to switch), or null */
+  setWatching(w: { name: string; team: Team; line: string } | null): void {
+    const key = w ? JSON.stringify(w) : '';
+    if (this.last.watch === key) return;
+    this.last.watch = key;
+    document.body.classList.toggle('watching', w !== null);
+    const el = $('watch');
+    el.hidden = w === null;
+    if (!w) return;
+    const who = el.querySelector('.who')!;
+    who.className = `who ${w.team === 0 ? 'r' : 'b'}`;
+    who.textContent = w.name;
+    el.querySelector('.how')!.textContent = w.line;
   }
 
   /** "YOU'RE OUT" with a line under it, or null to hide */

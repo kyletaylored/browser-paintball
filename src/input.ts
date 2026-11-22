@@ -253,6 +253,11 @@ export class Input {
     return p === 0 ? null : p;
   }
 
+  /** spectating: watch the next player (Space, or A) */
+  get nextPressed(): boolean {
+    return this.wasPressed('Space') || (this.active && this.pad.state.aPressed);
+  }
+
   get reloadPressed(): boolean {
     return this.wasPressed('KeyR') || (this.active && this.pad.state.reloadPressed);
   }

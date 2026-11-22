@@ -27,6 +27,50 @@ const AIM_RANGE = 150;
 
 const SENSITIVITY = 0.0022;
 
+/** how far back an over-the-shoulder camera is right now (it pulls in at once, and eases back out) */
+export interface ShoulderCam {
+  back: number;
+}
+
+/**
+ * Put `camera` over the shoulder of someone whose eyes are at (ex, ey, ez), looking along yaw and
+ * pitch: `side` across (-1 left .. 1 right), then back along the view, stopping 0.25 m short of
+ * whatever's behind (two rays, the second a little lower, so it doesn't skim over a bunker's top and
+ * hide them behind it). Returns how far back it ended up.
+ */
+export function placeOverShoulder(
+  camera: THREE.Camera, ex: number, ey: number, ez: number, yaw: number, pitch: number, side: number, state: ShoulderCam, dt: number,
+): number {
+  const cam = camera.position;
+  const cp = Math.cos(pitch);
+  const fx = -Math.sin(yaw) * cp;
+  const fy = Math.sin(pitch);
+  const fz = -Math.cos(yaw) * cp;
+  const rx = Math.cos(yaw);
+  const rz = -Math.sin(yaw);
+  // the shoulder (or just above the head, if they're right up against something on that side)
+  let shx = ex + rx * THIRD_RIGHT * side;
+  const shy = ey + THIRD_UP;
+  let shz = ez + rz * THIRD_RIGHT * side;
+  if (traceWorld(ex, ey, ez, shx, shy, shz)) {
+    shx = ex;
+    shz = ez;
+  }
+  let t = 1;
+  for (const drop of [0, 0.35]) {
+    const y = shy - drop;
+    const hit = traceWorld(shx, y, shz, shx - fx * THIRD_BACK, y - fy * THIRD_BACK, shz - fz * THIRD_BACK);
+    if (hit) t = Math.min(t, hit.t);
+  }
+  const want = t < 1 ? Math.max(0, THIRD_BACK * t - 0.25) : THIRD_BACK;
+  state.back = want < state.back ? want : state.back + (want - state.back) * Math.min(1, dt * 4);
+  cam.set(shx - fx * state.back, shy - fy * state.back, shz - fz * state.back);
+  if (cam.y < 0.15) cam.y = 0.15;
+  camera.rotation.order = 'YXZ';
+  camera.rotation.set(pitch, yaw, 0);
+  return state.back;
+}
+
 export class LocalPlayer {
   readonly body: Body = { x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, height: STAND_HEIGHT, onGround: true };
   yaw = 0;
@@ -71,7 +115,7 @@ export class LocalPlayer {
   /** auto: how long you've strafed one way (seconds; negative is left) */
   private strafeFor = 0;
   /** how far back the third-person camera is now (it pulls in when a bunker is behind you, and eases out) */
-  private camBack = THIRD_BACK;
+  private camBack: ShoulderCam = { back: THIRD_BACK };
   private v1 = new THREE.Vector3();
   private v2 = new THREE.Vector3();
 
@@ -238,6 +282,11 @@ export class LocalPlayer {
     return this.side < 0 ? 'left' : 'right';
   }
 
+  /** hide just the marker in front of the camera (spectating someone else) */
+  hideGun(): void {
+    this.gun.visible = false;
+  }
+
   /** the marker in front of the camera (hidden while the main menu shows the field), and your figure */
   showGun(v: boolean): void {
     this.gun.visible = v && this.alive && this.view === 'first';
@@ -320,7 +369,6 @@ export class LocalPlayer {
     const cam = this.camera.position;
     this.gun.visible = false;
     this.recoil = Math.max(0, this.recoil - dt * 14);
-    const fwd = this.aimDir(this.v1);
     const rx = Math.cos(this.yaw);
     const rz = -Math.sin(this.yaw);
     const shy = cam.y + THIRD_UP;
@@ -335,27 +383,7 @@ export class LocalPlayer {
       if (blocked(this.side) && !blocked(-this.side)) this.side = -this.side;
     }
     this.sideNow += (this.side - this.sideNow) * Math.min(1, dt * SWAP_RATE);
-    // the shoulder (or just above your head, if you're right up against something on that side)
-    let shx = cam.x + rx * THIRD_RIGHT * this.sideNow;
-    let shz = cam.z + rz * THIRD_RIGHT * this.sideNow;
-    if (traceWorld(cam.x, cam.y, cam.z, shx, shy, shz)) {
-      shx = cam.x;
-      shz = cam.z;
-    }
-    // then back from it along the view, stopping 0.25 m short of whatever's behind you. Two rays, the
-    // second a little lower, so the camera doesn't skim over a bunker's top and hide you behind it
-    let t = 1;
-    for (const drop of [0, 0.35]) {
-      const y = shy - drop;
-      const hit = traceWorld(shx, y, shz, shx - fwd.x * THIRD_BACK, y - fwd.y * THIRD_BACK, shz - fwd.z * THIRD_BACK);
-      if (hit) t = Math.min(t, hit.t);
-    }
-    const want = t < 1 ? Math.max(0, THIRD_BACK * t - 0.25) : THIRD_BACK;
-    // pull in at once (never see through a bunker), ease back out
-    this.camBack = want < this.camBack ? want : this.camBack + (want - this.camBack) * Math.min(1, dt * 4);
-    cam.set(shx - fwd.x * this.camBack, shy - fwd.y * this.camBack, shz - fwd.z * this.camBack);
-    if (cam.y < 0.15) cam.y = 0.15;
-    this.camera.rotation.set(this.pitch, this.yaw, 0);
+    const back = placeOverShoulder(this.camera, cam.x, cam.y, cam.z, this.yaw, this.pitch, this.sideNow, this.camBack, dt);
 
     if (!this.bodyFig && this.makeFig && this.figScene) {
       this.bodyFig = this.makeFig(this.team);
@@ -364,7 +392,7 @@ export class LocalPlayer {
     const f = this.bodyFig;
     if (f) {
       // pulled right in against a bunker, the camera would be inside your own head: don't draw it then
-      f.root.visible = this.camBack > 0.6;
+      f.root.visible = back > 0.6;
       const b = this.body;
       // out, the figure faces the way it walks off (you can still look round)
       const yaw = this.alive ? this.yaw : this.move.yaw;

@@ -21,7 +21,7 @@ Open http://localhost:5173. `npm run dev` starts both the client (Vite, port 517
 Open a second browser window to play against yourself: the server puts the next player on the other team.
 
 **How a match works:** once both teams have a player, everyone is put back in their start box for a 3-second countdown.
-Then the point is live: if you're hit you're out until the point ends, and you walk off the field with your marker up (the game walks you to the nearer side line, round the bunkers). Eliminate the whole other team to win the point.
+Then the point is live: if you're hit you're out until the point ends, and you walk off the field with your marker up (the game walks you to the nearer side line, round the bunkers). Then you watch a teammate who's still in, over their shoulder: Space (A on a controller) switches to the next one. Eliminate the whole other team to win the point.
 First team to 5 points wins the match. While a team is empty it's warm-up: you respawn a few seconds after being hit.
 The game opens on the main menu, flying slowly around the field. Pick a name (it shows over your head, in the kill
 feed and on the scoreboard), then **Play online** to join the match. The menu shows how many are playing. **Practice**
