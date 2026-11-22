@@ -111,7 +111,8 @@ export class Menu {
   private focusables(): HTMLElement[] {
     if (!this.screen) return [];
     const els = $(`m-${this.screen}`).querySelectorAll<HTMLElement>('button, input, select');
-    return [...els].filter((e) => !(e as HTMLButtonElement).disabled && e.offsetParent !== null);
+    // tabindex -1: mouse and touch only (the field chooser's arrows; the select beside them takes left / right)
+    return [...els].filter((e) => !(e as HTMLButtonElement).disabled && e.offsetParent !== null && e.tabIndex !== -1);
   }
 
   private move(dir: 1 | -1): void {

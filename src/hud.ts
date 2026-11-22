@@ -5,7 +5,7 @@ import type { PadSettings } from './gamepad';
 import type { Device } from './input';
 import { QUALITY_KEY, savedQuality, type Quality } from './render';
 import { TEAM_NAMES, type RosterEntry, type Team } from '../shared/protocol';
-import { MAP_LIST, MAPS } from '../shared/maps';
+import { MAP_LIST, MAPS, unanimousVote, voteWinner } from '../shared/maps';
 import type { Voice, VoiceSettings } from './voice';
 
 const FEED_SECONDS = 5;
@@ -89,35 +89,92 @@ export class Hud {
 
   /** how many are on the field (main menu); null = couldn't reach the server */
   /** the main menu's field picker (practice uses it; online, the server picks) */
+  /**
+   * The main menu's field chooser. It shows the field behind the menu, practice plays on it, and
+   * online it's your vote, but only once you've changed it: untouched, it follows the server's field.
+   */
   bindMapPicker(onPick: (id: string) => void): void {
     const sel = $('mapsel') as HTMLSelectElement;
-    sel.replaceChildren(...MAP_LIST.map((m) => new Option(m.name, m.id)));
+    sel.replaceChildren(...MAP_LIST.map((m) => new Option(`${m.name} · ${m.length} × ${m.width} m`, m.id)));
     sel.addEventListener('change', () => {
+      this.mapTouched = true;
       this.showBlurb();
       onPick(sel.value);
     });
+    // the arrows beside a picker step through it (wrapping round)
+    for (const b of document.querySelectorAll<HTMLButtonElement>('.fp-arrow')) {
+      b.addEventListener('click', () => {
+        const s = $(b.dataset.for!) as HTMLSelectElement;
+        s.selectedIndex = (s.selectedIndex + Number(b.dataset.dir) + s.options.length) % s.options.length;
+        s.dispatchEvent(new Event('change', { bubbles: true }));
+      });
+    }
     this.showBlurb();
   }
+
+  /** the player chose a field on the main menu (so Play online votes for it) */
+  mapTouched = false;
 
   /** the field picked on the main menu */
   pickedMap(): string {
     return ($('mapsel') as HTMLSelectElement).value;
   }
 
-  /** show which field is on (the server changed it, or we joined one) */
+  /** the field that's on (the server changed it, or we joined one); the chooser follows it until you pick one */
   setMap(id: string): void {
     const sel = $('mapsel') as HTMLSelectElement;
-    if (MAPS[id] && sel.value !== id) {
+    if (!this.mapTouched && MAPS[id] && sel.value !== id) {
       sel.value = id;
       this.showBlurb();
     }
+  }
+
+  /** the pause menu's vote: "No preference" or a field */
+  bindVote(onVote: (id: string | null) => void): void {
+    const sel = $('votesel') as HTMLSelectElement;
+    sel.replaceChildren(new Option('No preference', ''), ...MAP_LIST.map((m) => new Option(m.name, m.id)));
+    sel.addEventListener('change', () => onVote(sel.value || null));
+  }
+
+  private voteKey = '';
+
+  /**
+   * Show the vote in the pause menu (online, when the server lets players choose), and say what the
+   * votes will do. Returns the line for the scoreboard ("Arena · next: Woods").
+   */
+  setVote(show: boolean, rows: RosterEntry[], myId: number, current: string): string {
+    const name = MAPS[current]?.name ?? '';
+    $('vote-box').hidden = !show;
+    if (!show) return name;
+    const humans = rows.filter((r) => !r.bot);
+    const votes = humans.map((r) => r.vote ?? null);
+    const mine = humans.find((r) => r.id === myId)?.vote ?? '';
+    const now = unanimousVote(votes, current);
+    const next = voteWinner(votes, current);
+    const key = JSON.stringify([votes, mine, current]);
+    if (key !== this.voteKey) {
+      this.voteKey = key;
+      const sel = $('votesel') as HTMLSelectElement;
+      if (document.activeElement !== sel) sel.value = mine;
+      const count = new Map<string, number>();
+      for (const v of votes) if (v) count.set(v, (count.get(v) ?? 0) + 1);
+      const tally = [...count].sort((a, b) => b[1] - a[1]).map(([id, n]) => `${MAPS[id]?.name} ${n}`).join(', ');
+      $('vote-info').textContent = now
+        ? `Everyone wants ${MAPS[now].name}: switching after this point.`
+        : `${tally ? `Votes: ${tally}. ` : ''}After this match: ${MAPS[next]?.name}.${humans.length > 1 ? ' If everyone votes the same field, it switches after the point.' : ''}`;
+    }
+    return now ? `${name} · switching to ${MAPS[now].name}` : `${name} · next: ${MAPS[next]?.name}`;
   }
 
   private showBlurb(): void {
     $('map-blurb').textContent = MAPS[this.pickedMap()]?.blurb ?? '';
   }
 
-  setFieldInfo(info: { players: number; bots: number; map: string | null } | null | 'checking'): void {
+  /**
+   * The line under Play online: how busy the server is and on which field, and what pressing Play
+   * does about the field you picked (votes for it, or nothing if the server always plays one field).
+   */
+  setFieldInfo(info: { players: number; bots: number; map: string | null; vote: boolean } | null | 'checking'): void {
     const el = $('field-info');
     if (info === 'checking') {
       el.className = 'info';
@@ -131,6 +188,14 @@ export class Hud {
     } else {
       el.className = 'info';
       el.textContent = `Nobody on the field yet${info.map ? ` (${info.map} is up next)` : ''}: bots fill the teams until others join`;
+    }
+    const picked = MAPS[this.pickedMap()]?.name;
+    if (!picked || !info || info === 'checking' || !info.map) return;
+    if (!info.vote) el.textContent += `. This server always plays ${info.map}.`;
+    else if (this.mapTouched && picked !== info.map) {
+      el.textContent += info.players > 0
+        ? `. Play online votes for ${picked}.`
+        : `. Play online switches it to ${picked}.`;
     }
   }
 

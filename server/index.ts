@@ -16,7 +16,7 @@ import { isIP } from 'node:net';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { makeHttpHandler } from './http';
 import { field, setMap, spawnPoint } from '../shared/field';
-import { MAPS, MAP_LIST, DEFAULT_MAP, nextMap } from '../shared/maps';
+import { MAPS, MAP_LIST, DEFAULT_MAP, voteWinner, unanimousVote } from '../shared/maps';
 import {
   advanceBall, traceWorld, segmentHitsCapsule, isOutOfBounds, stepMovement,
   BALL_SPEED, BALL_LIFETIME, FIRE_INTERVAL, STAND_HEIGHT, CROUCH_HEIGHT, EYE_FROM_TOP,
@@ -125,6 +125,8 @@ interface Player {
   ping: number;
   /** when we last handed out a voice token (rate limit) */
   lastVoiceToken: number;
+  /** the field this human wants to play (null: no preference); bots don't vote */
+  vote: string | null;
 }
 
 interface Pose {
@@ -182,7 +184,7 @@ const httpServer = createServer(
   makeHttpHandler({
     staticDir: STATIC_DIR,
     health: () => ({
-      players: humans().length, bots: players.size - humans().length, phase: match.phase, map: field.map.id, voice: VOICE !== null,
+      players: humans().length, bots: players.size - humans().length, phase: match.phase, map: field.map.id, vote: ROTATE, voice: VOICE !== null,
       uptime: Math.round((Date.now() - startedAt) / 1000),
     }),
   }),
@@ -210,10 +212,10 @@ wss.on('connection', (ws) => {
   const p: Player = {
     ws, fast: null, bot: null, body: newBody(sp.x, sp.y, sp.z), lastSeq: -1, budget: 0.1, history: [], id, team, slot, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw, pitch: 0,
     crouch: false, alive, outUntil: alive ? 0 : Infinity, lastFire: 0,
-    name: `Player ${id}`, wantName: `Player ${id}`, lastRename: -Infinity, k: 0, d: 0, ping: 0, lastVoiceToken: -Infinity,
+    name: `Player ${id}`, wantName: `Player ${id}`, lastRename: -Infinity, k: 0, d: 0, ping: 0, lastVoiceToken: -Infinity, vote: null,
   };
   players.set(id, p);
-  send(ws, { t: 'welcome', id, team, spawn: sp, round: roundState(), map: field.map.id, voice: VOICE !== null });
+  send(ws, { t: 'welcome', id, team, spawn: sp, round: roundState(), map: field.map.id, voice: VOICE !== null, vote: ROTATE });
   log(`+ player ${id} joined ${TEAM_NAMES[team]} (${humans().length} online)`);
   balanceBots();
   updateMatch();
@@ -237,6 +239,7 @@ wss.on('connection', (ws) => {
     log(`- player ${id} left (${humans().length} online)`);
     balanceBots();
     updateMatch();
+    checkVotes(); // the one holding out may have left
     sendRoster();
   });
 });
@@ -264,6 +267,14 @@ function handle(p: Player, msg: ClientMsg) {
   } else if (msg.t === 'ice') {
     if (typeof msg.c !== 'string' || typeof msg.mid !== 'string' || msg.c.length > 512 || msg.mid.length > 32) return;
     p.fast?.candidate(msg.c, msg.mid);
+  } else if (msg.t === 'vote') {
+    if (!ROTATE || !p.ws) return; // the server pins one field
+    const v = typeof msg.map === 'string' && MAPS[msg.map] ? msg.map : null;
+    if (v === p.vote) return;
+    p.vote = v;
+    log(`  player ${p.id} votes for ${v ? MAPS[v].name : 'no field in particular'}`);
+    sendRoster();
+    checkVotes();
   } else if (msg.t === 'voice') {
     // a token naming this player and their team (the browser can't pick its own); at most one every 5 s
     const t = now();
@@ -381,6 +392,23 @@ function poseAt(p: Player, t: number): Pose {
 let nav = new NavGrid();
 const claimed: [Map<CoverSpot, number>, Map<CoverSpot, number>] = [new Map(), new Map()];
 
+/**
+ * Every human wants the same other field: switch now, unless a human is mid-point (then it happens
+ * in the break after it). Only between matches does the vote count otherwise (see updateMatch).
+ */
+function checkVotes() {
+  if (!ROTATE) return;
+  const want = unanimousVote(humans().map((h) => h.vote), field.map.id);
+  if (!want) return;
+  if (match.phase === 'live' && humans().some((h) => h.alive)) return;
+  if (match.phase === 'matchover') return; // the vote decides the next field in a moment anyway
+  log(`  every player voted for ${MAPS[want].name}: switching now`);
+  changeMap(want);
+  resetMatch();
+  if (match.phase === 'waiting') for (const p of players.values()) respawn(p);
+  else startCountdown();
+}
+
 /** move everyone to another field: new bot navigation, bots replaced, browsers told to rebuild */
 function changeMap(id: string) {
   if (!setMap(id)) return;
@@ -409,7 +437,7 @@ function addBot(team: Team) {
   players.set(id, {
     ws: null, fast: null, bot: { brain }, body: newBody(sp.x, sp.y, sp.z), lastSeq: -1, budget: 0, history: [], id, team, slot, x: sp.x, y: sp.y, z: sp.z, yaw: sp.yaw, pitch: 0,
     crouch: false, alive, outUntil: alive ? 0 : Infinity, lastFire: 0,
-    name, wantName: name, lastRename: 0, k: 0, d: 0, ping: 0, lastVoiceToken: -Infinity,
+    name, wantName: name, lastRename: 0, k: 0, d: 0, ping: 0, lastVoiceToken: -Infinity, vote: null,
   });
 }
 
@@ -548,6 +576,7 @@ function eliminate(victim: Player, ball: Ball, p: V3, pose: Pose) {
 function roster(): RosterEntry[] {
   return [...players.values()].map((p) => ({
     id: p.id, name: p.name, team: p.team, k: p.k, d: p.d, ping: Math.round(p.ping), bot: p.bot !== null,
+    ...(p.vote ? { vote: p.vote } : {}),
   }));
 }
 function sendRoster() {
@@ -618,6 +647,7 @@ function updateMatch() {
         if (winner !== -1) score[winner]++;
         const over = winner !== -1 && score[winner] >= POINTS_TO_WIN;
         setPhase(over ? 'matchover' : 'point', over ? MATCH_OVER_SECONDS : POINT_PAUSE_SECONDS, winner);
+        if (!over) checkVotes(); // a switch everyone asked for waits for the break between points
       }
       break;
     }
@@ -629,7 +659,7 @@ function updateMatch() {
       break;
     case 'matchover':
       if (t >= match.endsAt) {
-        if (ROTATE) changeMap(nextMap(field.map.id));
+        if (ROTATE) changeMap(voteWinner(humans().map((h) => h.vote), field.map.id));
         resetMatch();
         startCountdown();
       }

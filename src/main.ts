@@ -91,7 +91,10 @@ hud.bindQuality();
 // the field picker on the main menu: shows the field behind the menu, and practice plays on it
 hud.bindMapPicker((id) => {
   if (mode !== 'online') switchMap(id);
+  refreshField(); // says what Play online will do with it
 });
+// online, the pause menu's vote (the server tells everyone through the roster)
+hud.bindVote((id) => net.send({ t: 'vote', map: id }));
 input.onPadLost = () => hud.toast('Controller disconnected · paused');
 
 // voice chat settings live in this browser too (Settings: on/off, voices volume)
@@ -209,6 +212,8 @@ const serverUrl: string =
 const net = new Net(serverUrl, {
   welcome(_id, team, spawn, map) {
     switchMap(map);
+    // the field picked on the main menu is your vote (untouched, you go with whatever's on)
+    if (net.votes && hud.mapTouched) net.send({ t: 'vote', map: hud.pickedMap() });
     voice.available = net.voice;
     hud.setVoiceAvailable(net.voice);
     prediction.reset();
@@ -405,9 +410,11 @@ async function refreshField() {
   fieldBusy = true;
   try {
     const r = await fetch(`${httpBase}/healthz`, { cache: 'no-store' });
-    const j = (await r.json()) as { players?: unknown; bots?: unknown; map?: unknown; voice?: unknown };
+    const j = (await r.json()) as { players?: unknown; bots?: unknown; map?: unknown; vote?: unknown; voice?: unknown };
     const onMap = MAP_LIST.find((m) => m.id === j.map);
-    hud.setFieldInfo({ players: Number(j.players) || 0, bots: Number(j.bots) || 0, map: onMap?.name ?? null });
+    if (onMap) hud.setMap(onMap.id); // the chooser shows what's on, until you pick something else
+    if (onMap && mode === 'menu' && !hud.mapTouched) switchMap(onMap.id);
+    hud.setFieldInfo({ players: Number(j.players) || 0, bots: Number(j.bots) || 0, map: onMap?.name ?? null, vote: j.vote !== false });
     if (net.status !== 'online') hud.setVoiceAvailable(j.voice === true); // so Settings shows the voice options
   } catch {
     hud.setFieldInfo(null);
@@ -689,7 +696,8 @@ function frame(now: number) {
     hud.setScore(`Practice hits: ${practiceHits}`);
   }
   hud.setAmmo(hopper, HOPPER, reloadLeft > 0);
-  hud.setScoreboard(online && input.active && input.scoreboardHeld ? [...net.roster.values()] : null, net.id, net.score, field.map.name, voice.speaking);
+  const fieldLine = hud.setVote(online && net.votes, online ? [...net.roster.values()] : [], net.id, field.map.id);
+  hud.setScoreboard(online && input.active && input.scoreboardHeld ? [...net.roster.values()] : null, net.id, net.score, fieldLine, voice.speaking);
 
   // voice chat: join or leave the voice room as people come and go, push-to-talk, the talk chip
   voice.update(online, net.id, net.team, [...net.roster.values()].map((r) => ({ id: r.id, team: r.team, bot: r.bot })), phase, now);

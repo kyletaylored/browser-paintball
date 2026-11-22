@@ -61,6 +61,8 @@ export class Net {
   score: [number, number] = [0, 0];
   /** the server has team voice chat */
   voice = false;
+  /** players choose the field by voting (false when the server pins one) */
+  votes = false;
   /** latest match state from the server, and when it arrived (performance.now ms) */
   round: RoundState | null = null;
   roundAt = 0;
@@ -158,6 +160,7 @@ export class Net {
     this.lastAckSeq = -1;
     this.id = -1;
     this.voice = false;
+    this.votes = false;
     this.round = null;
     this.score = [0, 0];
     this.remotes.clear();
@@ -248,6 +251,7 @@ export class Net {
         this.id = m.id;
         this.team = m.team;
         this.voice = m.voice === true;
+        this.votes = m.vote === true;
         this.round = m.round;
         this.roundAt = performance.now();
         Object.assign(this.timing, { last: 0, longest: 0, over100: 0, count: 0, since: this.roundAt });

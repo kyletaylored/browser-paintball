@@ -66,6 +66,8 @@ export interface RosterEntry {
   ping: number;
   /** played by the server */
   bot: boolean;
+  /** the field this player voted for (humans; only when the server lets players choose) */
+  vote?: string;
 }
 
 /**
@@ -87,6 +89,8 @@ export type ClientMsg =
   | { t: 'input'; i: InputFrame[] }
   | { t: 'fire'; o: V3; d: V3 }
   | { t: 'pong'; s: number }
+  /** vote for a field (an id from shared/maps.ts), or null for no preference */
+  | { t: 'vote'; map: string | null }
   /**
    * Data channel signalling (server/rtc.ts). Without sdp: "please open a data channel" (the server
    * replies with an offer if it has them on); with sdp: our answer to the server's offer.
@@ -99,8 +103,8 @@ export type ClientMsg =
 
 /** server → browser */
 export type ServerMsg =
-  /** map: the field being played (an id from shared/maps.ts); voice: this server has team voice chat (ask for a token with { t: 'voice' }) */
-  | { t: 'welcome'; id: number; team: Team; spawn: Spawn; round: RoundState; map: string; voice: boolean }
+  /** map: the field being played (an id from shared/maps.ts); vote: players choose the field (false when the server pins one); voice: this server has team voice chat (ask for a token with { t: 'voice' }) */
+  | { t: 'welcome'; id: number; team: Team; spawn: Spawn; round: RoundState; map: string; voice: boolean; vote: boolean }
   /** the field changed (between matches); a respawn on the new field follows */
   | { t: 'map'; id: string }
   /** seq counts up by one per snapshot (to skip late ones); score is points won this match */

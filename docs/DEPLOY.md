@@ -186,7 +186,7 @@ all with their defaults. For a local run you can copy it to `.env` (git ignores 
 | `HOST` | all interfaces | interface to listen on |
 | `STATIC_DIR` | unset (`/app/public` in the image) | also serve the built website from this folder |
 | `ALLOWED_ORIGINS` | any | comma-separated origins allowed to connect, e.g. `https://play.example.com` |
-| `MAP` | `rotate` | a field id from `shared/maps.ts` (`arena`, `tournament`, `beach`, `woods`) to play only that one; `rotate` moves to the next field after every match |
+| `MAP` | `rotate` | a field id from `shared/maps.ts` (`arena`, `tournament`, `beach`, `woods`) to play only that one (no vote); `rotate` lets players vote, and moves to the most-voted (or next) field after every match |
 | `POINTS_TO_WIN` | 5 | |
 | `ROUND_SECONDS` | 120 | time limit per point |
 | `COUNTDOWN_SECONDS` / `POINT_PAUSE_SECONDS` / `MATCH_OVER_SECONDS` | 3 / 3 / 6 | |

@@ -179,8 +179,23 @@
       #board h2 { margin: 0 0 8px; font-size: 16px; }
       #board .map { grid-column: 1 / -1; margin: 0; color: var(--dim); font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em; }
       #board .map:empty { display: none; }
-      .field-pick { margin: 4px 0 0; }
-      .field-pick > span { width: 64px; color: var(--dim); }
+      /* the field chooser: arrows for mouse and touch, the select itself for keyboard and controller (left / right) */
+      .field-pick { display: flex; flex-direction: column; gap: 6px; margin: 2px 0 4px; text-align: left; }
+      .fp-label { color: var(--dim); font-size: 13px; font-weight: 600; }
+      .fp-row { display: flex; align-items: stretch; gap: 6px; }
+      .fp-row select {
+        flex: 1; min-width: 0; font: inherit; font-size: 18px; font-weight: 800; text-align: center; text-align-last: center;
+        padding: 10px 12px; border-radius: 12px; color: var(--ink); cursor: pointer; appearance: none;
+        background: rgba(0, 0, 0, 0.35); border: 1px solid rgba(255, 255, 255, 0.18);
+      }
+      .fp-row select:focus-visible, .pad-nav .fp-row select:focus { outline: 2px solid var(--accent); outline-offset: 1px; }
+      .fp-arrow {
+        width: 46px; border: 0; border-radius: 12px; font: inherit; font-size: 28px; font-weight: 800; line-height: 1;
+        color: var(--ink); background: rgba(255, 255, 255, 0.09); cursor: pointer;
+      }
+      .fp-arrow:hover { background: rgba(255, 255, 255, 0.18); }
+      .field-pick .info { margin: 0; }
+      #vote-info { text-align: left; }
       #board .r h2 { color: var(--red); } #board .b h2 { color: var(--blue); }
       #board table { width: 100%; border-collapse: collapse; font-size: 14px; font-variant-numeric: tabular-nums; }
       #board th { text-align: right; color: var(--dim); font-size: 12px; font-weight: 600; padding: 4px 6px; }
@@ -276,11 +291,18 @@
           <p id="padline" class="padline"></p>
         </div>
         <div class="col">
+          <div class="field-pick">
+            <span class="fp-label">Field</span>
+            <div class="fp-row">
+              <button type="button" class="fp-arrow" data-for="mapsel" data-dir="-1" tabindex="-1" aria-label="Previous field">&#8249;</button>
+              <select id="mapsel" aria-label="Field"></select>
+              <button type="button" class="fp-arrow" data-for="mapsel" data-dir="1" tabindex="-1" aria-label="Next field">&#8250;</button>
+            </div>
+            <p id="map-blurb" class="info"></p>
+          </div>
           <div id="loading"><div class="bar"></div></div>
           <button id="play" class="mbtn primary" type="button" data-act="online" disabled>Loading…</button>
           <p id="field-info" class="info">&nbsp;</p>
-          <label class="row field-pick"><span>Field</span><select id="mapsel"></select></label>
-          <p id="map-blurb" class="info"></p>
           <button class="mbtn" type="button" data-act="practice">Practice<small>on your own, against targets, on this field</small></button>
           <button class="mbtn" type="button" data-act="settings">Settings</button>
           <button class="mbtn" type="button" data-act="controls">Controls</button>
@@ -291,6 +313,17 @@
         <h2>Paused</h2>
         <p id="pause-note" class="sub"></p>
         <button class="mbtn primary" type="button" data-act="resume">Resume</button>
+        <div id="vote-box" hidden>
+          <div class="field-pick">
+            <span class="fp-label">Your vote for the field</span>
+            <div class="fp-row">
+              <button type="button" class="fp-arrow" data-for="votesel" data-dir="-1" tabindex="-1" aria-label="Previous field">&#8249;</button>
+              <select id="votesel" aria-label="Your vote for the field"></select>
+              <button type="button" class="fp-arrow" data-for="votesel" data-dir="1" tabindex="-1" aria-label="Next field">&#8250;</button>
+            </div>
+            <p id="vote-info" class="info"></p>
+          </div>
+        </div>
         <button id="players-btn" class="mbtn" type="button" data-act="players">Players<small>scores, and muting voices</small></button>
         <button class="mbtn" type="button" data-act="settings">Settings</button>
         <button class="mbtn" type="button" data-act="controls">Controls</button>

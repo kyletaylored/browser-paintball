@@ -8,12 +8,14 @@
 // With --bots it also plays one point per field on a real server, with bots on both teams, and
 // checks they leave the start box and the point is won by eliminations (slow: about a minute). The
 // default field's server isn't pinned to it, so it also checks the next field comes up after the match.
+//
+// Choosing the field: the vote rules, and a real server switching fields when players vote.
 
-import { MAP_LIST, DEFAULT_MAP, nextMap } from '../shared/maps';
+import { MAP_LIST, DEFAULT_MAP, nextMap, unanimousVote, voteWinner } from '../shared/maps';
 import { field, setMap, spawnPoint, footprintDistance, topOf, type Bunker } from '../shared/field';
 import { traceWorld, stepMovement, STAND_HEIGHT, PLAYER_RADIUS, type Body, type MoveInput } from '../shared/sim';
 import { NavGrid } from './bots';
-import { join, startServer, waitFor, snapWhere, rosterWhere, type Hit } from './test-client';
+import { join, send, startServer, waitFor, snapWhere, rosterWhere, type Hit } from './test-client';
 import type { ServerMsg } from '../shared/protocol';
 
 let failed = 0;
@@ -160,6 +162,69 @@ async function botsPlay(id: string, name: string) {
     s.stop();
   }
 }
+
+// ---- choosing the field ----------------------------------------------------------------------
+
+type MapMsg = Extract<ServerMsg, { t: 'map' }>;
+type Welcome = Extract<ServerMsg, { t: 'welcome' }>;
+const isMap = (m: ServerMsg): m is MapMsg => m.t === 'map';
+
+function voteRules() {
+  console.log('-- vote rules');
+  check('nobody votes: the next field in the rotation', voteWinner([null, null], 'arena') === nextMap('arena'));
+  check('most votes wins', voteWinner(['woods', 'beach', 'woods'], 'arena') === 'woods');
+  check('a tie goes to the one that comes first after the current field', voteWinner(['woods', 'tournament'], 'beach') === 'woods');
+  check('a tie with the current field moves on', voteWinner(['arena', 'beach'], 'arena') === 'beach');
+  check('everyone wants the same other field: switch now', unanimousVote(['woods', 'woods'], 'arena') === 'woods');
+  check('not if one player wants something else, or has no preference',
+    unanimousVote(['woods', 'beach'], 'arena') === null && unanimousVote(['woods', null], 'arena') === null);
+  check('not if they all want the field that is on', unanimousVote(['arena'], 'arena') === null);
+}
+
+async function voting() {
+  console.log('-- voting on a real server');
+  // short points, so a switch that waits for the break comes quickly
+  const s = await startServer({ BOT_TEAM_SIZE: '2', ROUND_SECONDS: '6', RTC_UDP_PORT: '0' });
+  try {
+    const a = await join(s.url);
+    check('the welcome says players choose the field', a.inbox.find((m): m is Welcome => m.t === 'welcome')?.vote === true);
+    let from = a.inbox.length;
+    send(a.ws, { t: 'vote', map: 'woods' });
+    const toWoods = await waitFor(a.inbox, isMap, 4000, from);
+    const respawn = toWoods && (await waitFor(a.inbox, (m): m is Extract<ServerMsg, { t: 'respawn' }> => m.t === 'respawn', 3000, a.inbox.indexOf(toWoods)));
+    check('alone with bots, voting for Woods switches to it straight away', toWoods?.id === 'woods' && !!respawn);
+
+    const b = await join(s.url);
+    check('a player who joins gets the field that is on', b.inbox.find((m): m is Welcome => m.t === 'welcome')?.map === 'woods');
+    from = a.inbox.length;
+    send(b.ws, { t: 'vote', map: 'beach' });
+    const votes = await waitFor(a.inbox, rosterWhere((m) => m.players.filter((p) => p.vote).length === 2), 2000, from);
+    check('everyone sees both votes', votes !== null && votes.players.find((p) => p.id === b.id)?.vote === 'beach');
+    check('a split vote changes nothing yet', (await waitFor(a.inbox, isMap, 1500, from)) === null);
+    send(a.ws, { t: 'vote', map: 'beach' });
+    const toBeach = await waitFor(a.inbox, isMap, 15000, from);
+    check('once both want Beach it switches, at the latest after the point', toBeach?.id === 'beach');
+    a.ws.close();
+    b.ws.close();
+  } finally {
+    s.stop();
+  }
+
+  const pinned = await startServer({ BOT_TEAM_SIZE: '2', MAP: 'tournament', RTC_UDP_PORT: '0' });
+  try {
+    const c = await join(pinned.url);
+    check('a server pinned to one field says there is no vote', c.inbox.find((m): m is Welcome => m.t === 'welcome')?.vote === false);
+    const from = c.inbox.length;
+    send(c.ws, { t: 'vote', map: 'woods' });
+    check('and ignores votes', (await waitFor(c.inbox, isMap, 1500, from)) === null);
+    c.ws.close();
+  } finally {
+    pinned.stop();
+  }
+}
+
+voteRules();
+await voting();
 
 if (process.argv.includes('--bots')) {
   console.log('-- bots, one point per field (in parallel)');
