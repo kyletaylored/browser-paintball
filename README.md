@@ -117,6 +117,7 @@ server/
   voice.ts      voice chat tokens for the LiveKit media server (who's in the room, on which team)
   bots.ts       server-side bots: navigation grid + A*, cover spots, aim with reaction delay and error
   rtc.ts        WebRTC data channel to each browser, for snapshots, acks and input (UDP, never resent)
+  telemetry.ts  game metrics for Datadog; dd-init.mjs starts tracing (both off unless set up: docs/DATADOG.md)
   smoke-test.ts headless end-to-end checks (starts its own servers)
   map-test.ts   checks every field's layout, collision and bot navigation
   test-client.ts fake players for the tests: join, walk with real input frames, see others like a browser

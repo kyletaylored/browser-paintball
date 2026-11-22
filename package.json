@@ -29,10 +29,12 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "dd-trace": "6.24.0",
     "node-datachannel": "0.33.6",
     "ws": "8.23.0"
   },
   "devDependencies": {
+    "@datadog/browser-rum": "7.17.0",
     "@gltf-transform/core": "4.5.1",
     "@gltf-transform/functions": "4.5.1",
     "@types/node": "26.6.6",

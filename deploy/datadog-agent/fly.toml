@@ -1,0 +1,37 @@
+# A Datadog Agent on Fly.io for the game server's traces and metrics (docs/DATADOG.md). It runs as its
+# own small app in the same Fly organisation, reachable only over Fly's private network, and the game
+# sends to it at splat-arena-dd-agent.internal. Nothing about it is public.
+#
+#   fly apps create splat-arena-dd-agent
+#   fly secrets set DD_API_KEY=<your Datadog API key> -a splat-arena-dd-agent
+#   fly deploy -c deploy/datadog-agent/fly.toml
+#
+# Then on the game: fly secrets set DD_TRACE_ENABLED=true DD_AGENT_HOST=splat-arena-dd-agent.internal -a splat-arena
+
+app = "splat-arena-dd-agent"
+primary_region = "dfw"
+
+[build]
+  image = "public.ecr.aws/datadog/agent:7"
+
+[env]
+  # DD_SITE: your Datadog site (datadoghq.com, datadoghq.eu, us5.datadoghq.com, …)
+  DD_SITE = "datadoghq.com"
+  DD_HOSTNAME = "splat-arena-dd-agent"
+  # traces and DogStatsD from the game, over the private network (Fly's private network is IPv6)
+  DD_APM_ENABLED = "true"
+  DD_APM_NON_LOCAL_TRAFFIC = "true"
+  DD_DOGSTATSD_NON_LOCAL_TRAFFIC = "true"
+  DD_BIND_HOST = "::"
+  # no host to look at here (it's a Fly machine): just pass the game's data on
+  DD_PROCESS_AGENT_ENABLED = "false"
+  DD_LOGS_ENABLED = "false"
+  DD_ENABLE_PAYLOADS_EVENTS = "false"
+  DD_ENABLE_METADATA_COLLECTION = "false"
+  DD_INVENTORIES_ENABLED = "false"
+
+# no [http_service]: it's never reachable from the internet. Keep it running: the game's machine
+# starts and stops with players, and its traces need somewhere to go when it does.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

@@ -21,12 +21,14 @@ ENV NODE_ENV=production \
     STATIC_DIR=/app/public
 WORKDIR /app
 COPY package.json package-lock.json ./
-# the server bundle only needs ws and node-datachannel at runtime (three etc. are already baked into the
+# the server bundle only needs ws, node-datachannel and dd-trace at runtime (three etc. are already baked into the
 # website build). node-datachannel's native library comes prebuilt for this platform as an npm package,
 # so there's nothing to compile and install scripts can stay off.
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
 COPY --from=build /app/dist-server ./dist-server
 COPY --from=build /app/dist ./public
+# Datadog APM: loads dd-trace first when DD_TRACE_ENABLED=true, does nothing otherwise (docs/DATADOG.md)
+COPY server/dd-init.mjs ./dd-init.mjs
 USER node
 EXPOSE 8080
 # data channels, when RTC_UDP_PORT=8788 is set (see docs/DEPLOY.md)
@@ -34,4 +36,4 @@ EXPOSE 8788/udp
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s \
   CMD wget -qO- "http://127.0.0.1:${PORT}/healthz" > /dev/null || exit 1
 # exec form, so SIGTERM reaches node directly and the server shuts down cleanly
-CMD ["node", "dist-server/index.js"]
+CMD ["node", "--import", "./dd-init.mjs", "dist-server/index.js"]

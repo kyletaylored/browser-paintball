@@ -34,7 +34,7 @@ const SECURITY_HEADERS = {
   'Referrer-Policy': 'no-referrer',
 };
 
-export function makeHttpHandler(opts: { staticDir: string | null; health: () => Record<string, unknown> }) {
+export function makeHttpHandler(opts: { staticDir: string | null; health: () => Record<string, unknown>; clientConfig?: () => Record<string, unknown> }) {
   const root = opts.staticDir ? resolve(opts.staticDir) : null;
 
   return (req: IncomingMessage, res: ServerResponse) => {
@@ -43,6 +43,12 @@ export function makeHttpHandler(opts: { staticDir: string | null; health: () => 
       // public numbers (players, bots, phase) the main menu shows; any page may read them
       res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*', ...SECURITY_HEADERS });
       res.end(JSON.stringify({ ok: true, ...opts.health() }));
+      return;
+    }
+    if (url.pathname === '/client-config.json') {
+      // settings the browser reads at start (Datadog RUM's public client token and app id); no secrets
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'Access-Control-Allow-Origin': '*', ...SECURITY_HEADERS });
+      res.end(JSON.stringify(opts.clientConfig?.() ?? {}));
       return;
     }
     if (req.method !== 'GET' && req.method !== 'HEAD') {

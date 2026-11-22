@@ -25,6 +25,7 @@ import {
 import { BotBrain, NavGrid, SKILLS, botName, type CoverSpot, type Seen } from './bots';
 import { decodeClient, encodeAck, encodeBall, encodeSnap } from '../shared/codec';
 import { walkOffInput } from '../shared/walkoff';
+import { count, flush, tickTime, telemetryOn } from './telemetry';
 import { MODE_RULES, DEFAULT_FIRE_MODE, isFireMode, modeVoteWinner, type FireMode } from '../shared/fire';
 import { FastLink, type RtcOptions } from './rtc';
 import { voiceConfig, voiceToken } from './voice';
@@ -77,6 +78,21 @@ setMap(ROTATE ? DEFAULT_MAP : MAP_SETTING);
 const MODE_SETTING = (process.env.FIRE_MODE ?? 'vote').trim().toLowerCase();
 const MODE_VOTE = !isFireMode(MODE_SETTING);
 let fireMode: FireMode = isFireMode(MODE_SETTING) ? MODE_SETTING : DEFAULT_FIRE_MODE;
+/**
+ * Datadog RUM for the browser (docs/DATADOG.md): its application id and client token are public by
+ * design (they go into every page), so the server just hands them to the page. null = off
+ */
+const RUM = process.env.DD_RUM_APPLICATION_ID && process.env.DD_RUM_CLIENT_TOKEN
+  ? {
+      applicationId: process.env.DD_RUM_APPLICATION_ID,
+      clientToken: process.env.DD_RUM_CLIENT_TOKEN,
+      site: process.env.DD_SITE ?? 'datadoghq.com',
+      service: process.env.DD_RUM_SERVICE ?? 'splat-arena-web',
+      env: process.env.DD_ENV ?? 'production',
+      version: process.env.DD_VERSION ?? process.env.FLY_IMAGE_REF?.split(':').pop() ?? 'dev',
+      sessionSampleRate: Math.max(0, Math.min(100, Number(process.env.DD_RUM_SESSION_SAMPLE_RATE ?? 100))),
+    }
+  : null;
 /** team voice chat through a LiveKit server (server/voice.ts); null = off */
 const VOICE = voiceConfig(process.env);
 /** WIRE_FORMAT=json sends snapshots, acks and balls as JSON instead of binary (for debugging / comparing) */
@@ -199,6 +215,7 @@ const startedAt = Date.now();
 const httpServer = createServer(
   makeHttpHandler({
     staticDir: STATIC_DIR,
+    clientConfig: () => ({ rum: RUM }),
     health: () => ({
       players: humans().length, bots: players.size - humans().length, phase: match.phase, map: field.map.id, vote: ROTATE, mode: fireMode, modeVote: MODE_VOTE, voice: VOICE !== null,
       uptime: Math.round((Date.now() - startedAt) / 1000),
@@ -233,6 +250,7 @@ wss.on('connection', (ws) => {
   players.set(id, p);
   send(ws, { t: 'welcome', id, team, spawn: sp, round: roundState(), map: field.map.id, voice: VOICE !== null, vote: ROTATE, mode: fireMode, modeVote: MODE_VOTE });
   log(`+ player ${id} joined ${TEAM_NAMES[team]} (${humans().length} online)`);
+  count('joins');
   balanceBots();
   updateMatch();
   sendRoster();
@@ -392,6 +410,7 @@ function spawnBall(p: Player, o: V3, dir: V3) {
     });
   }
   // Everyone else draws the ball; a human shooter already drew it the moment they clicked.
+  count(p.bot ? 'shots.bot' : 'shots.human');
   const ball: ServerMsg = { t: 'ball', owner: p.id, team: p.team, o, v };
   broadcast(BINARY ? encodeBall(ball) : ball, p.bot ? -1 : p.id);
 }
@@ -628,6 +647,7 @@ function stepBalls(dt: number) {
       } else {
         // it skipped off them: they play on, and the ball carries on (unless it's spent)
         broadcast({ t: 'bounce', victim: victim.id, shooter: b.owner, p: hp });
+        count('bounces.player');
         if (c === 'stop') balls.splice(i, 1);
       }
     } else if (world) {
@@ -659,6 +679,7 @@ function respawn(p: Player) {
 
 function eliminate(victim: Player, ball: Ball, p: V3, pose: Pose, bounced: boolean) {
   victim.alive = false;
+  count('eliminations');
   // during warm-up you come back after a few seconds; during a point you're out until it ends
   victim.outUntil = match.phase === 'waiting' ? now() + RESPAWN_SECONDS : Infinity;
   broadcast({ t: 'hit', victim: victim.id, shooter: ball.owner, team: ball.team as Team, p, tp: [pose.x, pose.y, pose.z, pose.height], ...(bounced ? { bounced } : {}) });
@@ -810,7 +831,22 @@ setInterval(() => {
   const t = now();
   tick(Math.min(0.1, t - last));
   last = t;
+  tickTime((now() - t) * 1000);
 }, 1000 / SERVER_TICK_HZ);
+// game metrics for Datadog, every 10 s (only when tracing is on: server/telemetry.ts)
+if (telemetryOn()) {
+  setInterval(() => {
+    const hs = humans();
+    flush(
+      {
+        players: hs.length, bots: players.size - hs.length, balls: balls.length,
+        'ping.avg_ms': hs.length ? hs.reduce((a, p) => a + p.ping, 0) / hs.length : 0,
+        'ping.max_ms': hs.reduce((a, p) => Math.max(a, p.ping), 0),
+      },
+      { map: field.map.id, fire_mode: fireMode, phase: match.phase },
+    );
+  }, 10000);
+}
 setInterval(snapshot, 1000 / SNAPSHOT_HZ);
 // latency probes + a roster refresh so pings on the scoreboard stay current
 setInterval(() => {
@@ -827,6 +863,7 @@ log(`  data channels: ${rtc ? `UDP ${rtc.port}${rtc.publicIp ? `, advertised as 
 log(`  map: ${ROTATE ? `${MAP_LIST.map((m) => m.name).join(' → ')}, a new one every match` : field.map.name}`);
 log(`  voice: ${VOICE ? `${VOICE.url}, room ${VOICE.room}` : 'off (LIVEKIT_URL / LIVEKIT_API_KEY / LIVEKIT_API_SECRET not set)'}`);
 log(`  lag compensation: ${LAG_COMPENSATION ? `on, up to ${MAX_REWIND * 1000} ms` : 'off'}`);
+log(`  datadog: ${telemetryOn() ? `tracing and metrics on (${process.env.DD_SERVICE ?? 'splat-arena'})` : 'off (DD_TRACE_ENABLED not set)'}${RUM ? ', RUM on for the page' : ''}`);
 log(`  bots: ${BOT_TEAM_SIZE ? `fill teams to ${BOT_TEAM_SIZE}, ${process.env.BOT_SKILL ?? 'normal'} skill` : 'off'}`);
 
 // Graceful shutdown (deploys and restarts send SIGTERM): stop taking players, tell everyone we're

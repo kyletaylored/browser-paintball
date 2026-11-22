@@ -160,6 +160,11 @@ LIVEKIT_URL=ws://localhost:7880 LIVEKIT_API_KEY=devkey LIVEKIT_API_SECRET=secret
 Open the game in two browser windows on the same team (with bots off, `BOT_TEAM_SIZE=0`, the second joins the other
 team; join a third to get a teammate), hold V in one and listen in the other.
 
+## Monitoring (optional)
+
+The page and the server can report to Datadog: RUM for the page, and APM traces (including WebSocket messages) and
+game metrics for the server. It's all off until configured. See [DATADOG.md](DATADOG.md).
+
 ## Option B: website on a static host, server elsewhere
 
 1. Build the website with the server's public address baked in:

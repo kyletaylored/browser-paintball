@@ -20,6 +20,7 @@ import { Nameplates, type PlateTarget } from './nameplates';
 import { Prediction } from './prediction';
 import { Spectator } from './spectate';
 import { Director } from './director';
+import { startRum, rumContext, rumEvent, PerfReport } from './rum';
 import { waitLine } from '../shared/walkoff';
 import { Net, sampleRemote, phaseSecondsLeft } from './net';
 import { NetStats } from './netstats';
@@ -303,6 +304,8 @@ const net = new Net(serverUrl, {
     hopper = hopperSize();
     setDummiesVisible(false);
     hud.toast(`Joined the ${TEAM_NAMES[team]} team`);
+    rumContext({ online: true, map, fire_mode: net.mode });
+    rumEvent('match.join', { team: TEAM_NAMES[team], map });
   },
   ball(m) {
     remoteAvatars.get(m.owner)?.avatar.fire();
@@ -335,12 +338,14 @@ const net = new Net(serverUrl, {
       hud.damageFlash();
       input.pad.rumble('out');
       sound.play('out', { volume: VOL.out, rate: 1 });
+      rumEvent('player.out', { bounced: m.bounced === true });
     }
     if (m.shooter === net.id) {
       hud.hitMarker();
       input.pad.rumble('hit');
       sound.play('confirm', { volume: VOL.confirm, rate: 1 });
       hud.toast(`You eliminated ${net.nameOf(m.victim)}`);
+      rumEvent('player.elimination', { streak: myStreak, bounced: m.bounced === true });
     }
   },
   bounce(m) {
@@ -504,6 +509,7 @@ function setFireMode(m: FireMode, announce: boolean) {
   hopper = hopperSize();
   reloadLeft = 0;
   if (announce) hud.toast(`Marker: ${MODE_RULES[m].name} · ${MODE_RULES[m].blurb}`);
+  rumContext({ fire_mode: m });
 }
 
 input.onChange = () => {
@@ -519,6 +525,15 @@ input.onChange = () => {
 
 // the main menu says how busy the field is (the server's public health check)
 const httpBase = serverUrl.replace(/^ws/, 'http');
+// Datadog RUM, if the server has it set up (src/rum.ts); the game doesn't wait for it
+void startRum(httpBase);
+const perf = new PerfReport(() => ({
+  online: net.status === 'online',
+  ping_ms: net.roster.get(net.id)?.ping ?? 0,
+  correction_m: Math.round(prediction.lastError * 1000) / 1000,
+  players: net.remotes.size + (net.status === 'online' ? 1 : 0),
+  view: player.view,
+}));
 let fieldBusy = false;
 async function refreshField() {
   if (menu.screen !== 'main' || fieldBusy) return;
@@ -836,6 +851,7 @@ let wasFireHeld = false;
 
 function frame(now: number) {
   requestAnimationFrame(frame);
+  perf.frame(now - last, now);
   const dt = Math.min(0.1, (now - last) / 1000);
   last = now;
   const online = net.status === 'online';
