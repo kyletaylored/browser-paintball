@@ -13,7 +13,9 @@ export interface RemotePlayer {
 }
 
 export interface NetEvents {
-  welcome(id: number, team: Team, spawn: Spawn): void;
+  welcome(id: number, team: Team, spawn: Spawn, map: string): void;
+  /** the server moved to another field */
+  map(id: string): void;
   ball(m: Extract<ServerMsg, { t: 'ball' }>): void;
   hit(m: Extract<ServerMsg, { t: 'hit' }>): void;
   respawn(spawn: Spawn): void;
@@ -245,7 +247,7 @@ export class Net {
         Object.assign(this.timing, { last: 0, longest: 0, over100: 0, count: 0, since: this.roundAt });
         this.sendName();
         this.openFast();
-        this.ev.welcome(m.id, m.team, m.spawn);
+        this.ev.welcome(m.id, m.team, m.spawn, m.map);
         break;
       case 'roster':
         this.roster.clear();
@@ -306,6 +308,10 @@ export class Net {
         break;
       case 'leave':
         this.remotes.delete(m.id);
+        break;
+      case 'map':
+        this.remotes.clear(); // everyone's about to respawn on the new field
+        this.ev.map(m.id);
         break;
     }
   }

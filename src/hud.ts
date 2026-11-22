@@ -5,6 +5,7 @@ import type { PadSettings } from './gamepad';
 import type { Device } from './input';
 import { QUALITY_KEY, savedQuality, type Quality } from './render';
 import { TEAM_NAMES, type RosterEntry, type Team } from '../shared/protocol';
+import { MAP_LIST, MAPS } from '../shared/maps';
 
 const FEED_SECONDS = 5;
 const FEED_MAX = 5;
@@ -86,7 +87,36 @@ export class Hud {
   }
 
   /** how many are on the field (main menu); null = couldn't reach the server */
-  setFieldInfo(info: { players: number; bots: number } | null | 'checking'): void {
+  /** the main menu's field picker (practice uses it; online, the server picks) */
+  bindMapPicker(onPick: (id: string) => void): void {
+    const sel = $('mapsel') as HTMLSelectElement;
+    sel.replaceChildren(...MAP_LIST.map((m) => new Option(m.name, m.id)));
+    sel.addEventListener('change', () => {
+      this.showBlurb();
+      onPick(sel.value);
+    });
+    this.showBlurb();
+  }
+
+  /** the field picked on the main menu */
+  pickedMap(): string {
+    return ($('mapsel') as HTMLSelectElement).value;
+  }
+
+  /** show which field is on (the server changed it, or we joined one) */
+  setMap(id: string): void {
+    const sel = $('mapsel') as HTMLSelectElement;
+    if (MAPS[id] && sel.value !== id) {
+      sel.value = id;
+      this.showBlurb();
+    }
+  }
+
+  private showBlurb(): void {
+    $('map-blurb').textContent = MAPS[this.pickedMap()]?.blurb ?? '';
+  }
+
+  setFieldInfo(info: { players: number; bots: number; map: string | null } | null | 'checking'): void {
     const el = $('field-info');
     if (info === 'checking') {
       el.className = 'info';
@@ -96,10 +126,10 @@ export class Hud {
       el.textContent = "Can't reach the game server right now. Practice works offline.";
     } else if (info.players > 0) {
       el.className = 'info live';
-      el.textContent = `${info.players} playing now${info.bots ? `, plus ${info.bots} bot${info.bots === 1 ? '' : 's'}` : ''}`;
+      el.textContent = `${info.players} playing now${info.map ? ` on ${info.map}` : ''}${info.bots ? `, plus ${info.bots} bot${info.bots === 1 ? '' : 's'}` : ''}`;
     } else {
       el.className = 'info';
-      el.textContent = 'Nobody on the field yet: bots fill the teams until others join';
+      el.textContent = `Nobody on the field yet${info.map ? ` (${info.map} is up next)` : ''}: bots fill the teams until others join`;
     }
   }
 
@@ -212,17 +242,21 @@ export class Hud {
   }
 
   /** hold-Tab scoreboard; null hides it */
-  setScoreboard(rows: RosterEntry[] | null, myId: number, score: [number, number]): void {
+  setScoreboard(rows: RosterEntry[] | null, myId: number, score: [number, number], mapName = ''): void {
     if (!rows) {
       this.board.hidden = true;
       this.boardKey = '';
       return;
     }
-    const key = JSON.stringify([rows, myId, score]);
+    const key = JSON.stringify([rows, myId, score, mapName]);
     this.board.hidden = false;
     if (key === this.boardKey) return;
     this.boardKey = key;
+    const title = document.createElement('p');
+    title.className = 'map';
+    title.textContent = mapName ? `Field: ${mapName}` : '';
     this.board.replaceChildren(
+      title,
       ...([0, 1] as const).map((team) => {
         const col = document.createElement('section');
         col.className = team === 0 ? 'r' : 'b';

@@ -43,6 +43,13 @@ export class Fx {
     scene.add(this.points);
   }
 
+  /** wipe every splat (the field changed) */
+  clear(): void {
+    for (const m of this.decals) m.visible = false;
+    this.pos.fill(-999);
+    this.life.fill(0);
+  }
+
   /** stick a splat on a surface at (x,y,z) facing along the normal */
   splat(x: number, y: number, z: number, nx: number, ny: number, nz: number, color: number): void {
     const m = this.decals[this.nextDecal];

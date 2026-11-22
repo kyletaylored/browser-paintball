@@ -4,6 +4,8 @@
 import * as THREE from 'three';
 import { createRenderer, createComposer } from './render';
 import { buildWorld } from './world';
+import { field, setMap, spawnPoint } from '../shared/field';
+import { MAP_LIST } from '../shared/maps';
 import { Input, TOUCH } from './input';
 import { Menu, type MenuAction } from './menu';
 import type { PadSettings } from './gamepad';
@@ -18,7 +20,6 @@ import { Nameplates, type PlateTarget } from './nameplates';
 import { Prediction } from './prediction';
 import { Net, sampleRemote, phaseSecondsLeft } from './net';
 import { NetStats } from './netstats';
-import { spawnPoint } from '../shared/field';
 import { BALL_SPEED, FIRE_INTERVAL, STAND_HEIGHT, CROUCH_HEIGHT, CLIENT_SEND_HZ, RESPAWN_SECONDS, INPUT_DT, INTERP_DELAY } from '../shared/sim';
 import { DEFAULT_PORT, TEAM_COLORS, TEAM_NAMES, cleanName, type RoundPhase, type V3 } from '../shared/protocol';
 
@@ -55,7 +56,7 @@ const hud = new Hud();
 // models first (behind the loading bar); if they fail, everything falls back to shapes drawn in code
 const models = await loadModels((f) => hud.setLoading(f));
 hud.setLoading(null);
-buildWorld(scene, models);
+let world = buildWorld(scene, models);
 const composer = createComposer(renderer, scene, camera);
 
 // controller settings live in this browser (start screen: sensitivity, invert Y, vibration)
@@ -86,6 +87,10 @@ hud.bindPadSettings(padSettings, () => {
 });
 hud.bindMenuButton(() => input.stop());
 hud.bindQuality();
+// the field picker on the main menu: shows the field behind the menu, and practice plays on it
+hud.bindMapPicker((id) => {
+  if (mode !== 'online') switchMap(id);
+});
 input.onPadLost = () => hud.toast('Controller disconnected · paused');
 const player = new LocalPlayer(camera, models?.marker ?? null);
 const balls = new Paintballs(scene);
@@ -136,11 +141,26 @@ interface Dummy extends Target {
   baseZ: number;
   downUntil: number;
 }
-const dummies: Dummy[] = ([[7.5, 2.5], [13.8, -6], [11, 8]] as const).map(([x, z], i) => {
+const dummies: Dummy[] = field.map.targets.map(([x, z], i) => {
   const avatar = makeAvatar(models, TEAM_COLORS[1]);
   scene.add(avatar.root);
   return { id: -100 - i, team: 1, x, y: 0, z, baseZ: z, height: STAND_HEIGHT, alive: true, avatar, downUntil: 0 };
 });
+
+/** play on another field: rebuild the scene and move the practice targets; false if it's already on */
+function switchMap(id: string): boolean {
+  if (!setMap(id)) return false;
+  world.dispose();
+  world = buildWorld(scene, models);
+  balls.clear();
+  fx.clear();
+  dummies.forEach((d, i) => {
+    const [x, z] = field.map.targets[i % field.map.targets.length];
+    Object.assign(d, { x, z, baseZ: z, alive: true });
+  });
+  hud.setMap(field.map.id);
+  return true;
+}
 const setDummiesVisible = (v: boolean) => dummies.forEach((d) => (d.avatar.root.visible = v));
 
 function updateDummies(now: number) {
@@ -172,7 +192,8 @@ const serverUrl: string =
   (import.meta.env.DEV ? `${wsProto}://${location.hostname}:${DEFAULT_PORT}` : `${wsProto}://${location.host}`);
 
 const net = new Net(serverUrl, {
-  welcome(_id, team, spawn) {
+  welcome(_id, team, spawn, map) {
+    switchMap(map);
     prediction.reset();
     netStats.reset();
     player.setTeam(team);
@@ -221,6 +242,10 @@ const net = new Net(serverUrl, {
     player.alive = true;
     hopper = HOPPER;
     reloadLeft = 0;
+  },
+  map(id) {
+    clearRemotes();
+    if (switchMap(id)) hud.toast(`New field: ${field.map.name}`);
   },
   disconnected() {
     clearRemotes();
@@ -292,6 +317,7 @@ const menu = new Menu((action: MenuAction, viaPad: boolean) => {
     case 'practice':
       net.stop();
       clearRemotes();
+      switchMap(hud.pickedMap());
       resetLocal();
       practiceHits = 0;
       mode = 'practice';
@@ -345,8 +371,9 @@ async function refreshField() {
   fieldBusy = true;
   try {
     const r = await fetch(`${httpBase}/healthz`, { cache: 'no-store' });
-    const j = (await r.json()) as { players?: unknown; bots?: unknown };
-    hud.setFieldInfo({ players: Number(j.players) || 0, bots: Number(j.bots) || 0 });
+    const j = (await r.json()) as { players?: unknown; bots?: unknown; map?: unknown };
+    const onMap = MAP_LIST.find((m) => m.id === j.map);
+    hud.setFieldInfo({ players: Number(j.players) || 0, bots: Number(j.bots) || 0, map: onMap?.name ?? null });
   } catch {
     hud.setFieldInfo(null);
   } finally {
@@ -357,12 +384,17 @@ hud.setFieldInfo('checking');
 refreshField();
 setInterval(refreshField, 10_000);
 
-/** main menu camera: a slow lap of the field */
+/** main menu camera: a slow lap of the field, wider for bigger fields; under the trees in the woods */
 let orbit = 0.6;
 function flyAround(dt: number) {
-  orbit += dt * 0.05;
-  camera.position.set(Math.cos(orbit) * 27, 8.5 + Math.sin(orbit * 0.7) * 1.5, Math.sin(orbit) * 17);
-  camera.lookAt(0, 0.8, 0);
+  orbit += dt * (0.05 * 23) / field.halfL;
+  const k = field.halfL / 23;
+  const woods = field.map.theme.ground === 'forest';
+  const rx = woods ? field.halfL * 0.62 : 27 * k;
+  const rz = woods ? field.halfW * 0.62 : 17 * (field.halfW / 15);
+  const y = woods ? 3.2 + Math.sin(orbit * 0.7) * 0.4 : (8.5 + Math.sin(orbit * 0.7) * 1.5) * Math.sqrt(k);
+  camera.position.set(Math.cos(orbit) * rx, y, Math.sin(orbit) * rz);
+  camera.lookAt(0, woods ? 1.2 : 0.8, 0);
 }
 
 // ---- shooting -----------------------------------------------------------------------------
@@ -619,7 +651,7 @@ function frame(now: number) {
     hud.setScore(`Practice hits: ${practiceHits}`);
   }
   hud.setAmmo(hopper, HOPPER, reloadLeft > 0);
-  hud.setScoreboard(online && input.active && input.scoreboardHeld ? [...net.roster.values()] : null, net.id, net.score);
+  hud.setScoreboard(online && input.active && input.scoreboardHeld ? [...net.roster.values()] : null, net.id, net.score, field.map.name);
   hud.showOut(player.alive ? null : outLine(phase, now));
 
   if (menu.screen === 'main') {

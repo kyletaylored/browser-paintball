@@ -48,6 +48,11 @@ export class Paintballs {
     scene.add(this.mesh);
   }
 
+  /** drop every ball in flight (the field changed) */
+  clear(): void {
+    for (const b of this.pool) b.active = false;
+  }
+
   spawn(o: V3, v: V3, owner: number, team: number, color: number, local: boolean): void {
     const b = this.pool[this.next];
     this.next = (this.next + 1) % MAX;

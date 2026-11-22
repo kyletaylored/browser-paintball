@@ -15,7 +15,8 @@ import { lookup } from 'node:dns/promises';
 import { isIP } from 'node:net';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { makeHttpHandler } from './http';
-import { spawnPoint } from '../shared/field';
+import { field, setMap, spawnPoint } from '../shared/field';
+import { MAPS, MAP_LIST, DEFAULT_MAP, nextMap } from '../shared/maps';
 import {
   advanceBall, traceWorld, segmentHitsCapsule, isOutOfBounds, stepMovement,
   BALL_SPEED, BALL_LIFETIME, FIRE_INTERVAL, STAND_HEIGHT, CROUCH_HEIGHT, EYE_FROM_TOP,
@@ -63,6 +64,10 @@ const LAG_COMPENSATION = process.env.LAG_COMPENSATION !== '0';
 const MAX_REWIND = envNum('MAX_REWIND_MS', 300) / 1000;
 /** how much position history to keep */
 const HISTORY_SECONDS = 1;
+/** MAP=<id> plays one field (see shared/maps.ts); unset or MAP=rotate moves to the next field after every match */
+const MAP_SETTING = (process.env.MAP ?? 'rotate').trim().toLowerCase();
+const ROTATE = !MAPS[MAP_SETTING];
+setMap(ROTATE ? DEFAULT_MAP : MAP_SETTING);
 /** WIRE_FORMAT=json sends snapshots, acks and balls as JSON instead of binary (for debugging / comparing) */
 const BINARY = process.env.WIRE_FORMAT !== 'json';
 /**
@@ -171,7 +176,10 @@ const startedAt = Date.now();
 const httpServer = createServer(
   makeHttpHandler({
     staticDir: STATIC_DIR,
-    health: () => ({ players: humans().length, bots: players.size - humans().length, phase: match.phase, uptime: Math.round((Date.now() - startedAt) / 1000) }),
+    health: () => ({
+      players: humans().length, bots: players.size - humans().length, phase: match.phase, map: field.map.id,
+      uptime: Math.round((Date.now() - startedAt) / 1000),
+    }),
   }),
 );
 const wss = new WebSocketServer({
@@ -200,7 +208,7 @@ wss.on('connection', (ws) => {
     name: `Player ${id}`, wantName: `Player ${id}`, lastRename: -Infinity, k: 0, d: 0, ping: 0,
   };
   players.set(id, p);
-  send(ws, { t: 'welcome', id, team, spawn: sp, round: roundState() });
+  send(ws, { t: 'welcome', id, team, spawn: sp, round: roundState(), map: field.map.id });
   log(`+ player ${id} joined ${TEAM_NAMES[team]} (${humans().length} online)`);
   balanceBots();
   updateMatch();
@@ -359,8 +367,24 @@ function poseAt(p: Player, t: number): Pose {
 
 // ---- bots ---------------------------------------------------------------------------------
 
-const nav = new NavGrid();
+let nav = new NavGrid();
 const claimed: [Map<CoverSpot, number>, Map<CoverSpot, number>] = [new Map(), new Map()];
+
+/** move everyone to another field: new bot navigation, bots replaced, browsers told to rebuild */
+function changeMap(id: string) {
+  if (!setMap(id)) return;
+  nav = new NavGrid();
+  claimed[0].clear();
+  claimed[1].clear();
+  for (const p of [...players.values()]) {
+    if (!p.bot) continue;
+    players.delete(p.id);
+    broadcast({ t: 'leave', id: p.id });
+  }
+  broadcast({ t: 'map', id });
+  balanceBots(); // fresh bots, thinking about the new field
+  log(`  map: ${field.map.name}`);
+}
 let botCount = 0;
 
 function addBot(team: Team) {
@@ -594,6 +618,7 @@ function updateMatch() {
       break;
     case 'matchover':
       if (t >= match.endsAt) {
+        if (ROTATE) changeMap(nextMap(field.map.id));
         resetMatch();
         startCountdown();
       }
@@ -659,6 +684,7 @@ httpServer.listen(PORT, HOST, () => {
 log(`  allowed origins: ${ALLOWED_ORIGINS.length ? ALLOWED_ORIGINS.join(', ') : 'any'}`);
 log(`  wire format: ${BINARY ? 'binary' : 'json'}`);
 log(`  data channels: ${rtc ? `UDP ${rtc.port}${rtc.publicIp ? `, advertised as ${rtc.publicIp}` : ''}${rtc.bindAddress ? `, bound to ${rtc.bindAddress}` : ''}` : 'off (WebSocket only)'}`);
+log(`  map: ${ROTATE ? `${MAP_LIST.map((m) => m.name).join(' → ')}, a new one every match` : field.map.name}`);
 log(`  lag compensation: ${LAG_COMPENSATION ? `on, up to ${MAX_REWIND * 1000} ms` : 'off'}`);
 log(`  bots: ${BOT_TEAM_SIZE ? `fill teams to ${BOT_TEAM_SIZE}, ${process.env.BOT_SKILL ?? 'normal'} skill` : 'off'}`);
 
