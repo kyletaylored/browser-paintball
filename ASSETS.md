@@ -5,7 +5,7 @@ source in `art/` in Blender (docs/BLENDER.md). There are no downloaded or third-
 
 | file | what | made by |
 |---|---|---|
-| `public/models/bunkers.glb` | one inflatable-style bunker per shape in the field layout | `scripts/build-assets.ts` |
+| `public/models/bunkers.glb` | every inflatable bunker on every field, one per shape and colour | `art/bunkers.py`, built in Blender from the field data |
 | `public/models/marker.glb` | the first-person marker | `scripts/build-assets.ts` |
 | `public/models/player.glb` | the player figure, with idle / run / crouch / crouchMove / shoot / out / outWalk animations | `scripts/build-assets.ts` |
 | `public/models/pump-marker.glb` | the first-person pump marker for pump mode, with a "pump" animation | `art/pump-marker.py`, built in Blender |

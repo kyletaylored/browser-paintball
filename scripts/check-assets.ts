@@ -11,7 +11,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const FILES = ['bunkers.glb', 'marker.glb', 'player.glb'];
+const FILES = ['marker.glb', 'player.glb']; // bunkers.glb is made in Blender: scripts/check-models.ts checks it
 const round = (v: number, step: number) => Math.round(v / step) * step;
 
 async function summary(file: string) {

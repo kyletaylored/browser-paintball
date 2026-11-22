@@ -6,6 +6,7 @@ import { NodeIO, getBounds, type Document } from '@gltf-transform/core';
 import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
 import { MeshoptDecoder, MeshoptEncoder } from 'meshoptimizer';
 import { readFileSync, statSync } from 'node:fs';
+import { inflatableShapes } from './bunker-shapes';
 
 export interface ModelRule {
   /** art/<name>.py (a Blender build script) or art/<name>.blend */
@@ -15,6 +16,8 @@ export interface ModelRule {
   what: string;
   /** node names the game looks up */
   nodes: string[];
+  /** game data the build script needs, handed over as JSON (SPLAT_INPUT): 'bunkers' = every inflatable's shape */
+  input?: 'bunkers';
   /** animation name → length in seconds */
   animations: Record<string, number>;
   /** material names the game looks up ("team" is recoloured per team) */
@@ -56,6 +59,11 @@ export async function checkModel(rule: ModelRule, file: string): Promise<{ probl
   const root = doc.getRoot();
   const nodes = new Set(root.listNodes().map((n) => n.getName()));
   for (const n of rule.nodes) if (!nodes.has(n)) problems.push(`no node "${n}"`);
+  // every inflatable on every field needs its model (named like the game looks it up)
+  if (rule.input === 'bunkers') {
+    const missing = inflatableShapes().filter((s) => !nodes.has(`bunker:${s.key}`)).map((s) => s.key);
+    if (missing.length) problems.push(`no model for ${missing.length} bunker(s): ${missing.slice(0, 4).join(', ')}${missing.length > 4 ? ', …' : ''} (re-export: the fields changed)`);
+  }
   const mats = new Set(root.listMaterials().map((m) => m.getName()));
   for (const m of rule.materials) if (!mats.has(m)) problems.push(`no material "${m}"`);
   for (const m of root.listMaterials()) {

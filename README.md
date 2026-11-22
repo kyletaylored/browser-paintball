@@ -123,12 +123,13 @@ server/
   net-measure.ts how play holds up with latency and packet loss (npm run measure:net)
   codec-test.ts round-trip checks for the binary wire format
 scripts/
-  build-assets.ts builds public/models/*.glb from code (npm run assets)
+  build-assets.ts builds the marker and player models from code (npm run assets)
   blender-assets.ts exports the Blender-made models (npm run assets:blender, docs/BLENDER.md)
 art/            sources for the Blender-made models (build scripts and .blend files) and their rules
 public/models/  the models (meshopt-compressed glTF, ~240 KB total)
 src/          the browser game
   main.ts       game loop (fixed 120 Hz physics step), shooting, wiring
+  toon.ts       the arcade look: toon (banded) materials and the ink outline pass
   render.ts     WebGLRenderer + postprocessing (bloom, vignette, tone mapping, SMAA)
   world.ts      builds the current field: sky, lights, ground, boundary, bunkers, scenery
   player.ts     first-person controller + the gun on screen

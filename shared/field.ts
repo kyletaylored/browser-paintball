@@ -137,7 +137,10 @@ export function bunkerKey(b: Bunker): string {
   if (b.kind === 'box') return `box-${b.w}x${b.d}x${b.h}-${c}`;
   if (b.kind === 'can') return `can-${b.r}x${b.h}-${c}`;
   if (b.kind === 'log') return `log-${b.len}x${b.r}-${c}`;
-  return `poly-${b.pts.length}x${b.h}-${c}`;
+  // two wedges can share a corner count, height and colour but not their shape: name them by their corners
+  let h = 0x811c9dc5;
+  for (const [px, pz] of b.pts) for (const v of [Math.round(px * 100), Math.round(pz * 100)]) h = Math.imul(h ^ (v & 0xffff), 0x01000193) >>> 0;
+  return `poly-${b.pts.length}x${b.h}-${c}-${h.toString(36)}`;
 }
 
 /** where a team's players start: a line across the back of their end */
