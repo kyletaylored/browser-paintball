@@ -69,10 +69,13 @@ shared/       code BOTH sides run, so they agree
   codec.ts      compact binary encoding for snapshots, acks, paintballs and input frames
   field.ts      bunker layout + spawn points
   sim.ts        movement, paintball flight, collision (no physics engine needed)
+  netsim.ts     fake latency and packet loss for development and tests
 server/
   index.ts      authoritative game server: simulates paintballs, decides hits, runs the match, sends snapshots
   bots.ts       server-side bots: navigation grid + A*, cover spots, aim with reaction delay and error
   smoke-test.ts headless end-to-end checks (starts its own servers)
+  test-client.ts fake players for the tests: join, walk with real input frames, see others like a browser
+  net-measure.ts how play holds up with latency and packet loss (npm run measure:net)
   codec-test.ts round-trip checks for the binary wire format
 scripts/
   build-assets.ts builds public/models/*.glb from code (npm run assets)
@@ -89,6 +92,7 @@ src/          the browser game
   models.ts     loads the models (with a loading bar); falls back to code-drawn shapes if they fail
   avatars.ts    other players: the animated model, driven by speed / crouch / eliminated / shots
   net.ts        WebSocket client + snapshot interpolation
+  netstats.ts   development network overlay (?net, ?lag=, ?loss=)
   hud.ts        HTML overlay (no UI framework)
   menu.ts       main, pause, settings and controls menus; controller navigation
 ```
@@ -109,9 +113,18 @@ src/          the browser game
   of everyone's positions and tests your paintballs against targets as they were on your screen (your ping + 100 ms
   ago, at most 300 ms), so a shot that hits on your screen hits on the server too.
 
-In development, `window.__game` in the browser console exposes the player, network, scene and so on, and adding
-`?lag=150` to the URL fakes 150 ms of network latency so you can see how prediction copes. `?hitboxes` outlines where
-the server tested each hit (after rewinding for lag).
+In development, `window.__game` in the browser console exposes the player, network, scene and so on. URL options
+(development builds only):
+
+- `?lag=150` fakes 150 ms of round-trip latency, so you can see how prediction copes.
+- `?loss=2` loses 2% of messages each way, the way a WebSocket's TCP connection does: a lost packet is resent about a
+  round trip later and everything behind it waits (`shared/netsim.ts`). Combine it with `?lag=`.
+- `?net` shows a network overlay (it's also on with `?lag=` or `?loss=`): snapshot gaps over 100 ms, how often other
+  players froze because the 100 ms interpolation buffer ran dry, and how often the server corrected your position.
+- `?hitboxes` outlines where the server tested each hit (after rewinding for lag).
+
+`npm run measure:net` plays a fake player at 50 and 150 ms with 0 to 5% loss and prints a table of the same numbers
+(`npm run measure:net -- 150 2 60` for one run: lag, loss, seconds).
 
 ## Where to take it next
 

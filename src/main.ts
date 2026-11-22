@@ -17,6 +17,7 @@ import { SoundSystem, Footsteps } from './audio';
 import { Nameplates, type PlateTarget } from './nameplates';
 import { Prediction } from './prediction';
 import { Net, sampleRemote, phaseSecondsLeft } from './net';
+import { NetStats } from './netstats';
 import { spawnPoint } from '../shared/field';
 import { BALL_SPEED, FIRE_INTERVAL, STAND_HEIGHT, CROUCH_HEIGHT, CLIENT_SEND_HZ, RESPAWN_SECONDS, INPUT_DT, INTERP_DELAY } from '../shared/sim';
 import { DEFAULT_PORT, TEAM_COLORS, TEAM_NAMES, cleanName, type RoundPhase, type V3 } from '../shared/protocol';
@@ -173,6 +174,7 @@ const serverUrl: string =
 const net = new Net(serverUrl, {
   welcome(_id, team, spawn) {
     prediction.reset();
+    netStats.reset();
     player.setTeam(team);
     player.placeAt(spawn);
     player.alive = true;
@@ -210,6 +212,7 @@ const net = new Net(serverUrl, {
   ack(m) {
     // the server's word on where we are; replay what it hasn't seen yet on top
     const fix = prediction.reconcile(player.body, m.seq, m.b);
+    netStats.correction(prediction.lastError);
     if (fix.snap) player.clearCorrection();
     else player.addCorrection(fix.dx, fix.dy, fix.dz);
   },
@@ -227,10 +230,15 @@ const net = new Net(serverUrl, {
     hud.toast('Lost the server, back to practice');
   },
 }, () => myName);
+const netStats = new NetStats(net);
 
 function updateRemotes(now: number) {
   const at = now - INTERP_DELAY_MS;
+  let dry = false;
   for (const [id, r] of net.remotes) {
+    // drawing later than the newest snapshot we have: this player is frozen until the next one arrives
+    const newest = r.samples[r.samples.length - 1];
+    if (newest && newest.at < at) dry = true;
     let ra = remoteAvatars.get(id);
     if (!ra) {
       const avatar = makeAvatar(models, TEAM_COLORS[r.team]);
@@ -253,6 +261,7 @@ function updateRemotes(now: number) {
       sound.playAt('step', s.x, s.y + 0.05, s.z, { volume: VOL.remoteStep });
     }
   }
+  if (net.remotes.size) netStats.frame(dry);
   for (const [id, ra] of remoteAvatars) {
     if (net.remotes.has(id)) continue;
     scene.remove(ra.avatar.root);
@@ -618,6 +627,7 @@ function frame(now: number) {
     player.showGun(false);
   } else player.updateCamera(dt);
   updatePlates(online);
+  netStats.update(now);
   fx.update(dt);
   balls.sync();
   composer.render(dt);
