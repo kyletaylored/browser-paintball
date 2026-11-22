@@ -25,8 +25,20 @@ Then the point is live: if you're hit you're out until the point ends. Eliminate
 First team to 5 points wins the match. While a team is empty it's warm-up: you respawn a few seconds after being hit.
 The game opens on the main menu, flying slowly around the field. Pick a name (it shows over your head, in the kill
 feed and on the scoreboard), then **Play online** to join the match. The menu shows how many are playing. **Practice**
-plays offline against three strafing targets. Esc (or Start on a controller) pauses: Resume, Settings, Controls, or
-Leave match. Online, you're still in the match while paused.
+plays offline against three strafing targets on the field you pick. Esc (or Start on a controller) pauses: Resume,
+Settings, Controls, or Leave match. Online, you're still in the match while paused.
+
+**Fields** (`shared/maps.ts`). Online, the server moves to the next field after every match; `MAP=<id>` on the server
+plays one field only. The main menu's field picker shows each one behind the menu, and Practice plays on it.
+
+| field | size | |
+|---|---|---|
+| Arena (`arena`) | 46 × 30 m | the original compact speedball field |
+| Tournament (`tournament`) | 54 × 36 m | big symmetrical inflatable layout: a snake wall down one side, triangles down the other, a centre diamond |
+| Beach (`beach`) | 52 × 32 m | sand and surf: beach huts, a lifeguard tower, dunes, driftwood and an upturned boat |
+| Woods (`woods`) | 90 × 60 m | a forest: about a hundred trees, boulders, fallen logs, pallets and cable spools |
+
+Each half is the mirror image of the other, so neither team has an advantage.
 
 - **Playing alone?** The server fills both teams with bots (3 a side by default), so you can play a match on your own.
   A friend who joins takes a bot's place.
@@ -36,8 +48,11 @@ Leave match. Online, you're still in the match while paused.
 - **Controller?** Connect one (Bluetooth or USB) and press any button: the main menu says when it's found. The d-pad
   or left stick moves through the menus, A picks and B goes back. On a phone, clip it on or pair it, open the game in
   the phone's browser, turn the phone sideways and pick Play online. "Add to home screen" opens it fullscreen like an app.
-- **Check the server works:** `npm test` runs the wire-format round-trip checks and the controller checks, then `npm run test:server`, which starts its own servers, plays a point between two fake players,
-  checks lag compensation with a fake 150 ms player, then checks that bots fill the teams, move, shoot and finish a point.
+- **Check the server works:** `npm test` runs the wire-format round-trip checks, the controller checks and the map
+  checks (every field: bunkers inside the lines, start positions clear, halves mirrored, paint stops on every bunker,
+  players kept out, bots can path across), then `npm run test:server`, which starts its own servers, plays a point
+  between two fake players, checks lag compensation with a fake 150 ms player, then checks that bots fill the teams,
+  move, shoot and finish a point. `npm run test:maps -- --bots` also has bots play a point on every field.
 
 | Controls | |
 |---|---|
@@ -67,7 +82,8 @@ the deadzones, response curve and buttons.
 shared/       code BOTH sides run, so they agree
   protocol.ts   every network message, typed
   codec.ts      compact binary encoding for snapshots, acks, paintballs and input frames
-  field.ts      bunker layout + spawn points
+  maps.ts       every field: size, bunker layout, look (ground, sky, scenery)
+  field.ts      the field being played: bunker shapes, spawn points, footprint maths
   sim.ts        movement, paintball flight, collision (no physics engine needed)
   netsim.ts     fake latency and packet loss for development and tests
 server/
@@ -75,6 +91,7 @@ server/
   bots.ts       server-side bots: navigation grid + A*, cover spots, aim with reaction delay and error
   rtc.ts        WebRTC data channel to each browser, for snapshots, acks and input (UDP, never resent)
   smoke-test.ts headless end-to-end checks (starts its own servers)
+  map-test.ts   checks every field's layout, collision and bot navigation
   test-client.ts fake players for the tests: join, walk with real input frames, see others like a browser
   net-measure.ts how play holds up with latency and packet loss (npm run measure:net)
   codec-test.ts round-trip checks for the binary wire format
@@ -84,7 +101,7 @@ public/models/  the generated models (meshopt-compressed glTF, ~220 KB total)
 src/          the browser game
   main.ts       game loop (fixed 120 Hz physics step), shooting, wiring
   render.ts     WebGLRenderer + postprocessing (bloom, vignette, tone mapping, SMAA)
-  world.ts      sky, lights, turf texture, nets, bunkers
+  world.ts      builds the current field: sky, lights, ground, boundary, bunkers, scenery
   player.ts     first-person controller + the gun on screen
   input.ts      keyboard + mouse (pointer lock) and controllers, combined into actions; phone start
   gamepad.ts    controllers: deadzones, aim curve, buttons, rumble (gamepad-test.ts checks it)

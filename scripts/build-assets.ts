@@ -23,7 +23,8 @@ import { EXTMeshoptCompression, KHRMeshQuantization } from '@gltf-transform/exte
 import { dedup, meshopt, prune, weld } from '@gltf-transform/functions';
 import { MeshoptEncoder } from 'meshoptimizer';
 import { mkdirSync, statSync } from 'node:fs';
-import { BUNKERS, bunkerKey, type Bunker } from '../shared/field';
+import { bunkerKey, type BoxBunker, type CanBunker } from '../shared/field';
+import { MAPS } from '../shared/maps';
 import { STAND_HEIGHT } from '../shared/sim';
 
 /** output folder; `--out <dir>` overrides it (scripts/check-assets.ts builds into a temp folder) */
@@ -129,8 +130,9 @@ const darker = (n: number, k: number) => new THREE.Color(n).multiplyScalar(k).ge
 // Inflatable-style: a soft body with sewn seams, a darker base skirt and tie-down loops.
 
 async function buildBunkers() {
-  const unique = new Map<string, Bunker>();
-  for (const b of BUNKERS) unique.set(bunkerKey(b), b);
+  // the arena's inflatables (other fields draw their bunkers in code, src/world.ts)
+  const unique = new Map<string, BoxBunker | CanBunker>();
+  for (const b of MAPS.arena.bunkers) if ((b.kind === 'box' || b.kind === 'can') && !b.look) unique.set(bunkerKey(b), b);
   const specs: Record<string, MatSpec> = { trim: { color: 0x23202a, roughness: 0.75 } };
   for (const b of unique.values()) {
     specs[`skin-${hex(b.color)}`] = { color: b.color, roughness: 0.55 };

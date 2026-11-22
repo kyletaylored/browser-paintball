@@ -2,13 +2,13 @@
 // and eliminations like everyone else, moves with the same stepMovement as humans, and its shots
 // go through the same paintball simulation. Clients can't tell the difference.
 //
-//  - NavGrid: a walkability grid over the field built from the bunker layout, with A* and path
-//    smoothing, plus a list of cover spots tucked in next to each bunker.
+//  - NavGrid: a walkability grid over the current map built from its bunker layout, with A* and path
+//    smoothing, plus a list of cover spots tucked in next to each bunker. Build a new one per map.
 //  - BotBrain: picks a cover spot toward the enemy, runs there, crouches, peeks and shoots at enemies
 //    it can see, and ducks when paint flies past. It reacts after a delay and aims with some error,
 //    so it can be beaten.
 
-import { BUNKERS, HALF_L, HALF_W, NET_MARGIN, type Bunker } from '../shared/field';
+import { field, footprintDistance, topOf, type Bunker } from '../shared/field';
 import {
   traceWorld, BALL_SPEED, GRAVITY, FIRE_INTERVAL, PLAYER_RADIUS, STAND_HEIGHT, CROUCH_HEIGHT, EYE_FROM_TOP, type MoveInput,
 } from '../shared/sim';
@@ -55,13 +55,6 @@ export interface CoverSpot {
   bunker: Bunker;
 }
 
-/** distance from (x, z) to a bunker's footprint (negative inside) */
-function bunkerDistance(b: Bunker, x: number, z: number): number {
-  if (b.kind === 'can') return Math.hypot(x - b.x, z - b.z) - b.r;
-  const dx = Math.abs(x - b.x) - b.w / 2;
-  const dz = Math.abs(z - b.z) - b.d / 2;
-  return Math.hypot(Math.max(dx, 0), Math.max(dz, 0)) + Math.min(Math.max(dx, dz), 0);
-}
 
 export class NavGrid {
   readonly cols: number;
@@ -72,8 +65,8 @@ export class NavGrid {
   readonly cover: CoverSpot[] = [];
 
   constructor() {
-    const ex = HALF_L + NET_MARGIN - 0.4;
-    const ez = HALF_W + NET_MARGIN - 0.4;
+    const ex = field.halfL + field.margin - 0.4;
+    const ez = field.halfW + field.margin - 0.4;
     this.x0 = -ex;
     this.z0 = -ez;
     this.cols = Math.floor((2 * ex) / CELL) + 1;
@@ -83,14 +76,22 @@ export class NavGrid {
       for (let c = 0; c < this.cols; c++) {
         const x = this.x0 + c * CELL;
         const z = this.z0 + r * CELL;
-        this.open[r * this.cols + c] = BUNKERS.every((b) => bunkerDistance(b, x, z) > CLEARANCE) ? 1 : 0;
+        let open = 1;
+        for (let i = 0; i < field.bunkers.length && open; i++) {
+          const bd = field.bounds[i];
+          if (Math.abs(x - bd.x) > bd.r + CLEARANCE || Math.abs(z - bd.z) > bd.r + CLEARANCE) continue;
+          if (footprintDistance(field.bunkers[i], x, z, i) <= CLEARANCE) open = 0;
+        }
+        this.open[r * this.cols + c] = open;
       }
     }
     // cover: points hugging each bunker, all the way round; whether a spot is safe depends on where the enemy is
-    for (const b of BUNKERS) {
-      if (b.h < 1.15) continue; // too low to hide behind
-      for (let i = 0; i < 16; i++) {
-        const a = (i / 16) * Math.PI * 2;
+    for (const b of field.bunkers) {
+      if (topOf(b) < 1.15) continue; // too low to hide behind
+      // thin trees and barrels only need a few spots round them
+      const n = b.kind === 'can' && b.r < 0.5 ? 8 : 16;
+      for (let i = 0; i < n; i++) {
+        const a = (i / n) * Math.PI * 2;
         let x: number;
         let z: number;
         if (b.kind === 'can') {
@@ -101,7 +102,7 @@ export class NavGrid {
           const dx = Math.cos(a);
           const dz = Math.sin(a);
           let t = 0;
-          while (bunkerDistance(b, b.x + dx * t, b.z + dz * t) < CLEARANCE + 0.12) t += 0.05;
+          while (footprintDistance(b, b.x + dx * t, b.z + dz * t) < CLEARANCE + 0.12) t += 0.05;
           x = b.x + dx * t;
           z = b.z + dz * t;
         }
@@ -592,7 +593,7 @@ export class BotBrain {
   /** next cover spot: further toward the enemy, hidden from where we last saw them, not taken */
   private pickSpot(now: number, me: BotSelf): void {
     const dirX = me.team === 0 ? 1 : -1; // which way is forward
-    const enemy = this.lastKnownEnemy ?? { x: dirX * HALF_L, z: 0 };
+    const enemy = this.lastKnownEnemy ?? { x: dirX * field.halfL, z: 0 };
     let best: CoverSpot | null = null;
     let bestScore = -Infinity;
     for (const spot of this.nav.cover) {
@@ -603,7 +604,7 @@ export class BotBrain {
       if (dist < 2 || dist > 16 || progress < -1) continue;
       // hidden: a crouched head at the spot can't be seen from where the enemy is
       const hidden = traceWorld(enemy.x, STAND_HEIGHT - EYE_FROM_TOP, enemy.z, spot.x, CROUCH_HEIGHT - 0.1, spot.z) !== null;
-      const tooDeep = spot.x * dirX > HALF_L * 0.55; // don't run into their start box
+      const tooDeep = spot.x * dirX > field.halfL * 0.55; // don't run into their start box
       const score = progress * 1.2 - dist * 0.35 + (hidden ? 6 : 0) - (tooDeep ? 8 : 0) + Math.random() * 3;
       if (score > bestScore) {
         bestScore = score;

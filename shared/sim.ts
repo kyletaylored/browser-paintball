@@ -1,10 +1,10 @@
 // Game rules and physics that must agree on both sides: player movement, paintball flight,
 // and collision against the field. No three.js in here, just numbers, so the Node server can run it too.
 //
-// No physics engine is needed: a paintball field is boxes and cylinders, and the player is
-// treated as an upright capsule.
+// No physics engine is needed: a paintball field is boxes, cylinders, upright prisms and logs, and the
+// player is treated as an upright capsule. Everything reads the current map from shared/field.ts.
 
-import { BUNKERS, HALF_L, HALF_W, NET_MARGIN } from './field';
+import { field, logHalf, topOf, footprintDistance, type Bunker } from './field';
 
 // ---- tuning -------------------------------------------------------------------------------
 
@@ -120,14 +120,21 @@ export function stepMovement(b: Body, inp: MoveInput, dt: number): void {
 function groundHeightAt(x: number, z: number, feetY: number): number {
   let g = 0;
   const r = PLAYER_RADIUS * 0.6;
-  for (const b of BUNKERS) {
-    if (b.h > feetY + 0.06) continue;
+  const bs = field.bunkers;
+  for (let i = 0; i < bs.length; i++) {
+    const b = bs[i];
+    const top = topOf(b);
+    if (top > feetY + 0.06 || top <= g) continue;
+    const bound = field.bounds[i];
+    if (Math.abs(x - bound.x) > bound.r + r || Math.abs(z - bound.z) > bound.r + r) continue;
     if (b.kind === 'box') {
       const dx = x - clamp(x, b.x - b.w / 2, b.x + b.w / 2);
       const dz = z - clamp(z, b.z - b.d / 2, b.z + b.d / 2);
-      if (dx * dx + dz * dz < r * r) g = Math.max(g, b.h);
-    } else {
-      if (Math.hypot(x - b.x, z - b.z) < b.r + r) g = Math.max(g, b.h);
+      if (dx * dx + dz * dz < r * r) g = top;
+    } else if (b.kind === 'can') {
+      if (Math.hypot(x - b.x, z - b.z) < b.r + r) g = top;
+    } else if (footprintDistance(b, x, z, i) < r) {
+      g = top; // poly, or a log (stood on as if its top were flat)
     }
   }
   return g;
@@ -135,11 +142,17 @@ function groundHeightAt(x: number, z: number, feetY: number): number {
 
 function pushOutOfBunkers(p: Body): void {
   const r = PLAYER_RADIUS;
-  for (const b of BUNKERS) {
-    if (p.y >= b.h - 0.06) continue; // standing on top of it, or above it
-    if (b.kind === 'box') {
-      const hx = b.w / 2;
-      const hz = b.d / 2;
+  const bs = field.bunkers;
+  for (let i = 0; i < bs.length; i++) {
+    const b = bs[i];
+    if (p.y >= topOf(b) - 0.06) continue; // standing on top of it, or above it
+    const bound = field.bounds[i];
+    if (Math.abs(p.x - bound.x) > bound.r + r || Math.abs(p.z - bound.z) > bound.r + r) continue;
+    if (b.kind === 'poly') {
+      pushOutOfPoly(p, i, r);
+    } else if (b.kind === 'box' || b.kind === 'log') {
+      // a log is pushed out of like a box the size of its footprint
+      const [hx, hz] = b.kind === 'log' ? logHalf(b) : [b.w / 2, b.d / 2];
       const dx = p.x - clamp(p.x, b.x - hx, b.x + hx);
       const dz = p.z - clamp(p.z, b.z - hz, b.z + hz);
       const d2 = dx * dx + dz * dz;
@@ -164,10 +177,56 @@ function pushOutOfBunkers(p: Body): void {
       else slide(p, 1, 0, min);
     }
   }
-  const lx = HALF_L + NET_MARGIN - r;
-  const lz = HALF_W + NET_MARGIN - r;
+  const lx = field.halfL + field.margin - r;
+  const lz = field.halfW + field.margin - r;
   p.x = clamp(p.x, -lx, lx);
   p.z = clamp(p.z, -lz, lz);
+}
+
+/** push a player out of an upright convex prism (bunker i) */
+function pushOutOfPoly(p: Body, i: number, r: number): void {
+  const s = field.polys[i]!;
+  // deepest-inside edge: if even that one is more than r away, we're clear
+  let best = -Infinity;
+  let k = 0;
+  for (let e = 0; e < s.nx.length; e++) {
+    const d = s.nx[e] * p.x + s.nz[e] * p.z - s.off[e];
+    if (d > best) {
+      best = d;
+      k = e;
+    }
+  }
+  if (best >= r) return;
+  if (best <= 0) {
+    // centre inside: leave through the nearest face
+    slide(p, s.nx[k], s.nz[k], r - best);
+    return;
+  }
+  // outside but within r of some edge or corner: push away from the closest point on the outline
+  const d = footprintDistance(field.bunkers[i], p.x, p.z, i);
+  if (d >= r) return;
+  // closest point on the outline, found again to get the direction
+  let cx = 0;
+  let cz = 0;
+  let cd = Infinity;
+  const n = s.xs.length;
+  for (let e = 0; e < n; e++) {
+    const ax = s.xs[e];
+    const az = s.zs[e];
+    const ex = s.xs[(e + 1) % n] - ax;
+    const ez = s.zs[(e + 1) % n] - az;
+    const t = clamp01(((p.x - ax) * ex + (p.z - az) * ez) / (ex * ex + ez * ez));
+    const qx = ax + ex * t;
+    const qz = az + ez * t;
+    const dd = Math.hypot(p.x - qx, p.z - qz);
+    if (dd < cd) {
+      cd = dd;
+      cx = qx;
+      cz = qz;
+    }
+  }
+  if (cd > 1e-9) slide(p, (p.x - cx) / cd, (p.z - cz) / cd, r - cd);
+  else slide(p, s.nx[k], s.nz[k], r);
 }
 
 /** Push out along a normal and remove the velocity going into the surface, so you slide along walls. */
@@ -208,7 +267,7 @@ export function advanceBall(b: Ball, dt: number): void {
 }
 
 export function isOutOfBounds(x: number, y: number, z: number): boolean {
-  return Math.abs(x) > HALF_L + NET_MARGIN || Math.abs(z) > HALF_W + NET_MARGIN || y < -1 || y > 40;
+  return Math.abs(x) > field.halfL + field.margin || Math.abs(z) > field.halfW + field.margin || y < -1 || y > 40;
 }
 
 export interface WorldHit {
@@ -240,7 +299,24 @@ export function traceWorld(x0: number, y0: number, z0: number, x1: number, y1: n
     ny = 1;
   }
 
-  for (const b of BUNKERS) {
+  const bs = field.bunkers;
+  const lenXZ = Math.hypot(dx, dz);
+  for (let i = 0; i < bs.length; i++) {
+    const b = bs[i];
+    // early out: the path stays above it, or never comes near it seen from above
+    const bound = field.bounds[i];
+    if (y0 > bound.top && y1 > bound.top) continue;
+    if (!segmentNearCircle(x0, z0, dx, dz, lenXZ, bound.x, bound.z, bound.r)) continue;
+    if (b.kind === 'poly' || b.kind === 'log') {
+      const t = b.kind === 'poly' ? segPoly(x0, y0, z0, dx, dy, dz, i, b.h) : segLog(x0, y0, z0, dx, dy, dz, b);
+      if (t >= 0 && t < best) {
+        best = t;
+        nx = hitN[0];
+        ny = hitN[1];
+        nz = hitN[2];
+      }
+      continue;
+    }
     if (b.kind === 'box') {
       const t = segBox(x0, y0, z0, dx, dy, dz, b.x - b.w / 2, 0, b.z - b.d / 2, b.x + b.w / 2, b.h, b.z + b.d / 2);
       if (t >= 0 && t < best) {
@@ -289,6 +365,129 @@ export function traceWorld(x0: number, y0: number, z0: number, x1: number, y1: n
 }
 
 const boxN = [0, 0, 0];
+const hitN = [0, 0, 0];
+
+/** does the segment (seen from above) pass within r of (cx, cz)? */
+function segmentNearCircle(x0: number, z0: number, dx: number, dz: number, len: number, cx: number, cz: number, r: number): boolean {
+  const fx = cx - x0;
+  const fz = cz - z0;
+  if (len < 1e-9) return fx * fx + fz * fz <= r * r;
+  const t = clamp((fx * dx + fz * dz) / (len * len), 0, 1);
+  const ex = fx - dx * t;
+  const ez = fz - dz * t;
+  return ex * ex + ez * ez <= r * r;
+}
+
+/**
+ * Segment against an upright convex prism (bunker i, from y 0 to h): clip it against every face.
+ * Returns entry t in 0..1 (normal in hitN), or -1 (no hit, or it started inside).
+ */
+function segPoly(x0: number, y0: number, z0: number, dx: number, dy: number, dz: number, i: number, h: number): number {
+  const s = field.polys[i]!;
+  let tmin = 0;
+  let tmax = 1;
+  let face = -2; // -2: none yet, -1: the top
+  // top and bottom
+  if (Math.abs(dy) < 1e-12) {
+    if (y0 < 0 || y0 > h) return -1;
+  } else {
+    let t1 = (0 - y0) / dy;
+    let t2 = (h - y0) / dy;
+    const top = dy < 0; // coming down, we enter through the top
+    if (t1 > t2) {
+      const tmp = t1;
+      t1 = t2;
+      t2 = tmp;
+    }
+    if (t1 > tmin) {
+      tmin = t1;
+      face = top ? -1 : -3; // -3: through the bottom (can't happen above ground, but be safe)
+    }
+    if (t2 < tmax) tmax = t2;
+  }
+  for (let e = 0; e < s.nx.length; e++) {
+    const denom = s.nx[e] * dx + s.nz[e] * dz;
+    const dist = s.nx[e] * x0 + s.nz[e] * z0 - s.off[e]; // > 0 outside this face
+    if (Math.abs(denom) < 1e-12) {
+      if (dist > 0) return -1;
+      continue;
+    }
+    const t = -dist / denom;
+    if (denom < 0) {
+      // heading in through this face
+      if (t > tmin) {
+        tmin = t;
+        face = e;
+      }
+    } else if (t < tmax) tmax = t;
+    if (tmin > tmax) return -1;
+  }
+  if (face === -2) return -1; // started inside
+  if (face === -1) {
+    hitN[0] = 0;
+    hitN[1] = 1;
+    hitN[2] = 0;
+  } else if (face === -3) {
+    hitN[0] = 0;
+    hitN[1] = -1;
+    hitN[2] = 0;
+  } else {
+    hitN[0] = s.nx[face];
+    hitN[1] = 0;
+    hitN[2] = s.nz[face];
+  }
+  return tmin;
+}
+
+/** Segment against a log lying on the ground (a cylinder along x or z, centre r above the ground). */
+function segLog(x0: number, y0: number, z0: number, dx: number, dy: number, dz: number, b: Extract<Bunker, { kind: 'log' }>): number {
+  // work in (u = along the log, v = across it, y)
+  const alongX = b.axis === 'x';
+  const u0 = alongX ? x0 - b.x : z0 - b.z;
+  const v0 = alongX ? z0 - b.z : x0 - b.x;
+  const du = alongX ? dx : dz;
+  const dv = alongX ? dz : dx;
+  const w0 = y0 - b.r;
+  const half = b.len / 2;
+  const r2 = b.r * b.r;
+  let best = -1;
+  // the curved side
+  const a = dv * dv + dy * dy;
+  const c = v0 * v0 + w0 * w0 - r2;
+  if (a > 1e-12 && c > 0) {
+    const bb = 2 * (v0 * dv + w0 * dy);
+    const disc = bb * bb - 4 * a * c;
+    if (disc >= 0) {
+      const t = (-bb - Math.sqrt(disc)) / (2 * a);
+      const u = u0 + du * t;
+      if (t >= 0 && t <= 1 && Math.abs(u) <= half) {
+        best = t;
+        const v = (v0 + dv * t) / b.r;
+        const w = (w0 + dy * t) / b.r;
+        hitN[0] = alongX ? 0 : v;
+        hitN[1] = w;
+        hitN[2] = alongX ? v : 0;
+      }
+    }
+  }
+  // the flat ends
+  for (const end of [-half, half]) {
+    if (Math.abs(du) < 1e-12) continue;
+    const outside = end < 0 ? u0 < end : u0 > end;
+    if (!outside) continue;
+    const t = (end - u0) / du;
+    if (t < 0 || t > 1 || (best >= 0 && t >= best)) continue;
+    const v = v0 + dv * t;
+    const w = w0 + dy * t;
+    if (v * v + w * w > r2) continue;
+    best = t;
+    const s = end < 0 ? -1 : 1;
+    hitN[0] = alongX ? s : 0;
+    hitN[1] = 0;
+    hitN[2] = alongX ? 0 : s;
+  }
+  return best;
+}
 
 /** Slab test. Returns entry t in 0..1 (and writes the face normal to boxN), or -1. */
 function segBox(

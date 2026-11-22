@@ -97,7 +97,10 @@ export type ClientMsg =
 
 /** server → browser */
 export type ServerMsg =
-  | { t: 'welcome'; id: number; team: Team; spawn: Spawn; round: RoundState }
+  /** map: the field being played (an id from shared/maps.ts) */
+  | { t: 'welcome'; id: number; team: Team; spawn: Spawn; round: RoundState; map: string }
+  /** the field changed (between matches); a respawn on the new field follows */
+  | { t: 'map'; id: string }
   /** seq counts up by one per snapshot (to skip late ones); score is points won this match */
   | { t: 'snap'; seq: number; players: PlayerSnap[]; score: [number, number]; round: RoundState }
   | { t: 'ball'; owner: number; team: Team; o: V3; v: V3 }
