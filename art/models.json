@@ -2,15 +2,45 @@
   "$comment": "Models made in Blender (docs/BLENDER.md). npm run assets:blender exports each one to public/models; npm run check:models (CI) checks the committed files still meet these rules.",
   "models": [
     {
+      "source": "art/bunkers.py",
+      "out": "bunkers.glb",
+      "what": "every inflatable bunker on every field, one model per shape and colour",
+      "input": "bunkers",
+      "nodes": [],
+      "animations": {},
+      "materials": [
+        "trim"
+      ],
+      "maxTriangles": 150000,
+      "maxKB": 450,
+      "size": [
+        5,
+        2.6,
+        5
+      ]
+    },
+    {
       "source": "art/pump-marker.py",
       "out": "pump-marker.glb",
       "what": "the first-person pump marker, for pump mode",
-      "nodes": ["marker", "pump", "muzzle"],
-      "animations": { "pump": 0.5 },
-      "materials": ["team"],
+      "nodes": [
+        "marker",
+        "pump",
+        "muzzle"
+      ],
+      "animations": {
+        "pump": 0.5
+      },
+      "materials": [
+        "team"
+      ],
       "maxTriangles": 6000,
       "maxKB": 60,
-      "size": [0.1, 0.4, 0.9]
+      "size": [
+        0.1,
+        0.4,
+        0.9
+      ]
     }
   ]
 }

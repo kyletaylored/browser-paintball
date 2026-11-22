@@ -1,6 +1,6 @@
 // Builds the game's 3D models from code and writes them as compressed glTF binaries:
 //
-//   npm run assets   →  public/models/bunkers.glb, marker.glb, player.glb
+//   npm run assets   →  public/models/marker.glb, player.glb (bunkers.glb comes from Blender: art/bunkers.py)
 //
 // Every model here is original and made in this file (no downloaded assets): shapes come from
 // three.js geometry builders, get merged per material, and are written with glTF tooling, then
@@ -9,7 +9,6 @@
 // from Blender with the same node names and drop them in public/models/.
 //
 // Node names the game relies on:
-//   bunkers.glb  one node per bunker shape, named bunkerKey() from shared/field.ts
 //   marker.glb   "marker" (origin at the trigger, barrel along -Z), "muzzle" empty at the barrel tip
 //   player.glb   "player" root, bones "hips" "torso" "head" "shoulderL/R" "elbowL/R" "thighL/R"
 //                "kneeL/R" "gun", animations "idle" "run" "crouch" "crouchMove" "shoot" "out" "outWalk"
@@ -23,8 +22,6 @@ import { EXTMeshoptCompression, KHRMeshQuantization } from '@gltf-transform/exte
 import { dedup, meshopt, prune, weld } from '@gltf-transform/functions';
 import { MeshoptEncoder } from 'meshoptimizer';
 import { mkdirSync, statSync } from 'node:fs';
-import { bunkerKey, type BoxBunker, type CanBunker } from '../shared/field';
-import { MAPS } from '../shared/maps';
 import { STAND_HEIGHT } from '../shared/sim';
 
 /** output folder; `--out <dir>` overrides it (scripts/check-assets.ts builds into a temp folder) */
@@ -123,64 +120,6 @@ const cyl = (rt: number, rb: number, h: number, seg = 20) => new THREE.CylinderG
 const sphere = (r: number, w = 18, h = 12) => new THREE.SphereGeometry(r, w, h);
 const capsule = (r: number, len: number) => new THREE.CapsuleGeometry(r, len, 4, 12);
 const torus = (r: number, tube: number, arc = Math.PI * 2) => new THREE.TorusGeometry(r, tube, 6, 16, arc);
-const hex = (n: number) => n.toString(16).padStart(6, '0');
-const darker = (n: number, k: number) => new THREE.Color(n).multiplyScalar(k).getHex();
-
-// ---- bunkers -----------------------------------------------------------------------------------
-// Inflatable-style: a soft body with sewn seams, a darker base skirt and tie-down loops.
-
-async function buildBunkers() {
-  // the arena's inflatables (other fields draw their bunkers in code, src/world.ts)
-  const unique = new Map<string, BoxBunker | CanBunker>();
-  for (const b of MAPS.arena.bunkers) if ((b.kind === 'box' || b.kind === 'can') && !b.look) unique.set(bunkerKey(b), b);
-  const specs: Record<string, MatSpec> = { trim: { color: 0x23202a, roughness: 0.75 } };
-  for (const b of unique.values()) {
-    specs[`skin-${hex(b.color)}`] = { color: b.color, roughness: 0.55 };
-    specs[`seam-${hex(b.color)}`] = { color: darker(b.color, 0.72), roughness: 0.65 };
-  }
-  const B = new Builder(specs);
-  for (const [key, b] of unique) {
-    const skin = `skin-${hex(b.color)}`;
-    const seam = `seam-${hex(b.color)}`;
-    const part = new Part();
-    if (b.kind === 'box') {
-      const r = Math.min(0.18, b.h / 4);
-      part.add(skin, rbox(b.w, b.h, b.d, r, 4), [0, b.h / 2, 0]);
-      part.add('trim', rbox(b.w + 0.016, 0.07, b.d + 0.016, 0.03, 2), [0, b.h * 0.55, 0]); // belt seam
-      part.add('trim', rbox(b.w + 0.024, 0.09, b.d + 0.024, 0.035, 2), [0, 0.045, 0]); // base skirt
-      // vertical seams on the two long faces and the two short faces
-      const seamsAlong = (len: number) => (len > 1.6 ? [-len / 4, len / 4] : [0]);
-      for (const x of seamsAlong(b.w)) for (const s of [-1, 1]) part.add(seam, rbox(0.035, b.h - 2 * r, 0.014, 0.006, 1), [x, b.h / 2, s * (b.d / 2 + 0.002)]);
-      for (const z of seamsAlong(b.d)) for (const s of [-1, 1]) part.add(seam, rbox(0.014, b.h - 2 * r, 0.035, 0.006, 1), [s * (b.w / 2 + 0.002), b.h / 2, z]);
-      // tie-down loops at the corners
-      for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
-        part.add('trim', torus(0.045, 0.011), [sx * (b.w / 2 + 0.03), 0.06, sz * (b.d / 2 + 0.03)], [0, sx * sz * Math.PI / 4 + Math.PI / 2, 0]);
-      }
-    } else {
-      const top = b.r * 0.94;
-      const rr = Math.min(0.14, b.h / 5);
-      // profile up the side, round over the shoulder, a slight dome on top
-      const pts: THREE.Vector2[] = [new THREE.Vector2(0, 0), new THREE.Vector2(b.r, 0)];
-      for (let i = 0; i <= 6; i++) pts.push(new THREE.Vector2(b.r + (top - b.r) * (i / 6), (b.h - rr) * (i / 6)));
-      for (let i = 1; i <= 6; i++) {
-        const a = (i / 6) * (Math.PI / 2);
-        pts.push(new THREE.Vector2(top - rr + Math.cos(a) * rr, b.h - rr + Math.sin(a) * rr));
-      }
-      pts.push(new THREE.Vector2(0, b.h + 0.02));
-      part.add(skin, new THREE.LatheGeometry(pts, 32));
-      const radiusAt = (y: number) => b.r + (top - b.r) * (y / (b.h - rr));
-      for (const f of [0.33, 0.66]) part.add(seam, cyl(radiusAt(b.h * f) + 0.006, radiusAt(b.h * f) + 0.006, 0.05, 32), [0, b.h * f, 0]);
-      part.add('trim', cyl(b.r + 0.012, b.r + 0.014, 0.09, 32), [0, 0.045, 0]);
-      part.add('trim', cyl(0.03, 0.035, 0.035, 12), [0, b.h + 0.03, 0]); // valve
-      for (let i = 0; i < 4; i++) {
-        const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
-        part.add('trim', torus(0.045, 0.011), [Math.cos(a) * (b.r + 0.03), 0.06, Math.sin(a) * (b.r + 0.03)], [0, -a, 0]);
-      }
-    }
-    B.scene.addChild(part.toNode(B, `bunker:${key}`));
-  }
-  await B.write('bunkers.glb');
-}
 
 // ---- marker ------------------------------------------------------------------------------------
 // Origin at the trigger, barrel along -Z, +Y up. Real size (about 60 cm long).
@@ -434,6 +373,5 @@ async function buildPlayer() {
 
 mkdirSync(OUT, { recursive: true });
 console.log('building models:');
-await buildBunkers();
 await buildMarker();
 await buildPlayer();

@@ -11,12 +11,13 @@
 // install folders on Windows and macOS.
 
 import { execFileSync, spawnSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, rmSync, statSync } from 'node:fs';
+import { existsSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { dedup, meshopt, prune, weld } from '@gltf-transform/functions';
 import { MeshoptEncoder } from 'meshoptimizer';
 import { checkModel, gltfIO, loadRules } from './model-rules';
+import { inflatableShapes } from './bunker-shapes';
 
 function findBlender(): string {
   if (process.env.BLENDER) return process.env.BLENDER;
@@ -56,7 +57,14 @@ try {
     const args = ['--background', '--factory-startup', '--python-exit-code', '1'];
     if (rule.source.endsWith('.blend')) args.push(rule.source);
     args.push('--python', 'scripts/blender/export.py', '--', '--source', rule.source, '--out', raw);
-    const run = spawnSync(blender, args, { encoding: 'utf8' });
+    // game data the build script needs (the bunker shapes from shared/maps.ts), as a JSON file
+    const env = { ...process.env };
+    if (rule.input === 'bunkers') {
+      const file = join(tmp, 'bunkers.json');
+      writeFileSync(file, JSON.stringify(inflatableShapes()));
+      env.SPLAT_INPUT = file;
+    }
+    const run = spawnSync(blender, args, { encoding: 'utf8', env, maxBuffer: 64 * 1024 * 1024 });
     if (run.status !== 0 || !existsSync(raw)) {
       console.log(`FAIL  ${rule.out}: Blender couldn't export ${rule.source}\n${run.stdout}\n${run.stderr}`);
       failed++;

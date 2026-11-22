@@ -4,6 +4,7 @@
 import * as THREE from 'three';
 import { STAND_HEIGHT, PRONE_FEET, PRONE_RADIUS } from '../shared/sim';
 import { paintTeam, type Models } from './models';
+import { toonify } from './toon';
 
 export interface Avatar {
   readonly root: THREE.Object3D;
@@ -15,7 +16,9 @@ export interface Avatar {
 }
 
 export function makeAvatar(models: Models | null, color: number): Avatar {
-  return models ? new ModelAvatar(models, color) : new PrimitiveAvatar(color);
+  const a = models ? new ModelAvatar(models, color) : new PrimitiveAvatar(color);
+  toonify(a.root); // the arcade look (src/toon.ts)
+  return a;
 }
 
 type State = 'idle' | 'run' | 'crouch' | 'crouchMove' | 'out' | 'outWalk';

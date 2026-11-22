@@ -2,7 +2,15 @@
 
 Most of the game's models are built in code (`scripts/build-assets.ts`). Anything more detailed is easier to make in
 Blender, and this pipeline gets it from Blender into the game in one command. The first model made this way is the pump
-marker you hold in pump mode (`art/pump-marker.py` → `public/models/pump-marker.glb`).
+marker you hold in pump mode (`art/pump-marker.py` → `public/models/pump-marker.glb`). The inflatable bunkers on every
+field come from it too (`art/bunkers.py` → `public/models/bunkers.glb`).
+
+## The look
+
+The game is going for a classic arcade look: bold flat colours, banded light and ink outlines. The game does the
+shading and the outlines itself (`src/toon.ts`: toon materials and a full-screen ink pass from the depth buffer), so
+models only need clear shapes and colours. Big readable forms, chunky proportions, and a darker panel or trim
+where two parts meet read best. Fine detail disappears under the lines.
 
 ```
 art/
@@ -51,6 +59,14 @@ within its size and triangle budgets.
   are dozens on a field.
 - **Original work only.** No downloaded models or textures unless their license allows it and they're listed in
   `ASSETS.md`. Don't copy the look of any real marker, bunker or other product.
+
+## Game data in a build script
+
+A build script can ask for the game's own data instead of copying numbers. `"input": "bunkers"` in `art/models.json`
+makes `npm run assets:blender` write every inflatable bunker's shape (from `shared/maps.ts`, via
+`scripts/bunker-shapes.ts`) to a JSON file and pass its path in the `SPLAT_INPUT` environment variable. The models then
+always fit what the server collides with, and `npm run check:models` fails if a field gains a bunker that has no
+model yet.
 
 ## Adding a model
 

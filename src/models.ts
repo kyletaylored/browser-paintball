@@ -5,6 +5,7 @@
 import * as THREE from 'three';
 import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+import { toonify } from './toon';
 
 export interface Models {
   /** bunker templates by node name; look them up with bunkerModel() */
@@ -63,6 +64,7 @@ export async function loadModels(onProgress: (fraction: number) => void): Promis
       g.scene.traverse((o) => {
         if ((o as THREE.Mesh).isMesh) o.castShadow = o.receiveShadow = true;
       });
+      toonify(g.scene); // the arcade look: every copy shares the converted materials
     }
     const byKey = new Map<string, THREE.Object3D>();
     bunkers.scene.traverse((o) => {
@@ -72,6 +74,7 @@ export async function loadModels(onProgress: (fraction: number) => void): Promis
     if (!markerNode) throw new Error('marker.glb has no "marker" node');
     // optional: a missing pump marker only means pump mode looks like the others
     const pump = await new Promise<GLTF | null>((resolve) => loader.load(`${base}pump-marker.glb`, resolve, undefined, () => resolve(null)));
+    if (pump) toonify(pump.scene);
     const pumpNode = pump?.scene.getObjectByName('marker') ?? null;
     if (pump && !pumpNode) console.warn('pump-marker.glb has no "marker" node: using the usual marker for pump mode');
     return {

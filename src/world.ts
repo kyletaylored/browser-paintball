@@ -8,6 +8,7 @@ import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.j
 import { field, bunkerKey, type Bunker, type Look, type PolyBunker } from '../shared/field';
 import type { GameMap } from '../shared/maps';
 import { bunkerModel, type Models } from './models';
+import { toonify } from './toon';
 import { TEAM_COLORS } from '../shared/protocol';
 
 export interface World {
@@ -100,6 +101,8 @@ export function buildWorld(scene: THREE.Scene, models: Models | null): World {
     root.add(g);
     addWobble(g, b);
   }
+  // the arcade look: flat banded shading on the whole field (src/toon.ts)
+  toonify(root);
 
   const moving = new Set<Wobble>();
   const axis = new THREE.Vector3();
