@@ -1,6 +1,6 @@
 // Builds the game's 3D models from code and writes them as compressed glTF binaries:
 //
-//   npm run assets   →  public/models/marker.glb, player.glb (bunkers.glb comes from Blender: art/bunkers.py)
+//   npm run assets   →  public/models/marker.glb (the bunkers and the player figure come from Blender: art/)
 //
 // Every model here is original and made in this file (no downloaded assets): shapes come from
 // three.js geometry builders, get merged per material, and are written with glTF tooling, then
@@ -10,9 +10,8 @@
 //
 // Node names the game relies on:
 //   marker.glb   "marker" (origin at the trigger, barrel along -Z), "muzzle" empty at the barrel tip
-//   player.glb   "player" root, bones "hips" "torso" "head" "shoulderL/R" "elbowL/R" "thighL/R"
-//                "kneeL/R" "gun", animations "idle" "run" "crouch" "crouchMove" "shoot" "out" "outWalk"
-// Materials named "team" are recoloured per team in the game.
+// Materials named "team" are recoloured per team in the game. (The player figure's joints and
+// animations are in scripts/player-rig.ts.)
 
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
@@ -22,7 +21,6 @@ import { EXTMeshoptCompression, KHRMeshQuantization } from '@gltf-transform/exte
 import { dedup, meshopt, prune, weld } from '@gltf-transform/functions';
 import { MeshoptEncoder } from 'meshoptimizer';
 import { mkdirSync, statSync } from 'node:fs';
-import { STAND_HEIGHT } from '../shared/sim';
 
 /** output folder; `--out <dir>` overrides it (scripts/check-assets.ts builds into a temp folder) */
 const outArg = process.argv.indexOf('--out');
@@ -118,7 +116,6 @@ class Builder {
 const rbox = (w: number, h: number, d: number, r: number, seg = 3) => new RoundedBoxGeometry(w, h, d, seg, Math.min(r, w / 2, h / 2, d / 2) * 0.999);
 const cyl = (rt: number, rb: number, h: number, seg = 20) => new THREE.CylinderGeometry(rt, rb, h, seg);
 const sphere = (r: number, w = 18, h = 12) => new THREE.SphereGeometry(r, w, h);
-const capsule = (r: number, len: number) => new THREE.CapsuleGeometry(r, len, 4, 12);
 const torus = (r: number, tube: number, arc = Math.PI * 2) => new THREE.TorusGeometry(r, tube, 6, 16, arc);
 
 // ---- marker ------------------------------------------------------------------------------------
@@ -163,215 +160,7 @@ async function buildMarker() {
   await B.write('marker.glb');
 }
 
-// ---- player ------------------------------------------------------------------------------------
-// A jointed figure: each bone is a node with no mesh of its own; its geometry hangs off a child
-// "<bone>_mesh" node so compression can quantise meshes without touching animated transforms.
-// Faces -Z, feet on y = 0, top of the mask at STAND_HEIGHT.
-
-const PLAYER_MATS: Record<string, MatSpec> = {
-  ...MARKER_MATS,
-  team: { color: 0xff3b3b, roughness: 0.8 }, // jersey + accents
-  pants: { color: 0x2b2f3a, roughness: 0.85 },
-  glove: { color: 0x1c1c20, roughness: 0.7 },
-  shoe: { color: 0x16161a, roughness: 0.6 },
-  mask: { color: 0x30343c, roughness: 0.45 },
-  lens: { color: 0x0b0d12, roughness: 0.08, metalness: 0.5 },
-  pack: { color: 0x222428, roughness: 0.6 },
-};
-
-type V3 = [number, number, number];
-interface BoneDef {
-  parent: string | null;
-  at: V3;
-  part?: (p: Part) => void;
-}
-
-const HIP_Y = 0.95;
-const BONES: Record<string, BoneDef> = {
-  player: { parent: null, at: [0, 0, 0] },
-  hips: {
-    parent: 'player', at: [0, HIP_Y, 0], part: (p) => {
-      p.add('pants', rbox(0.34, 0.2, 0.22, 0.07), [0, 0, 0]);
-      p.add('pack', rbox(0.3, 0.12, 0.09, 0.03), [0, 0.02, 0.15]); // pod pack
-      for (const x of [-0.09, 0, 0.09]) {
-        p.add('pack', cyl(0.028, 0.028, 0.2, 12), [x, 0.12, 0.19]);
-        p.add('team', cyl(0.03, 0.03, 0.03, 12), [x, 0.235, 0.19]);
-      }
-    },
-  },
-  torso: {
-    parent: 'hips', at: [0, 0.08, 0], part: (p) => {
-      p.add('team', rbox(0.4, 0.5, 0.25, 0.09, 3), [0, 0.27, 0]);
-      p.add('pants', rbox(0.36, 0.06, 0.23, 0.025, 2), [0, 0.03, 0]); // belt
-      p.add('team', cyl(0.07, 0.08, 0.06, 14), [0, 0.54, 0]); // collar
-    },
-  },
-  head: {
-    parent: 'torso', at: [0, 0.56, 0], part: (p) => {
-      const top = STAND_HEIGHT - (HIP_Y + 0.08 + 0.56); // keep the top of the mask at STAND_HEIGHT
-      p.add('mask', sphere(0.125, 20, 14), [0, top - 0.125, 0]);
-      p.add('lens', rbox(0.2, 0.07, 0.07, 0.02, 2), [0, top - 0.11, -0.095]);
-      p.add('mask', rbox(0.17, 0.09, 0.09, 0.03, 2), [0, top - 0.205, -0.085]); // mouth guard
-      p.add('team', rbox(0.23, 0.014, 0.08, 0.005, 1), [0, top - 0.055, -0.11]); // visor
-    },
-  },
-  shoulderR: { parent: 'torso', at: [0.235, 0.46, 0], part: (p) => p.add('team', capsule(0.055, 0.2), [0, -0.13, 0]) },
-  elbowR: { parent: 'shoulderR', at: [0, -0.27, 0], part: (p) => p.add('team', capsule(0.048, 0.18), [0, -0.12, 0]).add('glove', sphere(0.05, 12, 8), [0, -0.25, 0]) },
-  shoulderL: { parent: 'torso', at: [-0.235, 0.46, 0], part: (p) => p.add('team', capsule(0.055, 0.2), [0, -0.13, 0]) },
-  elbowL: { parent: 'shoulderL', at: [0, -0.27, 0], part: (p) => p.add('team', capsule(0.048, 0.18), [0, -0.12, 0]).add('glove', sphere(0.05, 12, 8), [0, -0.25, 0]) },
-  thighR: { parent: 'hips', at: [0.1, -0.05, 0], part: (p) => p.add('pants', capsule(0.075, 0.3), [0, -0.21, 0]) },
-  kneeR: {
-    parent: 'thighR', at: [0, -0.44, 0], part: (p) => p.add('pants', capsule(0.064, 0.3), [0, -0.2, 0]).add('shoe', rbox(0.1, 0.075, 0.25, 0.03, 2), [0, -0.42, -0.05]),
-  },
-  thighL: { parent: 'hips', at: [-0.1, -0.05, 0], part: (p) => p.add('pants', capsule(0.075, 0.3), [0, -0.21, 0]) },
-  kneeL: {
-    parent: 'thighL', at: [0, -0.44, 0], part: (p) => p.add('pants', capsule(0.064, 0.3), [0, -0.2, 0]).add('shoe', rbox(0.1, 0.075, 0.25, 0.03, 2), [0, -0.42, -0.05]),
-  },
-  gun: { parent: 'torso', at: [0.08, 0.2, -0.3] },
-};
-
-// Poses are Euler XYZ rotations per bone (+X swings a hanging limb forward), plus hip height and
-// gun offset. Rotating the torso by -X leans it forward.
-interface Pose {
-  rot: Partial<Record<string, V3>>;
-  hipY: number;
-  gun?: V3;
-  gunRot?: V3;
-}
-// Euler XYZ applies Z first: -Z swings the right arm in toward the chest, +Z the left one.
-const HOLD: Partial<Record<string, V3>> = {
-  shoulderR: [1.05, 0, -0.3],
-  elbowR: [0.55, 0, 0],
-  shoulderL: [1.25, 0, 0.5],
-  elbowL: [0.35, 0, 0],
-};
-const GUN_REST: V3 = [0.08, 0.2, -0.3];
-
-const sin = Math.sin;
-const CLIPS: Record<string, { length: number; frames: number; pose: (t: number) => Pose }> = {
-  idle: {
-    length: 2.4, frames: 13, pose: (t) => {
-      const b = sin((t / 2.4) * Math.PI * 2);
-      return { hipY: HIP_Y - 0.005 * (1 + b), rot: { ...HOLD, torso: [-0.06 + 0.015 * b, 0, 0], head: [0.04, 0.05 * b, 0], thighL: [0.04, 0, -0.04], thighR: [-0.02, 0, 0.04], kneeL: [-0.06, 0, 0], kneeR: [-0.03, 0, 0] } };
-    },
-  },
-  run: {
-    length: 0.66, frames: 17, pose: (t) => {
-      const ph = (t / 0.66) * Math.PI * 2;
-      const s = sin(ph);
-      const knee = (x: number) => -(0.25 + 1.1 * Math.max(0, sin(x)));
-      return {
-        hipY: HIP_Y - 0.06 + 0.035 * Math.abs(sin(ph)),
-        rot: {
-          ...HOLD,
-          torso: [-0.22, 0.08 * s, 0], head: [0.16, -0.08 * s, 0],
-          thighL: [0.75 * s, 0, 0], thighR: [-0.75 * s, 0, 0],
-          kneeL: [knee(ph + Math.PI / 2 + Math.PI), 0, 0], kneeR: [knee(ph + Math.PI / 2), 0, 0],
-        },
-      };
-    },
-  },
-  crouch: {
-    length: 2, frames: 9, pose: (t) => {
-      const b = sin((t / 2) * Math.PI * 2);
-      return { hipY: 0.6 + 0.004 * b, rot: { ...HOLD, torso: [-0.38 + 0.01 * b, 0, 0], head: [0.32, 0, 0], thighL: [1.25, 0, -0.12], thighR: [1.05, 0, 0.12], kneeL: [-2.05, 0, 0], kneeR: [-1.7, 0, 0] } };
-    },
-  },
-  crouchMove: {
-    length: 0.9, frames: 13, pose: (t) => {
-      const s = sin((t / 0.9) * Math.PI * 2);
-      return { hipY: 0.62 + 0.015 * Math.abs(s), rot: { ...HOLD, torso: [-0.38, 0.05 * s, 0], head: [0.32, 0, 0], thighL: [1.2 + 0.3 * s, 0, -0.1], thighR: [1.2 - 0.3 * s, 0, 0.1], kneeL: [-1.95 + 0.3 * Math.max(0, s), 0, 0], kneeR: [-1.95 + 0.3 * Math.max(0, -s), 0, 0] } };
-    },
-  },
-  // played additively on top of whatever else is playing: a quick kick back and up
-  shoot: {
-    length: 0.12, frames: 7, pose: (t) => {
-      const k = t < 0.03 ? t / 0.03 : Math.max(0, 1 - (t - 0.03) / 0.09);
-      return { hipY: HIP_Y, rot: { ...HOLD, torso: [0.03 * k, 0, 0] }, gun: [GUN_REST[0], GUN_REST[1] + 0.01 * k, GUN_REST[2] + 0.035 * k], gunRot: [0.12 * k, 0, 0] };
-    },
-  },
-  // eliminated: marker and hands up, the universal "I'm out" signal
-  out: {
-    length: 1.6, frames: 9, pose: (t) => {
-      const b = sin((t / 1.6) * Math.PI * 2);
-      return {
-        hipY: HIP_Y,
-        rot: { torso: [0.04, 0, 0], head: [-0.1, 0, 0], shoulderR: [2.85 + 0.03 * b, 0, -0.15], elbowR: [0.25, 0, 0], shoulderL: [2.9 - 0.03 * b, 0, 0.15], elbowL: [0.3, 0, 0] },
-        gun: [0.12, 0.98, -0.02], gunRot: [1.25, 0, 0],
-      };
-    },
-  },
-  // eliminated and walking off the field: marker still up, an easy walk (about 3 m/s)
-  outWalk: {
-    length: 0.9, frames: 17, pose: (t) => {
-      const ph = (t / 0.9) * Math.PI * 2;
-      const s = sin(ph);
-      const knee = (x: number) => -(0.12 + 0.6 * Math.max(0, sin(x)));
-      return {
-        hipY: HIP_Y - 0.02 + 0.015 * Math.abs(s),
-        rot: {
-          torso: [0.02, 0.05 * s, 0], head: [-0.08, -0.04 * s, 0],
-          shoulderR: [2.85, 0, -0.15], elbowR: [0.25, 0, 0], shoulderL: [2.9, 0, 0.15], elbowL: [0.3, 0, 0],
-          thighL: [0.45 * s, 0, 0], thighR: [-0.45 * s, 0, 0],
-          kneeL: [knee(ph + Math.PI / 2 + Math.PI), 0, 0], kneeR: [knee(ph + Math.PI / 2), 0, 0],
-        },
-        gun: [0.12, 0.98 + 0.01 * Math.abs(s), -0.02], gunRot: [1.25, 0, 0],
-      };
-    },
-  },
-};
-
-async function buildPlayer() {
-  const B = new Builder(PLAYER_MATS);
-  const nodes = new Map<string, Node>();
-  for (const [name, def] of Object.entries(BONES)) {
-    const n = B.doc.createNode(name).setTranslation(def.at);
-    nodes.set(name, n);
-    if (def.parent) nodes.get(def.parent)!.addChild(n);
-    else B.scene.addChild(n);
-    if (def.part) {
-      const p = new Part();
-      def.part(p);
-      n.addChild(p.toNode(B, `${name}_mesh`));
-    }
-  }
-  nodes.get('gun')!.addChild(markerPart().toNode(B, 'gun_mesh'));
-
-  // animations: sample each pose function and write rotation/translation tracks for every bone
-  const animated = ['torso', 'head', 'shoulderR', 'elbowR', 'shoulderL', 'elbowL', 'thighR', 'kneeR', 'thighL', 'kneeL'];
-  const q = new THREE.Quaternion();
-  for (const [clipName, clip] of Object.entries(CLIPS)) {
-    const anim = B.doc.createAnimation(clipName);
-    const times = new Float32Array(clip.frames);
-    for (let i = 0; i < clip.frames; i++) times[i] = (i / (clip.frames - 1)) * clip.length;
-    const poses = [...times].map((t) => clip.pose(t));
-    const input = B.accessor('SCALAR', times);
-    const track = (node: string, path: 'rotation' | 'translation', values: number[]) => {
-      const sampler = B.doc.createAnimationSampler().setInput(input).setOutput(B.accessor(path === 'rotation' ? 'VEC4' : 'VEC3', new Float32Array(values))).setInterpolation('LINEAR');
-      anim.addSampler(sampler);
-      anim.addChannel(B.doc.createAnimationChannel().setTargetNode(nodes.get(node)!).setTargetPath(path).setSampler(sampler));
-    };
-    for (const bone of animated) {
-      const vals: number[] = [];
-      for (const p of poses) {
-        q.setFromEuler(new THREE.Euler(...(p.rot[bone] ?? [0, 0, 0])));
-        vals.push(q.x, q.y, q.z, q.w);
-      }
-      track(bone, 'rotation', vals);
-    }
-    track('hips', 'translation', poses.flatMap((p) => [0, p.hipY, 0]));
-    track('gun', 'translation', poses.flatMap((p) => p.gun ?? GUN_REST));
-    const gunRot: number[] = [];
-    for (const p of poses) {
-      q.setFromEuler(new THREE.Euler(...(p.gunRot ?? [0, 0, 0])));
-      gunRot.push(q.x, q.y, q.z, q.w);
-    }
-    track('gun', 'rotation', gunRot);
-  }
-  await B.write('player.glb');
-}
 
 mkdirSync(OUT, { recursive: true });
 console.log('building models:');
 await buildMarker();
-await buildPlayer();

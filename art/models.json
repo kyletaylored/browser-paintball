@@ -20,6 +20,47 @@
       ]
     },
     {
+      "source": "art/player.py",
+      "out": "player.glb",
+      "what": "the player figure: its joints from scripts/player-rig.ts, with every animation",
+      "input": "player",
+      "clips": "player",
+      "nodes": [
+        "player",
+        "hips",
+        "torso",
+        "head",
+        "shoulderR",
+        "elbowR",
+        "shoulderL",
+        "elbowL",
+        "thighR",
+        "kneeR",
+        "thighL",
+        "kneeL",
+        "gun"
+      ],
+      "animations": {
+        "idle": 2.4,
+        "run": 0.66,
+        "crouch": 2,
+        "crouchMove": 0.9,
+        "shoot": 0.12,
+        "out": 1.6,
+        "outWalk": 0.9
+      },
+      "materials": [
+        "team"
+      ],
+      "maxTriangles": 14000,
+      "maxKB": 160,
+      "size": [
+        1.0,
+        1.85,
+        1.2
+      ]
+    },
+    {
       "source": "art/pump-marker.py",
       "out": "pump-marker.glb",
       "what": "the first-person pump marker, for pump mode",

@@ -16,8 +16,13 @@ export interface ModelRule {
   what: string;
   /** node names the game looks up */
   nodes: string[];
-  /** game data the build script needs, handed over as JSON (SPLAT_INPUT): 'bunkers' = every inflatable's shape */
-  input?: 'bunkers';
+  /**
+   * game data the build script needs, handed over as JSON (SPLAT_INPUT): 'bunkers' = every
+   * inflatable's shape; 'player' = the figure's joints (scripts/player-rig.ts)
+   */
+  input?: 'bunkers' | 'player';
+  /** animations added after the export, from code: 'player' = the figure's (scripts/player-rig.ts) */
+  clips?: 'player';
   /** animation name → length in seconds */
   animations: Record<string, number>;
   /** material names the game looks up ("team" is recoloured per team) */

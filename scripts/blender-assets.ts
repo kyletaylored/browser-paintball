@@ -18,6 +18,7 @@ import { dedup, meshopt, prune, weld } from '@gltf-transform/functions';
 import { MeshoptEncoder } from 'meshoptimizer';
 import { checkModel, gltfIO, loadRules } from './model-rules';
 import { inflatableShapes } from './bunker-shapes';
+import { addPlayerClips, rigData } from './player-rig';
 
 function findBlender(): string {
   if (process.env.BLENDER) return process.env.BLENDER;
@@ -59,9 +60,9 @@ try {
     args.push('--python', 'scripts/blender/export.py', '--', '--source', rule.source, '--out', raw);
     // game data the build script needs (the bunker shapes from shared/maps.ts), as a JSON file
     const env = { ...process.env };
-    if (rule.input === 'bunkers') {
-      const file = join(tmp, 'bunkers.json');
-      writeFileSync(file, JSON.stringify(inflatableShapes()));
+    if (rule.input) {
+      const file = join(tmp, `${rule.input}.json`);
+      writeFileSync(file, JSON.stringify(rule.input === 'bunkers' ? inflatableShapes() : rigData()));
       env.SPLAT_INPUT = file;
     }
     const run = spawnSync(blender, args, { encoding: 'utf8', env, maxBuffer: 64 * 1024 * 1024 });
@@ -73,6 +74,8 @@ try {
     // compress like the code-made models
     const io = await gltfIO();
     const doc = await io.read(raw);
+    // animations kept in code (the player's: scripts/player-rig.ts) go on before compressing
+    if (rule.clips === 'player') addPlayerClips(doc);
     await doc.transform(
       weld(),
       dedup(),
