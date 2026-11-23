@@ -5,7 +5,9 @@
 
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { field, bunkerKey, type Bunker, type Look, type PolyBunker } from '../shared/field';
+import {
+  field, bunkerKey, topOf, logHalf, profileBox, centreOf, type Bunker, type Look, type PolyBunker, type TaperBunker, type ProfileBunker,
+} from '../shared/field';
 import type { GameMap } from '../shared/maps';
 import { bunkerModel, type Models } from './models';
 import { toonify } from './toon';
@@ -75,7 +77,7 @@ export function buildWorld(scene: THREE.Scene, models: Models | null): World {
   const mats = new Materials();
   const wobbles: (Wobble | null)[] = [];
   const addWobble = (g: THREE.Object3D, b: Bunker) => {
-    const h = b.kind === 'log' ? b.r * 2 : b.h;
+    const h = topOf(b);
     wobbles.push(SOFT.has(b.look ?? 'inflatable') ? { g, give: 1.6 / Math.max(1.2, h), tx: 0, tz: 0, vx: 0, vz: 0 } : null);
   };
   for (const b of field.bunkers) {
@@ -170,16 +172,33 @@ export function buildWorld(scene: THREE.Scene, models: Models | null): World {
  * (shared/field.ts). A mismatch shows up in game as paint splatting on thin air.
  */
 function checkFit(g: THREE.Object3D, b: Bunker): void {
-  if (b.kind !== 'box' && b.kind !== 'can') return;
   const box = new THREE.Box3().setFromObject(g);
-  const w = b.kind === 'box' ? b.w : b.r * 2;
-  const d = b.kind === 'box' ? b.d : b.r * 2;
+  const want = footprintBox(b);
   // 0.2 m of slack: seams, the valve and the flared base skirt stick out a little past the shape
-  const off = (got: number, want: number) => Math.abs(got - want) > 0.2;
-  if (off(box.min.y, 0) || off(box.max.y, b.h) || off(box.max.x - box.min.x, w) || off(box.max.z - box.min.z, d) ||
-      off((box.min.x + box.max.x) / 2, b.x) || off((box.min.z + box.max.z) / 2, b.z)) {
+  const off = (got: number, w: number) => Math.abs(got - w) > 0.2;
+  if (off(box.min.y, 0) || off(box.max.y, topOf(b)) || off(box.min.x, want.x0) || off(box.max.x, want.x1) ||
+      off(box.min.z, want.z0) || off(box.max.z, want.z1)) {
     console.warn(`bunker model ${bunkerKey(b)} at (${b.x}, ${b.z}) doesn't match its collision shape`, box);
   }
+}
+
+/** a bunker's footprint as a world-space box seen from above */
+function footprintBox(b: Bunker): { x0: number; x1: number; z0: number; z1: number } {
+  let hx: number;
+  let hz: number;
+  if (b.kind === 'poly' || b.kind === 'taper') {
+    const xs = b.pts.map(([x]) => b.x + x);
+    const zs = b.pts.map(([, z]) => b.z + z);
+    return { x0: Math.min(...xs), x1: Math.max(...xs), z0: Math.min(...zs), z1: Math.max(...zs) };
+  }
+  if (b.kind === 'profile') {
+    const f = profileBox(b);
+    return { x0: f.x - f.hx, x1: f.x + f.hx, z0: f.z - f.hz, z1: f.z + f.hz };
+  }
+  if (b.kind === 'can') hx = hz = b.r;
+  else if (b.kind === 'log') [hx, hz] = logHalf(b);
+  else [hx, hz] = [b.w / 2, b.d / 2];
+  return { x0: b.x - hx, x1: b.x + hx, z0: b.z - hz, z1: b.z + hz };
 }
 
 // ---- bunkers ----------------------------------------------------------------------------------
@@ -322,6 +341,20 @@ function drawBunker(b: Bunker, mats: Materials): THREE.Group {
     return g;
   }
 
+  if (b.kind === 'taper') {
+    add(taperGeometry(b), mats.inflatable(b.color));
+    const y = b.h * 0.4;
+    add(taperGeometry(b, y - 0.06, y + 0.06, 1.012), mats.band);
+    return g;
+  }
+
+  if (b.kind === 'profile') {
+    add(profileGeometry(b), mats.inflatable(b.color));
+    const low = Math.min(...b.line.map(([, y]) => y));
+    add(profileGeometry(b, 0.12, 1.01), mats.band, low * 0.5 - 0.06); // a strip along it, under the lowest dip
+    return g;
+  }
+
   // poly: an upright prism over the footprint
   const geo = prismGeometry(b);
   if (look === 'rock') {
@@ -345,6 +378,71 @@ function prismGeometry(b: PolyBunker, h = b.h, grow = 1): THREE.BufferGeometry {
   const shape = new THREE.Shape(b.pts.map(([x, z]) => new THREE.Vector2(x * grow, -z * grow)));
   const geo = new THREE.ExtrudeGeometry(shape, { depth: h, bevelEnabled: false });
   geo.rotateX(-Math.PI / 2);
+  geo.computeVertexNormals();
+  return geo;
+}
+
+/**
+ * A slice of a taper from height y0 to y1 (the whole thing by default), relative to its x, z;
+ * grow pushes it out from the middle a little (for a band round it).
+ */
+function taperGeometry(b: TaperBunker, y0 = 0, y1 = b.h, grow = 1): THREE.BufferGeometry {
+  const [ax, az] = b.apex ?? centreOf(b.pts);
+  const [cx, cz] = centreOf(b.pts);
+  const ring = (y: number) => {
+    const k = 1 - (1 - b.top) * (y / b.h);
+    return b.pts.map(([px, pz]) => {
+      const x = ax + (px - ax) * k;
+      const z = az + (pz - az) * k;
+      return new THREE.Vector3(cx + (x - cx) * grow, y, cz + (z - cz) * grow);
+    });
+  };
+  const lo = ring(y0);
+  const hi = ring(y1);
+  const n = lo.length;
+  const pos: number[] = [];
+  const tri = (a: THREE.Vector3, b2: THREE.Vector3, c: THREE.Vector3) => pos.push(a.x, a.y, a.z, b2.x, b2.y, b2.z, c.x, c.y, c.z);
+  // wind every face so it's seen from outside, whichever way round the corners were given
+  let area = 0;
+  for (let i = 0; i < n; i++) area += lo[i].x * lo[(i + 1) % n].z - lo[(i + 1) % n].x * lo[i].z;
+  const flip = area > 0;
+  for (let i = 0; i < n; i++) {
+    const j = (i + 1) % n;
+    if (flip) {
+      tri(lo[i], hi[j], lo[j]);
+      tri(lo[i], hi[i], hi[j]);
+    } else {
+      tri(lo[i], lo[j], hi[j]);
+      tri(lo[i], hi[j], hi[i]);
+    }
+  }
+  for (let i = 1; i < n - 1; i++) {
+    if (flip) {
+      tri(hi[0], hi[i + 1], hi[i]);
+      tri(lo[0], lo[i], lo[i + 1]);
+    } else {
+      tri(hi[0], hi[i], hi[i + 1]);
+      tri(lo[0], lo[i + 1], lo[i]);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  geo.computeVertexNormals();
+  return geo;
+}
+
+/**
+ * A wall with a shaped top, relative to its x, z: its outline under the top line, as thick as the wall.
+ * `cap` cuts it off at that height (for a band along it); grow makes it a little thicker and longer.
+ */
+function profileGeometry(b: ProfileBunker, cap = Infinity, grow = 1): THREE.BufferGeometry {
+  const l = b.line;
+  const pts = [new THREE.Vector2(l[0][0] * grow, 0), ...l.map(([u, y]) => new THREE.Vector2(u * grow, Math.min(y, cap))), new THREE.Vector2(l[l.length - 1][0] * grow, 0)];
+  const d = b.d * grow;
+  const geo = new THREE.ExtrudeGeometry(new THREE.Shape(pts), { depth: d, bevelEnabled: false });
+  geo.translate(0, 0, -d / 2);
+  // the shape is drawn in (u, y) and pushed out along +z: that's a wall along x; turn it for one along z
+  if (b.axis === 'z') geo.rotateY(-Math.PI / 2);
   geo.computeVertexNormals();
   return geo;
 }

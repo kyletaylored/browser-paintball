@@ -2,7 +2,7 @@
 // (shared/maps.ts): for the vote cards. Red's end on the left, Blue's on the right.
 
 import type { GameMap } from '../shared/maps';
-import { logHalf } from '../shared/field';
+import { logHalf, profileBox } from '../shared/field';
 
 const GROUND: Record<GameMap['theme']['ground'], string> = { turf: '#2f8a3a', sand: '#cdb27a', forest: '#2c5a2a' };
 const cache = new Map<string, string>();
@@ -49,7 +49,10 @@ export function layoutImage(map: GameMap, width = 240): string {
     g.beginPath();
     if (b.kind === 'can') {
       g.arc(X(b.x), Z(b.z), Math.max(1.2, b.r * scale), 0, Math.PI * 2);
-    } else if (b.kind === 'poly') {
+    } else if (b.kind === 'profile') {
+      const f = profileBox(b);
+      g.rect(X(f.x - f.hx), Z(f.z - f.hz), Math.max(1.5, 2 * f.hx * scale), Math.max(1.5, 2 * f.hz * scale));
+    } else if (b.kind === 'poly' || b.kind === 'taper') {
       b.pts.forEach(([px, pz], i) => (i ? g.lineTo(X(b.x + px), Z(b.z + pz)) : g.moveTo(X(b.x + px), Z(b.z + pz))));
       g.closePath();
     } else {
