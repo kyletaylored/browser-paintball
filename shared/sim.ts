@@ -1,10 +1,11 @@
 // Game rules and physics that must agree on both sides: player movement, paintball flight,
 // and collision against the field. No three.js in here, just numbers, so the Node server can run it too.
 //
-// No physics engine is needed: a paintball field is boxes, cylinders, upright prisms and logs, and the
-// player is treated as an upright capsule. Everything reads the current map from shared/field.ts.
+// No physics engine is needed: a paintball field is boxes, cylinders, upright prisms, logs, tapering
+// shapes (doritos, spikes) and walls with a shaped top, and the player is treated as an upright
+// capsule. Everything reads the current map from shared/field.ts.
 
-import { field, logHalf, topOf, footprintDistance, type Bunker } from './field';
+import { field, logHalf, topOf, footprintDistance, profileBox, profileHeight, type Bunker, type ProfileBunker } from './field';
 
 // ---- tuning -------------------------------------------------------------------------------
 
@@ -140,6 +141,8 @@ function groundHeightAt(x: number, z: number, feetY: number): number {
     const b = bs[i];
     const top = topOf(b);
     if (top > feetY + 0.06 || top <= g) continue;
+    // sloped and shaped tops can't be stood on: you slide off them (see pushOutOfBunkers)
+    if (b.kind === 'taper' || b.kind === 'profile') continue;
     const bound = field.bounds[i];
     if (Math.abs(x - bound.x) > bound.r + r || Math.abs(z - bound.z) > bound.r + r) continue;
     if (b.kind === 'box') {
@@ -163,13 +166,19 @@ function pushOutOfBunkers(p: Body): void {
     if (p.y >= topOf(b) - 0.06) continue; // standing on top of it, or above it
     const bound = field.bounds[i];
     if (Math.abs(p.x - bound.x) > bound.r + r || Math.abs(p.z - bound.z) > bound.r + r) continue;
-    if (b.kind === 'poly') {
+    if (b.kind === 'poly' || b.kind === 'taper') {
+      // a taper is pushed out of by its base: it's solid all the way up for walking
       pushOutOfPoly(p, i, r);
-    } else if (b.kind === 'box' || b.kind === 'log') {
-      // a log is pushed out of like a box the size of its footprint
-      const [hx, hz] = b.kind === 'log' ? logHalf(b) : [b.w / 2, b.d / 2];
-      const dx = p.x - clamp(p.x, b.x - hx, b.x + hx);
-      const dz = p.z - clamp(p.z, b.z - hz, b.z + hz);
+    } else if (b.kind === 'box' || b.kind === 'log' || b.kind === 'profile') {
+      // a log, or a shaped wall, is pushed out of like a box the size of its footprint
+      let cx = b.x;
+      let cz = b.z;
+      let hx: number;
+      let hz: number;
+      if (b.kind === 'profile') ({ x: cx, z: cz, hx, hz } = profileBox(b));
+      else [hx, hz] = b.kind === 'log' ? logHalf(b) : [b.w / 2, b.d / 2];
+      const dx = p.x - clamp(p.x, cx - hx, cx + hx);
+      const dz = p.z - clamp(p.z, cz - hz, cz + hz);
       const d2 = dx * dx + dz * dz;
       if (d2 >= r * r) continue;
       if (d2 > 1e-10) {
@@ -177,10 +186,10 @@ function pushOutOfBunkers(p: Body): void {
         slide(p, dx / d, dz / d, r - d);
       } else {
         // centre ended up inside the box: leave by the shallowest side
-        const px = hx - Math.abs(p.x - b.x) + r;
-        const pz = hz - Math.abs(p.z - b.z) + r;
-        if (px < pz) slide(p, Math.sign(p.x - b.x) || 1, 0, px);
-        else slide(p, 0, Math.sign(p.z - b.z) || 1, pz);
+        const px = hx - Math.abs(p.x - cx) + r;
+        const pz = hz - Math.abs(p.z - cz) + r;
+        if (px < pz) slide(p, Math.sign(p.x - cx) || 1, 0, px);
+        else slide(p, 0, Math.sign(p.z - cz) || 1, pz);
       }
     } else {
       const dx = p.x - b.x;
@@ -487,8 +496,12 @@ export function traceWorld(x0: number, y0: number, z0: number, x1: number, y1: n
     const bound = field.bounds[i];
     if (y0 > bound.top && y1 > bound.top) continue;
     if (!segmentNearCircle(x0, z0, dx, dz, lenXZ, bound.x, bound.z, bound.r)) continue;
-    if (b.kind === 'poly' || b.kind === 'log') {
-      const t = b.kind === 'poly' ? segPoly(x0, y0, z0, dx, dy, dz, i, b.h) : segLog(x0, y0, z0, dx, dy, dz, b);
+    if (b.kind === 'poly' || b.kind === 'log' || b.kind === 'taper' || b.kind === 'profile') {
+      const t =
+        b.kind === 'poly' ? segPoly(x0, y0, z0, dx, dy, dz, i, b.h)
+        : b.kind === 'taper' ? segHull(x0, y0, z0, dx, dy, dz, i)
+        : b.kind === 'profile' ? segProfile(x0, y0, z0, dx, dy, dz, b)
+        : segLog(x0, y0, z0, dx, dy, dz, b);
       if (t >= 0 && t < best) {
         best = t;
         nx = hitN[0];
@@ -621,6 +634,115 @@ function segPoly(x0: number, y0: number, z0: number, dx: number, dy: number, dz:
     hitN[2] = s.nz[face];
   }
   return tmin;
+}
+
+/**
+ * Segment against a convex solid (a taper, bunker i): clip it against every plane round it.
+ * Returns entry t in 0..1 (normal in hitN), or -1 (no hit, or it started inside).
+ */
+function segHull(x0: number, y0: number, z0: number, dx: number, dy: number, dz: number, i: number): number {
+  const s = field.hulls[i]!;
+  let tmin = 0;
+  let tmax = 1;
+  let face = -1;
+  for (let k = 0; k < s.nx.length; k++) {
+    const denom = s.nx[k] * dx + s.ny[k] * dy + s.nz[k] * dz;
+    const dist = s.nx[k] * x0 + s.ny[k] * y0 + s.nz[k] * z0 - s.off[k]; // > 0 outside this plane
+    if (Math.abs(denom) < 1e-12) {
+      if (dist > 0) return -1;
+      continue;
+    }
+    const t = -dist / denom;
+    if (denom < 0) {
+      if (t > tmin) {
+        tmin = t;
+        face = k;
+      }
+    } else if (t < tmax) tmax = t;
+    if (tmin > tmax) return -1;
+  }
+  if (face < 0) return -1; // started inside
+  hitN[0] = s.nx[face];
+  hitN[1] = s.ny[face];
+  hitN[2] = s.nz[face];
+  return tmin;
+}
+
+/**
+ * Segment against a wall with a shaped top (a profile bunker). Seen from the side it's the outline
+ * under its top line; across, it's a slab d thick. Clip to the slab, then: either it comes in through a
+ * face of the slab where the outline is, or it crosses the outline's edge (its top or an end) later on.
+ * Returns entry t in 0..1 (normal in hitN), or -1.
+ */
+function segProfile(x0: number, y0: number, z0: number, dx: number, dy: number, dz: number, b: ProfileBunker): number {
+  // work in (u = along the wall, v = across it, y)
+  const alongX = b.axis === 'x';
+  const u0 = alongX ? x0 - b.x : z0 - b.z;
+  const v0 = alongX ? z0 - b.z : x0 - b.x;
+  const du = alongX ? dx : dz;
+  const dv = alongX ? dz : dx;
+  const half = b.d / 2;
+  let ta = 0;
+  let tb = 1;
+  if (Math.abs(dv) < 1e-12) {
+    if (Math.abs(v0) > half) return -1;
+  } else {
+    let t1 = (-half - v0) / dv;
+    let t2 = (half - v0) / dv;
+    if (t1 > t2) [t1, t2] = [t2, t1];
+    ta = Math.max(ta, t1);
+    tb = Math.min(tb, t2);
+    if (ta > tb) return -1;
+  }
+  const inside = (t: number) => {
+    const h = profileHeight(b, u0 + du * t);
+    const y = y0 + dy * t;
+    return h >= 0 && y >= 0 && y <= h;
+  };
+  if (inside(ta)) {
+    if (ta <= 0) return -1; // started inside
+    // in through the front or back face of the slab
+    const sv = dv > 0 ? -1 : 1;
+    hitN[0] = alongX ? 0 : sv;
+    hitN[1] = 0;
+    hitN[2] = alongX ? sv : 0;
+    return ta;
+  }
+  // otherwise the first place (after ta, before tb) the path crosses the outline: the top line, or an end
+  const l = b.line;
+  let best = Infinity;
+  let nu = 0;
+  let ny = 0;
+  const edge = (ua: number, ya: number, ub: number, yb: number) => {
+    // solve u0 + du t = ua + eu s, y0 + dy t = ya + ey s
+    const eu = ub - ua;
+    const ey = yb - ya;
+    const den = du * ey - dy * eu;
+    if (Math.abs(den) < 1e-12) return;
+    const fu = ua - u0;
+    const fy = ya - y0;
+    const t = (fu * ey - fy * eu) / den;
+    const sp = (fu * dy - fy * du) / den;
+    if (t < ta || t > tb || sp < 0 || sp > 1 || t >= best) return;
+    // the outline runs up the first end, along the top, then down the last end: its outside is to the
+    // left of each edge, (-ey, eu)
+    const len = Math.hypot(eu, ey);
+    const ou = -ey / len;
+    const oy = eu / len;
+    if (ou * du + oy * dy >= 0) return; // leaving, not entering
+    best = t;
+    nu = ou;
+    ny = oy;
+  };
+  edge(l[0][0], 0, l[0][0], l[0][1]);
+  for (let k = 1; k < l.length; k++) edge(l[k - 1][0], l[k - 1][1], l[k][0], l[k][1]);
+  const last = l[l.length - 1];
+  edge(last[0], last[1], last[0], 0);
+  if (best === Infinity) return -1;
+  hitN[0] = alongX ? nu : 0;
+  hitN[1] = ny;
+  hitN[2] = alongX ? 0 : nu;
+  return best;
 }
 
 /** Segment against a log lying on the ground (a cylinder along x or z, centre r above the ground). */

@@ -1,8 +1,8 @@
 // Checks for every field in shared/maps.ts:  npm run test:maps
 //
 //  - layout: bunkers inside the field lines, clear of every start position, both halves mirrored
-//  - collision: paint stops on the new shapes (upright prisms and logs) where they're drawn, and
-//    players are pushed out of them
+//  - collision: paint stops on every shape (upright prisms, logs, tapering shapes and shaped walls)
+//    where it's drawn, and players are pushed out of them
 //  - bots: the navigation grid finds a way from one start line to the other
 //
 // With --bots it also plays one point per field on a real server, with bots on both teams, and
@@ -15,9 +15,10 @@
 // Paint off players: most hits break, glancing ones often skip off (and the player plays on).
 // Lying down: the body is hit along the ground, not as a short upright stub.
 // Out: from anywhere on every field, an eliminated player walks off past the side line.
+// Shaped tops: paint follows a pyramid's slope and a wall's top line (over a dip, through a notch).
 
 import { MAP_LIST, DEFAULT_MAP, nextMap, unanimousVote, voteWinner } from '../shared/maps';
-import { field, setMap, spawnPoint, footprintDistance, topOf, type Bunker } from '../shared/field';
+import { field, setMap, useBunkers, spawnPoint, footprintDistance, taperHeight, topOf, type Bunker } from '../shared/field';
 import {
   traceWorld, stepMovement, advanceBall, hitWorld, hitPlayer, ballSeed, bounceChance, playerBounceChance, segmentHitsPlayer, BALL_DT, STAND_HEIGHT,
   PRONE_HEIGHT, PLAYER_RADIUS, INPUT_DT,
@@ -38,9 +39,23 @@ function check(name: string, ok: boolean, detail = '') {
 function mirrored(b: Bunker, all: readonly Bunker[]): boolean {
   return all.some((o) => {
     if (o.kind !== b.kind || Math.abs(o.x + b.x) > 1e-6 || Math.abs(o.z - b.z) > 1e-6 || topOf(o) !== topOf(b)) return false;
-    if (b.kind === 'poly' && o.kind === 'poly') {
+    const flipped = (a: [number, number][], c: [number, number][]) =>
+      a.length === c.length && a.every(([x, z]) => c.some(([ox, oz]) => Math.abs(ox + x) < 1e-6 && Math.abs(oz - z) < 1e-6));
+    if ((b.kind === 'poly' && o.kind === 'poly') || (b.kind === 'taper' && o.kind === 'taper')) {
       // same outline flipped in x (as a set of corners)
-      return b.pts.every(([x, z]) => o.pts.some(([ox, oz]) => Math.abs(ox + x) < 1e-6 && Math.abs(oz - z) < 1e-6));
+      if (!flipped(b.pts, o.pts)) return false;
+      if (b.kind === 'taper' && o.kind === 'taper') {
+        const [ax, az] = b.apex ?? [0, 0];
+        const [bx, bz] = o.apex ?? [0, 0];
+        return b.top === o.top && Math.abs(ax + bx) < 1e-6 && Math.abs(az - bz) < 1e-6;
+      }
+      return true;
+    }
+    if (b.kind === 'profile' && o.kind === 'profile') {
+      if (b.axis !== o.axis || b.d !== o.d) return false;
+      // a wall along x runs the other way on the other half; one along z is the same wall
+      const want = b.axis === 'z' ? b.line : b.line.map(([u, y]) => [-u, y]).reverse();
+      return JSON.stringify(want) === JSON.stringify(o.line);
     }
     return true;
   });
@@ -94,7 +109,10 @@ for (const m of MAP_LIST) {
         continue;
       }
       // it hit *something* before the centre; if it's this bunker, the hit point is on its outline
-      const onThis = Math.abs(footprintDistance(b, hit.x, hit.z, i)) < 0.02 || (b.kind === 'log' && hit.y <= topOf(b) + 0.02);
+      // (a sloped or shaped top is hit inside its footprint, not on its outline)
+      const fd = footprintDistance(b, hit.x, hit.z, i);
+      const onThis = Math.abs(fd) < 0.02 || (b.kind === 'log' && hit.y <= topOf(b) + 0.02) ||
+        ((b.kind === 'taper' || b.kind === 'profile') && fd < 0.02);
       const elsewhere = bs.some((o, j) => j !== i && footprintDistance(o, hit.x, hit.z, j) < 0.02);
       if (!onThis && !elsewhere) misses++;
     }
@@ -128,6 +146,71 @@ for (const m of MAP_LIST) {
   const z = spawnPoint(1, 3);
   const path = nav.findPath(a.x, a.z, z.x, z.z);
   check(`bots can find a way across (${nav.cover.length} cover spots)`, path !== null && nav.cover.length > 20);
+}
+
+// ---- shaped tops: paint follows the slope of a pyramid and the top line of a wall ------------
+
+{
+  console.log('-- shaped bunkers');
+  const near = (a: number, b: number, eps = 0.02) => Math.abs(a - b) < eps;
+  const sq: [number, number][] = [[-1, -1], [1, -1], [1, 1], [-1, 1]];
+  const wLine: [number, number][] = [[-1.5, 1.0], [-1.1, 1.65], [-0.55, 1.12], [0, 1.35], [0.55, 1.12], [1.1, 1.65], [1.5, 1.0]];
+  const notch: [number, number][] = [[-1.1, 1.5], [-0.45, 1.5], [-0.3, 1.0], [0.3, 1.0], [0.45, 1.5], [1.1, 1.5]];
+  useBunkers([
+    { kind: 'taper', x: 0, z: 0, pts: sq, h: 2, top: 0, color: 0 }, // a square pyramid
+    { kind: 'taper', x: 0, z: 10, pts: sq, h: 2, top: 0.2, apex: [-1, 0], color: 0 }, // a wedge, upright at its -x side
+    { kind: 'profile', x: 10, z: 0, axis: 'x', d: 0.9, line: wLine, color: 0 }, // an M wall along x
+    { kind: 'profile', x: 10, z: 10, axis: 'z', d: 0.9, line: notch, color: 0 }, // a notched wall along z
+  ]);
+
+  // pyramid: at half height it's half as wide, and its sides face out and up
+  let h = traceWorld(-5, 1, 0, 5, 1, 0);
+  check('a shot at a pyramid hits its sloped side where it is', !!h && h.bunker === 0 && near(h.x, -0.5) && h.nx < 0 && h.ny > 0, JSON.stringify(h));
+  h = traceWorld(-5, 1.9, 0.5, 5, 1.9, 0.5);
+  check('a shot past the narrow top of a pyramid flies by', !h, JSON.stringify(h));
+  h = traceWorld(0.3, 3, 0.3, 0.3, -0.5, 0.3);
+  check('paint dropping on a pyramid lands on its slope', !!h && h.bunker === 0 && near(h.y, 1.4) && h.ny > 0.4, JSON.stringify(h));
+  check('a pyramid is as tall as it says, at its point', near(taperHeight(0, 0, 0), 2) && near(taperHeight(0, 0.5, 0), 1) && taperHeight(0, 1.5, 0) < 0);
+
+  // wedge: its back is upright, its front slopes up to the narrow top over the back
+  h = traceWorld(-5, 1.5, 10, 5, 1.5, 10);
+  check('a wedge stops paint on its upright back', !!h && h.bunker === 1 && near(h.x, -1) && near(h.nx, -1), JSON.stringify(h));
+  h = traceWorld(5, 1.5, 10, -5, 1.5, 10);
+  check('a wedge stops paint on its sloped front, further back', !!h && h.bunker === 1 && near(h.x, -0.2) && h.nx > 0 && h.ny > 0, JSON.stringify(h));
+
+  // M wall along x (x 8.5 to 11.5, z -0.45 to 0.45)
+  h = traceWorld(10.55, 1.3, -5, 10.55, 1.3, 5);
+  check('a shot over a dip in an M wall clears it', !h, JSON.stringify(h));
+  h = traceWorld(11.1, 1.3, -5, 11.1, 1.3, 5);
+  check('a shot at a peak of an M wall hits its face', !!h && h.bunker === 2 && near(h.z, -0.45) && near(h.nz, -1), JSON.stringify(h));
+  h = traceWorld(3, 1.3, 0, 17, 1.3, 0);
+  check('a shot along an M wall clears its low end and hits the rise to the peak', !!h && h.bunker === 2 && near(h.x, 10 - 1.3154, 0.01) && h.nx < 0 && h.ny > 0, JSON.stringify(h));
+  h = traceWorld(3, 0.6, 0, 17, 0.6, 0);
+  check('lower down, the same shot hits the end of the wall', !!h && h.bunker === 2 && near(h.x, 8.5) && near(h.nx, -1), JSON.stringify(h));
+
+  // notched wall along z (z 8.9 to 11.1, x 9.55 to 10.45)
+  h = traceWorld(5, 1.25, 10, 15, 1.25, 10);
+  check('a shot through the notch of a wall goes through', !h, JSON.stringify(h));
+  h = traceWorld(5, 0.8, 10, 15, 0.8, 10);
+  check('a shot under the notch hits the wall', !!h && h.bunker === 3 && near(h.x, 9.55) && near(h.nx, -1), JSON.stringify(h));
+  h = traceWorld(5, 1.25, 9.2, 15, 1.25, 9.2);
+  check('a shot beside the notch hits the wall', !!h && h.bunker === 3 && near(h.x, 9.55), JSON.stringify(h));
+
+  // players can't walk in, and slide off if they land on top
+  const walk = (x: number, z: number, right: number, fwd: number, y = 0) => {
+    const body: Body = { x, y, z, vx: 0, vy: 0, vz: 0, height: STAND_HEIGHT, onGround: y === 0 };
+    const move: MoveInput = { forward: fwd, right, jump: false, sprint: true, crouch: false, prone: false, yaw: 0 };
+    for (let s = 0; s < 240; s++) stepMovement(body, move, 1 / 120);
+    return body;
+  };
+  let body = walk(-3, 0.05, 1, 0);
+  check('players are kept out of a pyramid', footprintDistance(field.bunkers[0], body.x, body.z, 0) > PLAYER_RADIUS - 0.02, JSON.stringify(body));
+  body = walk(10.2, -3, 0, -1);
+  check('players are kept out of an M wall, even at a dip', footprintDistance(field.bunkers[2], body.x, body.z, 2) > PLAYER_RADIUS - 0.02, JSON.stringify(body));
+  body = walk(0.1, 0.1, 0, 0, 2.6);
+  check('a player dropped on a pyramid slides off it', footprintDistance(field.bunkers[0], body.x, body.z, 0) > PLAYER_RADIUS - 0.02 && body.y < 0.05, JSON.stringify(body));
+
+  useBunkers(field.map.bunkers);
 }
 
 // ---- bots play a point on every field ------------------------------------------------------

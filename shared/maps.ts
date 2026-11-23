@@ -5,7 +5,7 @@
 // Shapes are in shared/field.ts. Keep bunkers inside the field lines and off the start lines; the
 // map checks (server/map-test.ts) make sure of that.
 
-import type { Bunker, BoxBunker, CanBunker, LogBunker, Look, PolyBunker } from './field';
+import type { Bunker, BoxBunker, CanBunker, LogBunker, Look, PolyBunker, ProfileBunker, TaperBunker } from './field';
 
 export interface MapTheme {
   /** what the field is drawn on */
@@ -46,10 +46,18 @@ const poly = (x: number, z: number, pts: [number, number][], h: number, color: n
   ({ kind: 'poly', x, z, pts, h, color, ...(look ? { look } : {}) });
 const log = (x: number, z: number, len: number, r: number, axis: 'x' | 'z', color: number, look: Look = 'log'): LogBunker =>
   ({ kind: 'log', x, z, len, r, axis, color, look });
+const taper = (x: number, z: number, s: Shape, color: number): TaperBunker =>
+  ({ kind: 'taper', x, z, pts: s.pts, h: s.h, top: s.top, ...(s.apex ? { apex: s.apex } : {}), color });
+const profile = (x: number, z: number, axis: 'x' | 'z', w: Wall, color: number): ProfileBunker =>
+  ({ kind: 'profile', x, z, axis, d: w.d, line: w.line, color });
 
 /** Blue's copy of one of Red's bunkers: mirrored across the centre line */
 function mirror(b: Bunker): Bunker {
-  if (b.kind === 'poly') return { ...b, x: -b.x, pts: b.pts.map(([px, pz]) => [-px, pz] as [number, number]).reverse() };
+  const flip = (pts: [number, number][]) => pts.map(([px, pz]) => [-px, pz] as [number, number]).reverse();
+  if (b.kind === 'poly') return { ...b, x: -b.x, pts: flip(b.pts) };
+  if (b.kind === 'taper') return { ...b, x: -b.x, pts: flip(b.pts), ...(b.apex ? { apex: [-b.apex[0], b.apex[1]] as [number, number] } : {}) };
+  // a wall along x runs the other way; one along z is only moved (it's the same both sides of its middle)
+  if (b.kind === 'profile' && b.axis === 'x') return { ...b, x: -b.x, line: b.line.map(([u, y]) => [-u, y] as [number, number]).reverse() };
   return { ...b, x: -b.x };
 }
 const layout = (centre: Bunker[], redHalf: Bunker[]): Bunker[] => [...centre, ...redHalf, ...redHalf.map(mirror)];
@@ -80,6 +88,35 @@ const ROCKS: [number, number][][] = [
   [[-0.7, -0.95], [0.9, -0.6], [0.95, 0.55], [-0.2, 1], [-1, 0.1]],
 ];
 const scaled = (pts: [number, number][], sx: number, sz: number): [number, number][] => pts.map(([x, z]) => [x * sx, z * sz]);
+
+// shapes that narrow toward the top (TaperBunker): the base, how tall, how much of the base is left at
+// the top, and where they narrow to
+type Shape = { pts: [number, number][]; h: number; top: number; apex?: [number, number] };
+const square = (s: number): [number, number][] => [[-s, -s], [s, -s], [s, s], [-s, s]];
+/** a three-sided pyramid, about 1.5 m tall, pointing +z (or -z) */
+const DORITO: Shape = { pts: TRI_UP, h: 1.5, top: 0 };
+const DORITO_DOWN: Shape = { pts: TRI_DOWN, h: 1.5, top: 0 };
+/** a tall square tower narrowing to a small flat top */
+const TEMPLE: Shape = { pts: square(0.85), h: 2.2, top: 0.35 };
+/** tall, thin and nearly pointed */
+const SPIKE: Shape = { pts: square(0.5), h: 2.1, top: 0.14 };
+/** a pyramid on the centre line: a diamond that narrows to a small top */
+const CENTRE_PYRAMID: Shape = { pts: diamond(1.6), h: 2.1, top: 0.3 };
+
+// walls with a shaped top (ProfileBunker): how thick, and the top line along the wall
+type Wall = { d: number; line: [number, number][] };
+/** an M: tall at both ends and in the middle, with dips you can shoot over standing up */
+const M_WALL: Wall = { d: 0.9, line: [[-1.5, 1.0], [-1.1, 1.65], [-0.55, 1.12], [0, 1.35], [0.55, 1.12], [1.1, 1.65], [1.5, 1.0]] };
+/** a wall with a notch in the middle of its top, to shoot through */
+const NOTCH_WALL: Wall = { d: 0.9, line: [[-1.1, 1.5], [-0.45, 1.5], [-0.3, 1.0], [0.3, 1.0], [0.45, 1.5], [1.1, 1.5]] };
+/** a tall slab with a rounded top */
+const TOMBSTONE: Wall = {
+  d: 0.8,
+  line: Array.from({ length: 9 }, (_, i) => {
+    const a = Math.PI - (i / 8) * Math.PI;
+    return [Math.round(Math.cos(a) * 0.65 * 1000) / 1000, Math.round((1.45 + Math.sin(a) * 0.45) * 1000) / 1000] as [number, number];
+  }),
+};
 
 // ---- Arena: the original speedball field ----------------------------------------------------
 
@@ -132,38 +169,39 @@ const SILVER = 0xd7dde4;
 const TOURNAMENT: GameMap = {
   id: 'tournament',
   name: 'Tournament',
-  blurb: 'Big symmetrical inflatable field: snake side, triangle side, centre diamond.',
+  blurb: 'Big symmetrical inflatable field: snake side, dorito side, a pyramid in the middle.',
   length: 54,
   width: 36,
   margin: 2,
   bunkers: layout(
     [
-      poly(0, 0, diamond(1.6), 2.1, SILVER), // centre diamond
+      taper(0, 0, CENTRE_PYRAMID, SILVER),
       can(0, 14, 0.75, 1.6, ORANGE),
-      poly(0, -13.5, TRI_UP, 1.4, NAVY),
+      taper(0, -13.5, DORITO, NAVY),
     ],
     [
       // snake side (+z): a long low wall in three kinked segments, crouch to hide
       box(-14, 13.2, 4.4, 1.1, 1.2, SKY),
       box(-9.8, 14, 4.4, 1.1, 1.2, SKY),
       box(-5.6, 13.2, 4.4, 1.1, 1.2, SKY),
-      // triangle side (-z)
-      poly(-19, -12.5, TRI_UP, 1.35, NAVY),
-      poly(-12.5, -14, TRI_UP, 1.35, NAVY),
-      poly(-6, -12, TRI_DOWN, 1.35, NAVY),
-      // back: tall bricks and the home can
-      box(-23, 6, 1.2, 1.2, 2.0, RED_I),
-      box(-23, -6, 1.2, 1.2, 2.0, RED_I),
+      // dorito side (-z): pyramids, so paint slides over their shoulders
+      taper(-19, -12.5, DORITO, NAVY),
+      taper(-12.5, -14, DORITO, NAVY),
+      taper(-6, -12, DORITO_DOWN, NAVY),
+      // back: tombstones and the home can
+      profile(-23, 6, 'z', TOMBSTONE, RED_I),
+      profile(-23, -6, 'z', TOMBSTONE, RED_I),
       can(-21, 0, 0.8, 1.9, ORANGE),
       // middle: cakes, a temple and mini cans
       box(-16, 4, 1.9, 1.9, 1.25, SILVER),
       box(-16, -5, 1.9, 1.9, 1.25, SILVER),
-      box(-11, 0, 1.5, 1.5, 2.1, RED_I), // temple
+      taper(-11, 0, TEMPLE, RED_I),
       can(-7.5, 6.5, 0.55, 1.45, ORANGE),
       can(-7.5, -6, 0.55, 1.45, ORANGE),
-      box(-4, 2.6, 2.2, 1.2, 1.5, NAVY),
-      box(-4, -3, 2.2, 1.2, 1.5, NAVY),
-      box(-18, 10, 1.4, 1.4, 1.7, RED_I),
+      // near the centre: an M wall (shoot over its dips) and a notched wall (shoot through it)
+      profile(-4, 2.8, 'z', M_WALL, NAVY),
+      profile(-4, -3, 'z', NOTCH_WALL, NAVY),
+      taper(-18, 10, SPIKE, RED_I),
     ],
   ),
   theme: {
