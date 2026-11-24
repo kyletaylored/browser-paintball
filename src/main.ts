@@ -383,6 +383,22 @@ const net = new Net(serverUrl, {
     hopper = hopperSize();
     reloadLeft = 0;
   },
+  takeover(m) {
+    const team = net.roster.get(m.id)?.team ?? 0;
+    hud.feedRow([{ text: net.nameOf(m.id), team }, { text: '· takes over', cls: 'note' }, { text: net.nameOf(m.bot), team }], m.id === net.id);
+    if (m.id !== net.id) return;
+    // in again, as the bot: where it was, facing its way, with a full hopper
+    prediction.reset();
+    player.placeAt({ x: m.b[0], y: m.b[1], z: m.b[2], yaw: m.yaw });
+    [player.body.x, player.body.y, player.body.z, player.body.vx, player.body.vy, player.body.vz, player.body.height] = m.b;
+    player.body.onGround = m.b[7] === 1;
+    player.pitch = m.pitch;
+    player.alive = true;
+    hopper = hopperSize();
+    reloadLeft = 0;
+    spectator.stop();
+    hud.toast(`You're ${net.nameOf(m.bot)} now · play on`);
+  },
   mode() {
     hud.setModePick(net.mode);
     setFireMode(net.mode, true);
@@ -828,21 +844,26 @@ function spectate(online: boolean, phase: RoundPhase | null, now: number, dt: nu
     hud.setWatching(null);
     return;
   }
-  const watchable = [...remoteAvatars.values()].map((ra) => ({ ...ra.target, pitch: ra.pitch }));
-  const w = spectator.choose(watchable, net.team, input.active && input.nextPressed, now);
+  const watchable = [...remoteAvatars.values()].map((ra) => ({ ...ra.target, pitch: ra.pitch, bot: net.roster.get(ra.target.id)?.bot }));
+  // the camera swings round them freely: your own look (mouse, right stick, a drag) turns it
+  const w = spectator.choose(watchable, net.team, input.active && input.nextPressed, now, player);
   if (!w) {
     hud.setWatching(null);
     return;
   }
-  spectator.view(camera, w, dt);
+  spectator.view(camera, w, player.yaw, player.pitch, dt);
   player.hideGun();
+  const canTake = Spectator.canTakeOver(w, net.team);
+  if (canTake && input.active && input.takeoverPressed) net.send({ t: 'takeover', id: w.id });
   const r = net.roster.get(w.id);
   const others = watchable.filter((p) => p.alive && p.id !== w.id).length;
-  const how = input.device === 'pad' ? 'A' : TOUCH ? 'Jump' : 'Space';
+  const pad = input.device === 'pad';
+  const how = pad ? 'A' : TOUCH ? 'Jump' : 'Space';
+  const take = pad ? 'X' : TOUCH ? 'Reload' : 'E';
   hud.setWatching({
     name: net.nameOf(w.id),
     team: w.team === 0 ? 0 : 1,
-    line: `${r ? `${r.k} elims · ` : ''}${w.alive ? '' : 'out · '}${others ? `${how} to switch` : 'last one in'}`,
+    line: `${r ? `${r.k} elims · ` : ''}${w.alive ? '' : 'out · '}${others ? `${how} to switch` : 'last one in'}${canTake ? ` · ${take} to take over` : ''}`,
   });
 }
 
@@ -884,11 +905,11 @@ function frame(now: number) {
   else targets.push(...dummies);
 
   // controller aim, a little slower while the crosshair is on an opponent (only the feel: the server
-  // still decides every hit)
-  if (input.active && player.alive) {
+  // still decides every hit). Out, the stick swings the spectator camera instead
+  if (input.active) {
     const p = input.pad.state;
     if (p.yawRate || p.pitchRate) {
-      const k = aimSlowdown(online ? net.team : 0) * dt;
+      const k = (player.alive ? aimSlowdown(online ? net.team : 0) : 1) * dt;
       player.turn(p.yawRate * k, p.pitchRate * k);
     }
   }

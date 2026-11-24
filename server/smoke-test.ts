@@ -7,7 +7,8 @@
 //     front of them, aiming where their (interpolated, delayed) view shows it. With compensation it
 //     hits; with LAG_COMPENSATION=0 the same shot misses.
 //  3. Bots: one fake player joins, bots fill both teams, move off their start box and play the
-//     point out; a second player takes a bot's place.
+//     point out; a second player takes a bot's place. Out during a point, a player can take over a
+//     bot on their own team that's still in (not an opponent, and not while they're in themselves).
 //  4. Data channel: a player asks for one, snapshots and acks arrive on it, and with 5% of packets
 //     lost each way its movement still matches the server exactly (inputs are sent with redundancy)
 //     and no snapshot is held up. With data channels off on the server, it plays over the WebSocket.
@@ -269,6 +270,59 @@ async function botTest(url: string) {
   human.ws.close();
 }
 
+type Takeover = Extract<ServerMsg, { t: 'takeover' }>;
+const isTakeover = (m: ServerMsg): m is Takeover => m.t === 'takeover';
+
+async function takeoverTest(url: string) {
+  console.log('-- taking over a bot (3 per team)');
+  const human = await join(url);
+  const roster = await waitFor(human.inbox, rosterWhere((m) => m.players.length === 6), 3000);
+  const mates = roster?.players.filter((p) => p.bot && p.team === human.team).map((p) => p.id) ?? [];
+  const foes = roster?.players.filter((p) => p.team !== human.team).map((p) => p.id) ?? [];
+  let live = await waitFor(human.inbox, snapWhere((m) => m.round.phase === 'live'), 8000);
+  send(human.ws, { t: 'takeover', id: mates[0] });
+  await wait(400);
+  check('no taking over a bot while you are still in', !human.inbox.some(isTakeover));
+  // stand in the start box until a bot gets us (a few points at most), with a teammate bot still in
+  const end = Date.now() + 90000;
+  let from = 0;
+  let outSnap: Extract<ServerMsg, { t: 'snap' }> | null = null;
+  while (Date.now() < end && !outSnap) {
+    const hit = await waitFor(human.inbox, (m): m is Hit => m.t === 'hit' && m.victim === human.id, end - Date.now(), from);
+    if (!hit) break;
+    from = human.inbox.indexOf(hit) + 1;
+    live = await waitFor(
+      human.inbox,
+      snapWhere((m) => m.round.phase === 'live' && m.players.some((p) => p.id === human.id && !p.alive) && m.players.some((p) => mates.includes(p.id) && p.alive)),
+      300,
+      from,
+    );
+    outSnap = live;
+  }
+  if (!outSnap) {
+    console.log('SKIP  never out with a teammate bot still in, so taking over was not tried');
+    human.ws.close();
+    return;
+  }
+  const before = human.inbox.length;
+  send(human.ws, { t: 'takeover', id: foes[0] });
+  await wait(300);
+  check('no taking over an opponent', !human.inbox.slice(before).some(isTakeover));
+  const bot = outSnap.players.find((p) => mates.includes(p.id) && p.alive)!;
+  send(human.ws, { t: 'takeover', id: bot.id });
+  const took = await waitFor(human.inbox, isTakeover, 1500, before);
+  check('out, you can take over a teammate bot that is still in', took?.id === human.id && took.bot === bot.id);
+  const after = await waitFor(
+    human.inbox,
+    snapWhere((m) => m.players.some((p) => p.id === human.id && p.alive) && m.players.some((p) => p.id === bot.id && !p.alive)),
+    1500,
+    before,
+  );
+  const me = after?.players.find((p) => p.id === human.id);
+  check('you are in where the bot was, and it is out', !!me && Math.hypot(me.x - bot.x, me.z - bot.z) < 2);
+  human.ws.close();
+}
+
 // ---- 4. data channel -----------------------------------------------------------------------
 
 /** walk a client somewhere and back, then check the server's last ack matches its prediction */
@@ -459,6 +513,12 @@ try {
       await botTest(bots.url);
     } finally {
       bots.stop();
+    }
+    const takeover = await startServer({ BOT_TEAM_SIZE: '3', BOT_SKILL: 'hard' });
+    try {
+      await takeoverTest(takeover.url);
+    } finally {
+      takeover.stop();
     }
   }
 } catch (e) {
