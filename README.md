@@ -40,6 +40,11 @@ field only, with no vote.
 | Beach (`beach`) | 52 × 32 m | sand and surf: beach huts, a lifeguard tower, dunes, driftwood and an upturned boat |
 | Woods (`woods`) | 90 × 60 m | a forest: about a hundred trees, boulders, fallen logs, pallets and cable spools |
 | Moonbase (`space`) | 48 × 30 m | the moon: planets for bunkers, moonballs with comet tails, astronaut suits and a star burst for every out |
+| Pumpkin Patch (`halloween`) | 46 × 30 m | Halloween night: jack-o'-lanterns, gravestones, coffins and witch hats under a full moon; bats for every out |
+| Snowfall (`christmas`) | 48 × 30 m | Christmas in the snow: presents, decorated trees, snow forts and giant ornaments, with snow falling; snowflakes for every out |
+| Harvest Farm (`harvest`) | 50 × 32 m | Thanksgiving on an autumn farm: hay bales, pumpkins, corn shocks and a wagon, a red barn behind; leaves for every out |
+| Fireworks Park (`fourth`) | 46 × 30 m | the Fourth of July after dark: rockets, star boxes, striped walls and firecrackers, fireworks overhead; a firework for every out |
+| Lantern Square (`lunar`) | 48 × 30 m | Chinese New Year at night: giant lanterns, drums, dragons and firecrackers in a temple square; firecracker sparks for every out |
 
 Each half is the mirror image of the other, so neither team has an advantage.
 
@@ -137,6 +142,7 @@ src/          the browser game
   toon.ts       the arcade look: toon (banded) materials and the ink outline pass
   render.ts     WebGLRenderer + postprocessing (bloom, vignette, tone mapping, SMAA)
   world.ts      builds the current field: sky, lights, ground, boundary, bunkers, scenery
+  holidays.ts   the holiday fields' bunkers, ground, scenery (falling snow, fireworks) and boundaries
   player.ts     first-person controller + the gun on screen
   input.ts      keyboard + mouse (pointer lock) and controllers, combined into actions; phone start
   touch.ts      on-screen controls for phones: move stick, aim by dragging, Fire / Jump / Crouch / Lie / Reload
@@ -160,7 +166,12 @@ src/          the browser game
   Your browser predicts the same steps locally, so moving feels instant, and quietly corrects itself if the server
   disagrees (`src/prediction.ts`).
 - **Paintballs:** your browser draws them the instant you click. The server *also* flies them using the same `shared/sim.ts` code, in the same fixed steps, and is the only one that decides eliminations.
-- **Bounces:** paint that hits at a glancing angle (or slowly) usually bounces off instead of breaking, flies on and can
+- **Paint colours:** paint comes in bright fills (yellow, lime, pink, orange, cyan, purple), not the team colours. Each
+  field gives each team a different one (`theme.paint` in `shared/maps.ts`). Look only.
+- **Paint speed:** shots leave at 280 ft/s on average, each one up to 2% faster or slower (picked from the firing
+  point, so the shooter and the server agree without sending it); drag slows them down, so aim a little high at range.
+- **Bounces:** paint that hits the ground always breaks. Paint that hits a bunker at a shallow angle (under about 30°)
+  usually bounces off; a squarer hit on a bunker breaks. A bounced ball flies on and can
   still eliminate someone. Whether it bounces is a roll of the dice, but every machine rolls the same dice: each ball's
   random numbers start from a hash of the point it was fired from, which the shooter, the server and every other browser
   all know. Inflatable bunkers wobble when hit (`src/world.ts`), wood and rock don't. Paint can bounce off players too:
