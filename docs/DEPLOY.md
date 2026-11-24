@@ -191,7 +191,7 @@ all with their defaults. For a local run you can copy it to `.env` (git ignores 
 | `POINTS_TO_WIN` | 5 | |
 | `ROUND_SECONDS` | 120 | time limit per point |
 | `COUNTDOWN_SECONDS` / `POINT_PAUSE_SECONDS` / `MATCH_OVER_SECONDS` | 3 / 8 / 12 | the break between points is long enough for out players to walk off and for the camera shots; after a match there's time to vote for the next field |
-| `BOT_TEAM_SIZE` | 3 | fill each team to this many with bots while anyone is connected; `0` = off |
+| `BOT_TEAM_SIZE` | 5 | fill each team to this many with bots while anyone is connected; `0` = off |
 | `BOT_SKILL` | `normal` | `easy`, `normal`, `hard` |
 | `LAG_COMPENSATION` | on | `0` turns it off |
 | `MAX_REWIND_MS` | 300 | the furthest back lag compensation will look |

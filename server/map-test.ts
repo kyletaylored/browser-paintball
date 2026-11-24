@@ -247,13 +247,13 @@ for (const m of MAP_LIST) {
 async function botsPlay(id: string, name: string) {
   const rotating = id === DEFAULT_MAP;
   const s = await startServer({
-    ...(rotating ? {} : { MAP: id }), BOT_TEAM_SIZE: '3', BOT_SKILL: 'hard', ROUND_SECONDS: '150', RTC_UDP_PORT: '0',
+    ...(rotating ? {} : { MAP: id }), BOT_TEAM_SIZE: '5', BOT_SKILL: 'hard', ROUND_SECONDS: '150', RTC_UDP_PORT: '0',
     POINTS_TO_WIN: '1', MATCH_OVER_SECONDS: '1', // one point is the whole match
   });
   try {
     const c = await join(s.url);
     const welcome = c.inbox.find((m): m is Extract<ServerMsg, { t: 'welcome' }> => m.t === 'welcome');
-    const filled = await waitFor(c.inbox, rosterWhere((m) => m.players.filter((p) => p.bot).length === 5), 5000);
+    const filled = await waitFor(c.inbox, rosterWhere((m) => m.players.filter((p) => p.bot).length === 9), 5000);
     const live = await waitFor(c.inbox, snapWhere((m) => m.round.phase === 'live'), 10000);
     const liveAt = Date.now();
     const from = c.inbox.length;
