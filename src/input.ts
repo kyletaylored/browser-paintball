@@ -285,6 +285,11 @@ export class Input {
     return this.wasPressed('Space') || (this.active && this.pad.state.aPressed) || !!this.onScreen?.jumpPressed;
   }
 
+  /** spectating a teammate bot: play on as it (E, or reload: R, X, the on-screen Reload) */
+  get takeoverPressed(): boolean {
+    return this.wasPressed('KeyE') || this.reloadPressed;
+  }
+
   get reloadPressed(): boolean {
     return this.wasPressed('KeyR') || (this.active && this.pad.state.reloadPressed) || !!this.onScreen?.reloadPressed;
   }

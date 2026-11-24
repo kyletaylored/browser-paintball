@@ -26,7 +26,7 @@ import { waitLine } from '../shared/walkoff';
 import { Net, sampleRemote, phaseSecondsLeft } from './net';
 import { NetStats } from './netstats';
 import { Voice, type VoiceSettings } from './voice';
-import { BALL_SPEED, STAND_HEIGHT, stanceHeight, CLIENT_SEND_HZ, RESPAWN_SECONDS, INPUT_DT, INTERP_DELAY } from '../shared/sim';
+import { ballSpeed, STAND_HEIGHT, stanceHeight, CLIENT_SEND_HZ, RESPAWN_SECONDS, INPUT_DT, INTERP_DELAY } from '../shared/sim';
 import { DEFAULT_PORT, TEAM_COLORS, TEAM_NAMES, cleanName, type RoundPhase, type V3 } from '../shared/protocol';
 import { Trigger, MODE_RULES, DEFAULT_FIRE_MODE, isFireMode, type FireMode } from '../shared/fire';
 
@@ -164,6 +164,7 @@ hud.bindShoulder(player.shoulder, (v) => {
 const balls = new Paintballs(scene);
 const fx = new Fx(scene);
 const stars = new StarBursts(scene);
+if (field.map.theme.outFx) stars.setStyle(field.map.theme.outFx);
 balls.setStyle(field.map.theme.shots ?? 'paint');
 const sound = new SoundSystem(camera);
 player.placeAt(spawnPoint(0, 2));
@@ -258,7 +259,7 @@ function switchMap(id: string): boolean {
   world = buildWorld(scene, models);
   balls.clear();
   fx.clear();
-  stars.clear();
+  stars.setStyle(field.map.theme.outFx ?? 'stars');
   // the field's own look for shots and outfits (moonballs and space suits on the moon)
   balls.setStyle(field.map.theme.shots ?? 'paint');
   const outfit = fieldOutfit();
@@ -324,13 +325,13 @@ const net = new Net(serverUrl, {
   },
   ball(m) {
     remoteAvatars.get(m.owner)?.avatar.fire();
-    balls.spawn(m.o, m.v, m.owner, m.team, TEAM_COLORS[m.team], false);
+    balls.spawn(m.o, m.v, m.owner, m.team, paintOf(m.team), false);
     sound.playAt('shot', m.o[0], m.o[1], m.o[2], { volume: VOL.remoteShot });
   },
   hit(m) {
     if (SHOW_HITBOXES) showHitbox(m.tp);
-    fx.burst(m.p[0], m.p[1], m.p[2], 0, 1, 0, TEAM_COLORS[m.team], 20);
-    if (field.map.theme.outFx === 'stars') stars.pop(m.tp[0], m.tp[1], m.tp[2], TEAM_COLORS[m.team]);
+    fx.burst(m.p[0], m.p[1], m.p[2], 0, 1, 0, paintOf(m.team), 20);
+    if (field.map.theme.outFx) stars.pop(m.tp[0], m.tp[1], m.tp[2], TEAM_COLORS[m.team]);
     const mine = m.victim === net.id || m.shooter === net.id;
     const shooterTeam = net.roster.get(m.shooter)?.team ?? m.team;
     const victimTeam = net.roster.get(m.victim)?.team ?? (m.team === 0 ? 1 : 0);
@@ -382,6 +383,22 @@ const net = new Net(serverUrl, {
     player.alive = true;
     hopper = hopperSize();
     reloadLeft = 0;
+  },
+  takeover(m) {
+    const team = net.roster.get(m.id)?.team ?? 0;
+    hud.feedRow([{ text: net.nameOf(m.id), team }, { text: '· takes over', cls: 'note' }, { text: net.nameOf(m.bot), team }], m.id === net.id);
+    if (m.id !== net.id) return;
+    // in again, as the bot: where it was, facing its way, with a full hopper
+    prediction.reset();
+    player.placeAt({ x: m.b[0], y: m.b[1], z: m.b[2], yaw: m.yaw });
+    [player.body.x, player.body.y, player.body.z, player.body.vx, player.body.vy, player.body.vz, player.body.height] = m.b;
+    player.body.onGround = m.b[7] === 1;
+    player.pitch = m.pitch;
+    player.alive = true;
+    hopper = hopperSize();
+    reloadLeft = 0;
+    spectator.stop();
+    hud.toast(`You're ${net.nameOf(m.bot)} now · play on`);
   },
   mode() {
     hud.setModePick(net.mode);
@@ -597,6 +614,11 @@ function aimSlowdown(myTeam: number): number {
   return 1;
 }
 
+/** the paint a team shoots on this field: a bright fill, not the team colour */
+function paintOf(team: number): number {
+  return field.map.theme.paint[team === 1 ? 1 : 0];
+}
+
 function fire() {
   player.eye(eye);
   // straight ahead in first person; at what the crosshair is on in third
@@ -610,7 +632,8 @@ function fire() {
   const team = online ? net.team : 0;
   if (online) flushInputs(); // so the server has moved us to where we're shooting from
   // Draw the ball right away (no waiting for the server), then tell the server.
-  balls.spawn(o, [dir.x * BALL_SPEED, dir.y * BALL_SPEED, dir.z * BALL_SPEED], online ? net.id : 0, team, TEAM_COLORS[team], true);
+  const speed = ballSpeed(o); // the server picks the same one from o
+  balls.spawn(o, [dir.x * speed, dir.y * speed, dir.z * speed], online ? net.id : 0, team, paintOf(team), true);
   if (online) net.send({ t: 'fire', o, d: [dir.x, dir.y, dir.z] });
   hopper--;
   player.kick();
@@ -655,7 +678,7 @@ const ballEvents: BallEvents = {
       if (d) {
         d.alive = false;
         d.downUntil = performance.now() + RESPAWN_SECONDS * 1000;
-        if (field.map.theme.outFx === 'stars') stars.pop(d.x, d.y, d.z, b.color);
+        if (field.map.theme.outFx) stars.pop(d.x, d.y, d.z, TEAM_COLORS[b.team]);
         practiceHits++;
         hud.hitMarker();
         input.pad.rumble('hit');
@@ -828,21 +851,26 @@ function spectate(online: boolean, phase: RoundPhase | null, now: number, dt: nu
     hud.setWatching(null);
     return;
   }
-  const watchable = [...remoteAvatars.values()].map((ra) => ({ ...ra.target, pitch: ra.pitch }));
-  const w = spectator.choose(watchable, net.team, input.active && input.nextPressed, now);
+  const watchable = [...remoteAvatars.values()].map((ra) => ({ ...ra.target, pitch: ra.pitch, bot: net.roster.get(ra.target.id)?.bot }));
+  // the camera swings round them freely: your own look (mouse, right stick, a drag) turns it
+  const w = spectator.choose(watchable, net.team, input.active && input.nextPressed, now, player);
   if (!w) {
     hud.setWatching(null);
     return;
   }
-  spectator.view(camera, w, dt);
+  spectator.view(camera, w, player.yaw, player.pitch, dt);
   player.hideGun();
+  const canTake = Spectator.canTakeOver(w, net.team);
+  if (canTake && input.active && input.takeoverPressed) net.send({ t: 'takeover', id: w.id });
   const r = net.roster.get(w.id);
   const others = watchable.filter((p) => p.alive && p.id !== w.id).length;
-  const how = input.device === 'pad' ? 'A' : TOUCH ? 'Jump' : 'Space';
+  const pad = input.device === 'pad';
+  const how = pad ? 'A' : TOUCH ? 'Jump' : 'Space';
+  const take = pad ? 'X' : TOUCH ? 'Reload' : 'E';
   hud.setWatching({
     name: net.nameOf(w.id),
     team: w.team === 0 ? 0 : 1,
-    line: `${r ? `${r.k} elims · ` : ''}${w.alive ? '' : 'out · '}${others ? `${how} to switch` : 'last one in'}`,
+    line: `${r ? `${r.k} elims · ` : ''}${w.alive ? '' : 'out · '}${others ? `${how} to switch` : 'last one in'}${canTake ? ` · ${take} to take over` : ''}`,
   });
 }
 
@@ -884,11 +912,11 @@ function frame(now: number) {
   else targets.push(...dummies);
 
   // controller aim, a little slower while the crosshair is on an opponent (only the feel: the server
-  // still decides every hit)
-  if (input.active && player.alive) {
+  // still decides every hit). Out, the stick swings the spectator camera instead
+  if (input.active) {
     const p = input.pad.state;
     if (p.yawRate || p.pitchRate) {
-      const k = aimSlowdown(online ? net.team : 0) * dt;
+      const k = (player.alive ? aimSlowdown(online ? net.team : 0) : 1) * dt;
       player.turn(p.yawRate * k, p.pitchRate * k);
     }
   }
@@ -1022,4 +1050,4 @@ requestAnimationFrame(frame);
 
 // Poke at the game from the browser console while developing, e.g. __game.player.body.
 // import.meta.env.DEV is false in `npm run build`, so this is stripped from production.
-if (import.meta.env.DEV) Object.assign(window, { __game: { THREE, scene, camera, renderer, composer, input, player, net, balls, fx, dummies, sound, hud, frame, prediction, models, remoteAvatars, menu, get mode() { return mode; }, get world() { return world; } } });
+if (import.meta.env.DEV) Object.assign(window, { __game: { THREE, scene, camera, renderer, composer, input, player, net, balls, fx, stars, dummies, sound, hud, frame, prediction, models, remoteAvatars, menu, get mode() { return mode; }, get world() { return world; } } });

@@ -7,24 +7,49 @@
 
 import type { Bunker, BoxBunker, CanBunker, LogBunker, Look, OrbBunker, PolyBunker, ProfileBunker, TaperBunker } from './field';
 
+/**
+ * Bright paint fills, the colours real paint comes in (and the accents on the player art). Each field
+ * gives each team one of these, never the team's own colour, so splats read as paint, not as markers.
+ * Look only: who shot a ball is in the ball itself.
+ */
+export const PAINT = {
+  yellow: 0xffe01a,
+  lime: 0x8cff2e,
+  pink: 0xff3fa8,
+  orange: 0xff8a1f,
+  cyan: 0x2ee6ff,
+  purple: 0xb45cff,
+} as const;
+
 export interface MapTheme {
-  /** what the field is drawn on */
-  ground: 'turf' | 'sand' | 'forest' | 'moon';
-  /** around the field: grass, grass with stands, the sea along one side, more forest, or the moon under a starry sky */
-  surround: 'grass' | 'stands' | 'sea' | 'forest' | 'space';
-  /** netting all round (speedball), a low rope line (beach, woods), or a glowing line on posts (space) */
-  boundary: 'net' | 'rope' | 'glow';
+  /** what the field is drawn on (the holiday ones: dead grass, snow, autumn grass, paving) */
+  ground: 'turf' | 'sand' | 'forest' | 'moon' | 'patch' | 'snow' | 'farm' | 'stone';
+  /**
+   * around the field: grass, grass with stands, the sea along one side, more forest, or the moon under
+   * a starry sky; and the holiday ones (src/holidays.ts): a graveyard at night, a snowy village, a
+   * farm, a park under fireworks, and a lantern festival
+   */
+  surround: 'grass' | 'stands' | 'sea' | 'forest' | 'space' | 'graveyard' | 'winter' | 'farm' | 'fireworks' | 'festival';
+  /**
+   * netting all round (speedball), a low rope line (beach, woods), a glowing line on posts (space); or
+   * an iron fence, candy-striped posts, a rail fence, or a rope hung with lanterns
+   */
+  boundary: 'net' | 'rope' | 'glow' | 'iron' | 'candy' | 'fence' | 'lanterns';
   sky: number;
   fog: [near: number, far: number];
+  /** each team's paint (Red's, Blue's): two different PAINT colours */
+  paint: [red: number, blue: number];
   sun: { color: number; intensity: number };
   hemi: { sky: number; ground: number; intensity: number };
   /** how shots are drawn: paintballs, or little moons with comet tails (look only: they fly the same) */
   shots?: 'paint' | 'moon';
   /** what players wear: the jersey, or a space suit and helmet */
   outfit?: 'jersey' | 'astronaut';
-  /** an elimination pops a star burst where it happened */
-  outFx?: 'stars';
+  /** an elimination pops a burst where it happened: stars, bats, snowflakes, leaves, fireworks or firecrackers */
+  outFx?: OutFx;
 }
+
+export type OutFx = 'stars' | 'bats' | 'snowflakes' | 'leaves' | 'fireworks' | 'firecrackers';
 
 export interface GameMap {
   id: string;
@@ -55,10 +80,10 @@ const log = (x: number, z: number, len: number, r: number, axis: 'x' | 'z', colo
 /** a planet: resting on the ground, or sunk into it (centre y above the ground) */
 const orb = (x: number, z: number, r: number, color: number, look: Look, y?: number): OrbBunker =>
   ({ kind: 'orb', x, z, r, color, look, ...(y !== undefined ? { y } : {}) });
-const taper = (x: number, z: number, s: Shape, color: number): TaperBunker =>
-  ({ kind: 'taper', x, z, pts: s.pts, h: s.h, top: s.top, ...(s.apex ? { apex: s.apex } : {}), color });
-const profile = (x: number, z: number, axis: 'x' | 'z', w: Wall, color: number): ProfileBunker =>
-  ({ kind: 'profile', x, z, axis, d: w.d, line: w.line, color });
+const taper = (x: number, z: number, s: Shape, color: number, look?: Look): TaperBunker =>
+  ({ kind: 'taper', x, z, pts: s.pts, h: s.h, top: s.top, ...(s.apex ? { apex: s.apex } : {}), color, ...(look ? { look } : {}) });
+const profile = (x: number, z: number, axis: 'x' | 'z', w: Wall, color: number, look?: Look): ProfileBunker =>
+  ({ kind: 'profile', x, z, axis, d: w.d, line: w.line, color, ...(look ? { look } : {}) });
 
 /** Blue's copy of one of Red's bunkers: mirrored across the centre line */
 function mirror(b: Bunker): Bunker {
@@ -161,7 +186,7 @@ const ARENA: GameMap = {
     ],
   ),
   theme: {
-    ground: 'turf', surround: 'grass', boundary: 'net', sky: 0x8cc2f2, fog: [70, 190],
+    ground: 'turf', surround: 'grass', boundary: 'net', sky: 0x8cc2f2, fog: [70, 190], paint: [PAINT.yellow, PAINT.pink],
     sun: { color: 0xfff2dd, intensity: 2.6 }, hemi: { sky: 0xcfe4ff, ground: 0x56703f, intensity: 1.1 },
   },
   targets: [[7.5, 2.5], [13.8, -6], [11, 8]],
@@ -214,7 +239,7 @@ const TOURNAMENT: GameMap = {
     ],
   ),
   theme: {
-    ground: 'turf', surround: 'stands', boundary: 'net', sky: 0x86bdf0, fog: [80, 220],
+    ground: 'turf', surround: 'stands', boundary: 'net', sky: 0x86bdf0, fog: [80, 220], paint: [PAINT.lime, PAINT.orange],
     sun: { color: 0xfff4e2, intensity: 2.7 }, hemi: { sky: 0xd0e6ff, ground: 0x4f6a3a, intensity: 1.1 },
   },
   targets: [[9, 3], [14, -7], [17, 9]],
@@ -258,7 +283,7 @@ const BEACH: GameMap = {
     ],
   ),
   theme: {
-    ground: 'sand', surround: 'sea', boundary: 'rope', sky: 0x9fd6f7, fog: [90, 260],
+    ground: 'sand', surround: 'sea', boundary: 'rope', sky: 0x9fd6f7, fog: [90, 260], paint: [PAINT.cyan, PAINT.pink],
     sun: { color: 0xfff1d6, intensity: 3.0 }, hemi: { sky: 0xd8efff, ground: 0xc9b98a, intensity: 1.25 },
   },
   targets: [[8, 3], [12.5, -7], [15, 8]],
@@ -323,7 +348,7 @@ const WOODS: GameMap = {
   margin: 3,
   bunkers: woods(),
   theme: {
-    ground: 'forest', surround: 'forest', boundary: 'rope', sky: 0xa9c4c9, fog: [25, 120],
+    ground: 'forest', surround: 'forest', boundary: 'rope', sky: 0xa9c4c9, fog: [25, 120], paint: [PAINT.yellow, PAINT.pink],
     sun: { color: 0xffe6c2, intensity: 2.1 }, hemi: { sky: 0xb9d3c2, ground: 0x3b4a2a, intensity: 1.0 },
   },
   targets: [[12, 4], [20, -8], [26, 10]],
@@ -366,17 +391,241 @@ const SPACE: GameMap = {
     ],
   ),
   theme: {
-    ground: 'moon', surround: 'space', boundary: 'glow', sky: 0x04050c, fog: [90, 420],
+    ground: 'moon', surround: 'space', boundary: 'glow', sky: 0x04050c, fog: [90, 420], paint: [PAINT.lime, PAINT.purple],
     sun: { color: 0xffffff, intensity: 3.1 }, hemi: { sky: 0x8a97c8, ground: 0x34343c, intensity: 0.75 },
     shots: 'moon', outfit: 'astronaut', outFx: 'stars',
   },
   targets: [[7.5, 2.5], [13, -3], [11, 7.5]],
 };
 
+// ---- holiday fields (drawn by src/holidays.ts) ----------------------------------------------------
+
+/** a regular polygon round the middle, a flat side to each axis: a near-round base for cones */
+const ngon = (r: number, n = 8): [number, number][] =>
+  Array.from({ length: n }, (_, i) => {
+    const a = ((i + 0.5) / n) * Math.PI * 2;
+    return [Math.round(Math.cos(a) * r * 1000) / 1000, Math.round(Math.sin(a) * r * 1000) / 1000] as [number, number];
+  });
+/** a cone (eight sides) r across the base, h tall, with `top` of it left at the top */
+const cone = (r: number, h: number, top = 0): Shape => ({ pts: ngon(r), h, top });
+
+// Halloween
+const PUMPKIN = 0xf07a1a;
+const GRAVESTONE = 0x8d8a93;
+const COFFIN_WOOD = 0x4a2f2a;
+const WITCH = 0x2a2233;
+const DEAD_BARK = 0x4b3e36;
+
+const HALLOWEEN: GameMap = {
+  id: 'halloween',
+  name: 'Pumpkin Patch',
+  blurb: 'Halloween night in a haunted patch: pumpkins, gravestones, coffins and a witch hat, under a full moon.',
+  length: 46,
+  width: 30,
+  margin: 2,
+  bunkers: layout(
+    [
+      orb(0, 0, 1.25, PUMPKIN, 'jacko'), // the giant pumpkin
+      profile(0, 9, 'z', TOMBSTONE, GRAVESTONE, 'grave'),
+      profile(0, -9, 'z', TOMBSTONE, GRAVESTONE, 'grave'),
+    ],
+    [
+      box(-19, 0, 1.0, 2.4, 1.3, COFFIN_WOOD, 'coffin'), // home: a coffin stood on its side
+      orb(-15, 6, 0.75, PUMPKIN, 'jacko'),
+      orb(-15, -6, 0.75, PUMPKIN, 'jacko'),
+      profile(-12.5, 10, 'z', TOMBSTONE, GRAVESTONE, 'grave'),
+      profile(-12.5, -10, 'z', TOMBSTONE, GRAVESTONE, 'grave'),
+      profile(-10.5, 12.5, 'z', TOMBSTONE, GRAVESTONE, 'grave'),
+      profile(-10.5, -12.5, 'z', TOMBSTONE, GRAVESTONE, 'grave'),
+      taper(-9, 0, cone(0.95, 2.3), WITCH, 'witchhat'),
+      orb(-6, 4.5, 0.5, PUMPKIN, 'jacko'), // little pumpkins: crouch behind them
+      orb(-6, -4.5, 0.5, PUMPKIN, 'jacko'),
+      box(-4.5, 11.5, 2.4, 0.9, 0.75, COFFIN_WOOD, 'coffin'), // coffins lying down: low cover
+      box(-4.5, -11.5, 2.4, 0.9, 0.75, COFFIN_WOOD, 'coffin'),
+      can(-17, 12.5, 0.3, 7, DEAD_BARK, 'deadtree'),
+      can(-17, -12.5, 0.3, 7, DEAD_BARK, 'deadtree'),
+    ],
+  ),
+  theme: {
+    ground: 'patch', surround: 'graveyard', boundary: 'iron', sky: 0x1d1436, fog: [35, 140], paint: [PAINT.lime, PAINT.pink],
+    sun: { color: 0xc4ccff, intensity: 1.9 }, hemi: { sky: 0x7a68b0, ground: 0x2e2420, intensity: 1.15 },
+    outFx: 'bats',
+  },
+  targets: [[7.5, 2.5], [13.5, -6.5], [11, 8]],
+};
+
+// Christmas
+const ORNAMENT_RED = 0xd8263a;
+const ORNAMENT_GOLD = 0xf2c14e;
+const PINE = 0x2f7a46;
+const SNOW_WHITE = 0xf2f6fb;
+const PRESENT_GREEN = 0x3fa45b;
+const PRESENT_GOLD = 0xe8b839;
+const PRESENT_PURPLE = 0x8b5cc8;
+const PRESENT_TEAL = 0x2aa8a8;
+
+const CHRISTMAS: GameMap = {
+  id: 'christmas',
+  name: 'Snowfall',
+  blurb: 'A snowy Christmas village: presents, trees, snow forts and giant ornaments, with snow coming down.',
+  length: 48,
+  width: 30,
+  margin: 2,
+  bunkers: layout(
+    [
+      orb(0, 0, 1.2, ORNAMENT_RED, 'ornament'),
+      taper(0, 9.5, cone(0.8, 2.4), PINE, 'xtree'),
+      taper(0, -9.5, cone(0.8, 2.4), PINE, 'xtree'),
+    ],
+    [
+      box(-20, 0, 1.4, 2.2, 1.5, PRESENT_GREEN, 'present'), // home
+      taper(-15.5, 6, cone(0.95, 2.7), PINE, 'xtree'),
+      taper(-15.5, -6, cone(0.95, 2.7), PINE, 'xtree'),
+      box(-15, 0, 1.0, 2.6, 1.0, SNOW_WHITE, 'snowwall'),
+      box(-12, 11, 3.2, 1.0, 1.1, SNOW_WHITE, 'snowwall'), // snow forts: low walls
+      box(-12, -11, 3.2, 1.0, 1.1, SNOW_WHITE, 'snowwall'),
+      box(-9, 0, 1.6, 1.6, 1.8, PRESENT_GOLD, 'present'),
+      box(-6, 4.2, 1.0, 1.0, 0.9, PRESENT_PURPLE, 'present'),
+      box(-6, -4.2, 1.0, 1.0, 0.9, PRESENT_TEAL, 'present'),
+      orb(-4.5, 11.5, 0.8, ORNAMENT_GOLD, 'ornament'),
+      orb(-4.5, -11.5, 0.8, ORNAMENT_GOLD, 'ornament'),
+    ],
+  ),
+  theme: {
+    ground: 'snow', surround: 'winter', boundary: 'candy', sky: 0xbcd0e4, fog: [45, 170], paint: [PAINT.lime, PAINT.purple],
+    sun: { color: 0xffffff, intensity: 2.2 }, hemi: { sky: 0xeaf3ff, ground: 0xb9c8dc, intensity: 1.2 },
+    outFx: 'snowflakes',
+  },
+  targets: [[8, 3], [13.5, -6.5], [11.5, 8.5]],
+};
+
+// Thanksgiving
+const HAY = 0xd9b45a;
+const CORN = 0xc9a764;
+const WAGON_RED = 0xb3402e;
+
+const THANKSGIVING: GameMap = {
+  id: 'harvest',
+  name: 'Harvest Farm',
+  blurb: 'A Thanksgiving farm in autumn: hay bales, pumpkins, corn shocks and a wagon, with a red barn behind.',
+  length: 50,
+  width: 32,
+  margin: 2.5,
+  bunkers: layout(
+    [
+      log(0, 0, 1.6, 0.85, 'z', HAY, 'haybale'), // a big round bale on its side
+      orb(0, 9.5, 0.8, PUMPKIN, 'pumpkin'),
+      orb(0, -9.5, 0.8, PUMPKIN, 'pumpkin'),
+    ],
+    [
+      box(-21, 0, 1.2, 2.6, 1.4, HAY, 'hay'), // home: stacked square bales
+      taper(-16.5, 6.5, cone(0.85, 2.3, 0.12), CORN, 'cornshock'),
+      taper(-16.5, -6.5, cone(0.85, 2.3, 0.12), CORN, 'cornshock'),
+      log(-13, 11.5, 2.4, 0.7, 'x', HAY, 'haybale'),
+      log(-13, -11.5, 2.4, 0.7, 'x', HAY, 'haybale'),
+      taper(-11, 5.5, cone(0.7, 2.0, 0.12), CORN, 'cornshock'),
+      taper(-11, -5.5, cone(0.7, 2.0, 0.12), CORN, 'cornshock'),
+      box(-9.5, 0, 1.4, 2.6, 1.3, WAGON_RED, 'wagon'),
+      orb(-6.5, 4.5, 0.55, PUMPKIN, 'pumpkin'),
+      orb(-6.5, -4.5, 0.55, PUMPKIN, 'pumpkin'),
+      box(-5, 12.5, 2.8, 1.1, 1.1, HAY, 'hay'),
+      box(-5, -12.5, 2.8, 1.1, 1.1, HAY, 'hay'),
+    ],
+  ),
+  theme: {
+    ground: 'farm', surround: 'farm', boundary: 'fence', sky: 0xf3cf9e, fog: [70, 230], paint: [PAINT.cyan, PAINT.pink],
+    sun: { color: 0xffcf96, intensity: 2.7 }, hemi: { sky: 0xffe4c0, ground: 0x7a5a2a, intensity: 1.15 },
+    outFx: 'leaves',
+  },
+  targets: [[8, 3], [14, -7], [12, 9]],
+};
+
+// Fourth of July
+const FLAG_RED = 0xd23a3a;
+const FLAG_NAVY = 0x23356f;
+const FLAG_WHITE = 0xf1f1ef;
+
+const FOURTH: GameMap = {
+  id: 'fourth',
+  name: 'Fireworks Park',
+  blurb: 'The Fourth of July in the park after dark: rockets, firecrackers and fireworks going off overhead.',
+  length: 46,
+  width: 30,
+  margin: 2,
+  bunkers: layout(
+    [
+      taper(0, 0, cone(0.95, 2.8, 0.15), FLAG_WHITE, 'rocket'),
+      can(0, 8.5, 0.65, 1.5, FLAG_NAVY, 'drum'),
+      can(0, -8.5, 0.65, 1.5, FLAG_NAVY, 'drum'),
+    ],
+    [
+      box(-19, 0, 1.2, 2.4, 1.5, FLAG_NAVY, 'starbox'), // home
+      can(-15, 6, 0.6, 1.8, FLAG_RED, 'firecracker'),
+      can(-15, -6, 0.6, 1.8, FLAG_RED, 'firecracker'),
+      box(-12, 11, 3.2, 1.1, 1.0, FLAG_WHITE, 'stripes'),
+      box(-12, -11, 3.2, 1.1, 1.0, FLAG_WHITE, 'stripes'),
+      box(-9, 0, 1.5, 1.5, 1.9, FLAG_NAVY, 'starbox'),
+      can(-6, 4, 0.5, 1.2, FLAG_WHITE, 'firecracker'),
+      can(-6, -4, 0.5, 1.2, FLAG_WHITE, 'firecracker'),
+      taper(-4.5, 12, cone(0.6, 2.2, 0.15), FLAG_RED, 'rocket'),
+      taper(-4.5, -12, cone(0.6, 2.2, 0.15), FLAG_RED, 'rocket'),
+    ],
+  ),
+  theme: {
+    ground: 'turf', surround: 'fireworks', boundary: 'net', sky: 0x161d42, fog: [60, 260], paint: [PAINT.yellow, PAINT.lime],
+    sun: { color: 0xc8d2ff, intensity: 1.5 }, hemi: { sky: 0x6a78c0, ground: 0x24301e, intensity: 1.0 },
+    outFx: 'fireworks',
+  },
+  targets: [[7.5, 2.5], [13.8, -6], [11, 8]],
+};
+
+// Chinese New Year
+const LANTERN_RED = 0xd8282e;
+const LANTERN_GOLD = 0xf0b43a;
+const DRUM_RED = 0xb52025;
+const DRAGON_GREEN = 0x2f9a5a;
+const TEMPLE_RED = 0xc23028;
+/** a red wall with a roof that turns up at both ends */
+const PAGODA_WALL: Wall = { d: 1.0, line: [[-1.25, 1.85], [-1.0, 1.55], [-0.5, 1.45], [0.5, 1.45], [1.0, 1.55], [1.25, 1.85]] };
+
+const LUNAR: GameMap = {
+  id: 'lunar',
+  name: 'Lantern Square',
+  blurb: 'Chinese New Year at night: giant lanterns, drums, a dragon and firecrackers in a temple square.',
+  length: 48,
+  width: 30,
+  margin: 2,
+  bunkers: layout(
+    [
+      can(0, 0, 1.0, 2.3, LANTERN_RED, 'lantern'), // the giant lantern
+      log(0, 10, 4.2, 0.5, 'x', DRAGON_GREEN, 'dragon'),
+      log(0, -10, 4.2, 0.5, 'x', DRAGON_GREEN, 'dragon'),
+    ],
+    [
+      profile(-20, 0, 'z', PAGODA_WALL, TEMPLE_RED, 'pagoda'), // home
+      can(-15.5, 6, 0.65, 1.8, LANTERN_RED, 'lantern'),
+      can(-15.5, -6, 0.65, 1.8, LANTERN_RED, 'lantern'),
+      can(-12, 11, 1.0, 1.15, DRUM_RED, 'drum'),
+      can(-12, -11, 1.0, 1.15, DRUM_RED, 'drum'),
+      log(-9, 0, 4.4, 0.5, 'z', DRAGON_GREEN, 'dragon'),
+      can(-6, 4.2, 0.45, 1.3, LANTERN_RED, 'firecracker'),
+      can(-6, -4.2, 0.45, 1.3, LANTERN_RED, 'firecracker'),
+      can(-4.5, 12, 0.6, 1.5, LANTERN_GOLD, 'lantern'),
+      can(-4.5, -12, 0.6, 1.5, LANTERN_GOLD, 'lantern'),
+    ],
+  ),
+  theme: {
+    ground: 'stone', surround: 'festival', boundary: 'lanterns', sky: 0x2a1022, fog: [50, 210], paint: [PAINT.cyan, PAINT.lime],
+    sun: { color: 0xffdcb4, intensity: 2.0 }, hemi: { sky: 0xb06a78, ground: 0x3a2222, intensity: 1.2 },
+    outFx: 'firecrackers',
+  },
+  targets: [[8, 3], [13.5, -6.5], [11.5, 8.5]],
+};
+
 // ---- the list -------------------------------------------------------------------------------
 
 /** in rotation order */
-export const MAP_LIST: readonly GameMap[] = [ARENA, TOURNAMENT, BEACH, WOODS, SPACE];
+export const MAP_LIST: readonly GameMap[] = [ARENA, TOURNAMENT, BEACH, WOODS, SPACE, HALLOWEEN, CHRISTMAS, THANKSGIVING, FOURTH, LUNAR];
 export const MAPS: Readonly<Record<string, GameMap>> = Object.fromEntries(MAP_LIST.map((m) => [m.id, m]));
 export const DEFAULT_MAP = 'arena';
 

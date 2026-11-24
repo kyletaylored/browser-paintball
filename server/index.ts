@@ -18,8 +18,8 @@ import { makeHttpHandler } from './http';
 import { field, setMap, spawnPoint } from '../shared/field';
 import { MAPS, MAP_LIST, DEFAULT_MAP, voteWinner, unanimousVote } from '../shared/maps';
 import {
-  advanceBall, traceWorld, segmentHitsPlayer, stanceHeight, isOutOfBounds, stepMovement, hitWorld, hitPlayer, ballSeed, BALL_DT,
-  BALL_SPEED, BALL_LIFETIME, STAND_HEIGHT, CROUCH_HEIGHT, EYE_FROM_TOP,
+  advanceBall, traceWorld, segmentHitsPlayer, stanceHeight, isOutOfBounds, stepMovement, hitWorld, hitPlayer, ballSeed, ballSpeed, BALL_DT,
+  BALL_LIFETIME, STAND_HEIGHT, CROUCH_HEIGHT, EYE_FROM_TOP,
   RESPAWN_SECONDS, SERVER_TICK_HZ, SNAPSHOT_HZ, INPUT_DT, INTERP_DELAY, type Ball, type Body, type MoveInput,
 } from '../shared/sim';
 import { BotBrain, NavGrid, SKILLS, botName, type CoverSpot, type Seen } from './bots';
@@ -306,6 +306,11 @@ function handle(p: Player, msg: ClientMsg) {
     if (!VOICE || t - p.lastVoiceToken < 5) return;
     p.lastVoiceToken = t;
     send(p.ws, { t: 'voice', url: VOICE.url, token: voiceToken(VOICE, p.id, p.name, p.team) });
+  } else if (msg.t === 'takeover') {
+    const b = finite(msg.id) ? players.get(msg.id) : undefined;
+    // only someone who's out, during a point, into a bot on their own team that's still in
+    if (!p.ws || p.alive || match.phase !== 'live' || !b || !b.bot || !b.alive || b.team !== p.team) return;
+    takeOver(p, b);
   } else if (msg.t === 'fire') {
     if (!p.alive || !isV3(msg.o) || !isV3(msg.d)) return;
     if (match.phase !== 'live' && match.phase !== 'waiting') return; // no shooting during countdowns and pauses
@@ -384,7 +389,8 @@ function walkOff(p: Player) {
 }
 
 function spawnBall(p: Player, o: V3, dir: V3) {
-  const v: V3 = [dir[0] * BALL_SPEED, dir[1] * BALL_SPEED, dir[2] * BALL_SPEED];
+  const speed = ballSpeed(o);
+  const v: V3 = [dir[0] * speed, dir[1] * speed, dir[2] * speed];
   if (balls.length < MAX_BALLS) {
     balls.push({
       x: o[0], y: o[1], z: o[2], vx: v[0], vy: v[1], vz: v[2], age: 0, owner: p.id, team: p.team,
@@ -655,6 +661,25 @@ function respawn(p: Player) {
   p.body = newBody(sp.x, sp.y, sp.z);
   p.bot?.brain.reset(sp.yaw);
   send(p.ws, { t: 'respawn', spawn: sp });
+}
+
+/**
+ * Human p (out) plays on as bot b (a teammate still in): they swap places. p is in, exactly where b
+ * was (its body, aim and position history, so lag-compensated shots still find it), and b is out
+ * where p was, and walks off. Nobody is eliminated, so the score and stats don't change.
+ */
+function takeOver(p: Player, b: Player) {
+  const mine = { body: p.body, history: p.history, x: p.x, y: p.y, z: p.z, yaw: p.yaw };
+  Object.assign(p, {
+    alive: true, outUntil: 0, body: b.body, history: b.history, x: b.x, y: b.y, z: b.z, yaw: b.yaw, pitch: b.pitch, crouch: b.crouch, prone: b.prone,
+  });
+  Object.assign(b, { ...mine, alive: false, outUntil: Infinity, pitch: 0, crouch: false, prone: false });
+  b.bot!.walkLeft = 0;
+  const body = p.body;
+  broadcast({
+    t: 'takeover', id: p.id, bot: b.id, b: [body.x, body.y, body.z, body.vx, body.vy, body.vz, body.height, body.onGround ? 1 : 0], yaw: p.yaw, pitch: p.pitch,
+  });
+  log(`  player ${p.id} took over ${b.name}`);
 }
 
 function eliminate(victim: Player, ball: Ball, p: V3, pose: Pose, bounced: boolean) {
