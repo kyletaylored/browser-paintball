@@ -13,6 +13,9 @@ import type { GameMap } from '../shared/maps';
 import { bunkerModel, type Models } from './models';
 import { toonify } from './toon';
 import { TEAM_COLORS } from '../shared/protocol';
+import {
+  HOLIDAY_LOOKS, drawHolidayBunker, holidayGround, outerGroundColor, buildHolidaySurround, buildHolidayBoundary, type Animate, type Geos,
+} from './holidays';
 
 export interface World {
   /** remove everything this map added and free its GPU memory */
@@ -70,9 +73,11 @@ export function buildWorld(scene: THREE.Scene, models: Models | null): World {
   sun.shadow.normalBias = 0.03;
   root.add(sun, sun.target);
 
-  buildSurround(root, map);
+  const animate = buildSurround(root, map);
   buildGround(root, map);
-  if (t.boundary === 'net') buildNets(root, ex, ez);
+  if (buildHolidayBoundary(root, t.boundary, ex, ez)) {
+    // drawn in holidays.ts
+  } else if (t.boundary === 'net') buildNets(root, ex, ez);
   else if (t.boundary === 'glow') buildGlowLine(root, ex, ez);
   else buildRope(root, ex, ez);
 
@@ -115,6 +120,7 @@ export function buildWorld(scene: THREE.Scene, models: Models | null): World {
 
   const moving = new Set<Wobble>();
   const axis = new THREE.Vector3();
+  let time = 0;
   return {
     hit(i, nx, nz, strength) {
       const w = wobbles[i];
@@ -128,7 +134,9 @@ export function buildWorld(scene: THREE.Scene, models: Models | null): World {
     },
     update(dt) {
       const step = Math.min(dt, 0.05);
+      time += step;
       for (const o of spinners) o.rotation.y += step * o.userData.spin;
+      animate?.(step, time);
       for (const w of moving) {
         // damped spring, semi-implicit Euler
         w.vx += (-WOBBLE_W * WOBBLE_W * w.tx - WOBBLE_DAMP * w.vx) * step;
@@ -246,6 +254,8 @@ function drawBunker(b: Bunker, mats: Materials): THREE.Group {
     g.add(m);
     return m;
   };
+
+  if (HOLIDAY_LOOKS.has(look) && drawHolidayBunker(g, b, look, mats, GEOS)) return g;
 
   if (b.kind === 'orb') {
     drawPlanet(g, b, look, mats);
@@ -476,6 +486,9 @@ function planetTexture(kind: 'planet' | 'ringed' | 'moon', color: number): THREE
   });
 }
 
+/** the shape geometry holidays.ts draws its tapering and shaped-wall bunkers with */
+const GEOS: Geos = { taper: (b, y0, y1, grow) => taperGeometry(b, y0, y1, grow), profile: (b, cap, grow) => profileGeometry(b, cap, grow) };
+
 /** a prism over a poly bunker's footprint, `h` tall from y 0 (optionally grown a hair, for stripes) */
 function prismGeometry(b: PolyBunker, h = b.h, grow = 1): THREE.BufferGeometry {
   // Shape is in x/y; extruding along +z then turning it upright maps shape (x, y) to world (x, -z)
@@ -575,7 +588,9 @@ function groundTexture(map: GameMap, w: number, d: number): THREE.CanvasTexture 
   const hw = map.width / 2;
   const kind = map.theme.ground;
 
-  if (kind === 'turf') {
+  if (holidayGround(kind, g, c, ppm)) {
+    // drawn in holidays.ts
+  } else if (kind === 'turf') {
     for (let i = 0; i * 3 < w; i++) {
       g.fillStyle = i % 2 ? '#3f8a3a' : '#46953f';
       g.fillRect(i * 3 * ppm, 0, 3 * ppm + 1, c.height);
@@ -642,7 +657,7 @@ function groundTexture(map: GameMap, w: number, d: number): THREE.CanvasTexture 
     g.fillRect(X(x0), Z(-7), 3 * ppm, 14 * ppm);
   }
   // field lines: chalk on turf and sand, fainter paint in the woods
-  g.strokeStyle = kind === 'forest' ? 'rgba(255,255,255,0.35)' : 'rgba(255,255,255,0.85)';
+  g.strokeStyle = kind === 'forest' ? 'rgba(255,255,255,0.35)' : kind === 'snow' ? 'rgba(200,40,55,0.75)' : 'rgba(255,255,255,0.85)';
   g.lineWidth = 0.12 * ppm;
   g.strokeRect(X(-hl), Z(-hw), map.length * ppm, map.width * ppm);
   g.beginPath();
@@ -665,11 +680,12 @@ function speckle(g: CanvasRenderingContext2D, c: HTMLCanvasElement, n: number, d
 
 // ---- around the field ------------------------------------------------------------------------
 
-function buildSurround(root: THREE.Group, map: GameMap): void {
+/** everything round the field; returns what moves there each frame, if anything does */
+function buildSurround(root: THREE.Group, map: GameMap): Animate | null {
   const t = map.theme;
   const ex = field.halfL + field.margin;
   const ez = field.halfW + field.margin;
-  const outerColor = t.surround === 'sea' ? 0xd9c38a : t.surround === 'forest' ? 0x34402a : t.surround === 'space' ? 0x7a7872 : 0x4f7334;
+  const outerColor = outerGroundColor(t.surround) ?? (t.surround === 'sea' ? 0xd9c38a : t.surround === 'forest' ? 0x34402a : t.surround === 'space' ? 0x7a7872 : 0x4f7334);
   const outer = new THREE.Mesh(new THREE.PlaneGeometry(600, 600), new THREE.MeshStandardMaterial({ color: outerColor, roughness: 1 }));
   outer.rotation.x = -Math.PI / 2;
   outer.position.y = -0.02;
@@ -704,7 +720,10 @@ function buildSurround(root: THREE.Group, map: GameMap): void {
     spaceSky(root);
     moonRocks(root, ex, ez);
     moonbase(root, ex, ez);
+  } else {
+    return buildHolidaySurround(root, map, ex, ez) ?? null;
   }
+  return null;
 }
 
 /**
