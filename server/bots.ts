@@ -10,7 +10,7 @@
 
 import { field, footprintDistance, topOf, type Bunker } from '../shared/field';
 import {
-  traceWorld, stanceHeight, BALL_SPEED, GRAVITY, PLAYER_RADIUS, STAND_HEIGHT, CROUCH_HEIGHT, EYE_FROM_TOP, type MoveInput,
+  traceWorld, stanceHeight, ballFlightTime, ballDrop, PLAYER_RADIUS, STAND_HEIGHT, CROUCH_HEIGHT, EYE_FROM_TOP, type MoveInput,
 } from '../shared/sim';
 import { MODE_RULES, DEFAULT_FIRE_MODE, type FireMode } from '../shared/fire';
 import type { Team } from '../shared/protocol';
@@ -493,10 +493,11 @@ export class BotBrain {
     if (target) {
       const seen = this.lastSeenPos.get(target.id);
       const dist = Math.hypot(targetPoint.x - me.x, targetPoint.z - me.z);
-      const flight = (dist / BALL_SPEED) * 1.08;
+      // slow paint: lead the target and aim up for the drop
+      const flight = ballFlightTime(dist);
       const lx = targetPoint.x + (seen?.vx ?? 0) * flight * this.skill.lead;
       const lz = targetPoint.z + (seen?.vz ?? 0) * flight * this.skill.lead;
-      const drop = 0.5 * GRAVITY * flight * flight;
+      const drop = ballDrop(flight);
       const ax = lx - me.x;
       const az = lz - me.z;
       const ay = targetPoint.y + drop - eyeY;
