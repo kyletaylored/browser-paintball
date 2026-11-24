@@ -9,6 +9,7 @@ import { MAP_LIST, MAPS, unanimousVote, voteWinner } from '../shared/maps';
 import type { Voice, VoiceSettings } from './voice';
 import { layoutImage } from './fieldmap';
 import { FIRE_MODES, MODE_RULES, DEFAULT_FIRE_MODE, isFireMode, modeVoteWinner, type FireMode } from '../shared/fire';
+import { showTab } from './menu';
 
 const FEED_SECONDS = 5;
 const FEED_MAX = 5;
@@ -41,6 +42,26 @@ function voteCard(id: string, key: number, name: string, line: string, img: stri
 }
 
 /** refresh every card in the matching boxes: its votes, and whether it's mine / on now / up next */
+/** set an element's hidden flag only when it changes (these run every frame) */
+function setHidden(el: HTMLElement, hidden: boolean): void {
+  if (el.hidden !== hidden) el.hidden = hidden;
+}
+
+/**
+ * The pause menu's vote column: a tab per vote that's on (field, marker), the whole column hidden
+ * when neither is, and the other tab picked if the one showing goes away.
+ */
+function syncVoteTabs(): void {
+  const field = !$('vote-box').hidden;
+  const mode = !$('mode-vote-box').hidden;
+  const col = $('pause-votes');
+  setHidden(col, !field && !mode);
+  setHidden($('tab-field'), !field);
+  setHidden($('tab-mode'), !mode);
+  if (col.dataset.tab === 'field' && !field && mode) showTab(col, 'mode');
+  else if (col.dataset.tab === 'mode' && !mode && field) showTab(col, 'field');
+}
+
 function updateCards(sel: string, state: (id: string) => { n: number; mine: boolean; on: boolean; next: boolean }): void {
   for (const c of document.querySelectorAll<HTMLButtonElement>(`${sel} .vcard`)) {
     const s = state(c.dataset.id ?? '');
@@ -209,7 +230,8 @@ export class Hud {
    */
   setVote(show: boolean, rows: RosterEntry[], myId: number, current: string): string {
     const name = MAPS[current]?.name ?? '';
-    $('vote-box').hidden = !show;
+    setHidden($('vote-box'), !show);
+    syncVoteTabs();
     if (!show) return name;
     const humans = rows.filter((r) => !r.bot);
     const votes = humans.map((r) => r.vote ?? null);
@@ -223,6 +245,7 @@ export class Hud {
       for (const v of votes) if (v) count.set(v, (count.get(v) ?? 0) + 1);
       updateCards('.vcards.fields', (id) => ({ n: id ? count.get(id) ?? 0 : votes.filter((v) => !v).length, mine: id === mine, on: id === current, next: id === (now ?? next) }));
       const tally = [...count].sort((a, b) => b[1] - a[1]).map(([id, n]) => `${MAPS[id]?.name} ${n}`).join(', ');
+      $('tab-field-now').textContent = now ? `switching to ${MAPS[now].name}` : `${MAPS[next]?.name ?? ''}${next === current ? ' again' : ''}`;
       $('vote-info').textContent = now
         ? `Everyone wants ${MAPS[now].name}: switching after this point.`
         : `${tally ? `Votes: ${tally}. ` : ''}After this match: ${MAPS[next]?.name}.${humans.length > 1 ? ' If everyone votes the same field, it switches after the point.' : ''}`;
@@ -285,7 +308,8 @@ export class Hud {
   /** show the firing mode vote in the pause menu and say what it will do; returns the scoreboard line */
   setModeVote(show: boolean, rows: RosterEntry[], myId: number, current: FireMode): string {
     const name = MODE_RULES[current].name;
-    $('mode-vote-box').hidden = !show;
+    setHidden($('mode-vote-box'), !show);
+    syncVoteTabs();
     if (!show) return name;
     const humans = rows.filter((r) => !r.bot);
     const votes = humans.map((r) => r.modeVote ?? null);
@@ -299,6 +323,7 @@ export class Hud {
       }));
       const tally = FIRE_MODES.map((m) => [m, votes.filter((v) => v === m).length] as const)
         .filter(([, n]) => n > 0).map(([m, n]) => `${MODE_RULES[m].name} ${n}`).join(', ');
+      $('tab-mode-now').textContent = next !== current ? `switching to ${MODE_RULES[next].name}` : name;
       $('mode-vote-info').textContent = next !== current
         ? `Most players want ${MODE_RULES[next].name}: switching after this point.`
         : `${tally ? `Votes: ${tally}. ` : ''}Playing ${name}. A mode more than half the players vote for takes over after the point.`;
