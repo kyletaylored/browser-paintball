@@ -3,6 +3,7 @@
 import { TapOrHold } from './input';
 import { BTN, LOOK_DEADZONE, LOOK_YAW_SPEED, MOVE_DEADZONE, PRONE_HOLD, PadState, TURN_BOOST, lookRates, radialDeadzone, turnBoost, type PadLike } from './gamepad';
 import { Trigger, MODE_RULES, modeVoteWinner, type FireMode } from '../shared/fire';
+import { stickVector, STICK_RADIUS, STICK_DEADZONE, SPRINT_PAST } from './touch';
 
 let failed = 0;
 function check(name: string, ok: boolean, detail = '') {
@@ -203,6 +204,21 @@ check('unplugging clears everything', !s.connected && !s.sprint && !s.fire && s.
   check('the vote: more than half for another mode switches to it',
     modeVoteWinner(['pump', 'pump', null], 'ramp') === 'pump' && modeVoteWinner(['pump', 'semi'], 'ramp') === 'ramp' &&
     modeVoteWinner(['pump', null], 'ramp') === 'ramp' && modeVoteWinner([], 'semi') === 'semi');
+}
+
+// ---- on-screen stick (phones) -------------------------------------------------------------------
+
+{
+  const still = stickVector(STICK_RADIUS * STICK_DEADZONE * 0.9, 0);
+  check('touch stick: a thumb resting where it landed is still', still.x === 0 && still.y === 0 && !still.sprint);
+  const up = stickVector(0, -STICK_RADIUS);
+  check('touch stick: pushed up to the ring is full speed forward', near(up.y, 1) && near(up.x, 0) && !up.sprint, JSON.stringify(up));
+  const right = stickVector(STICK_RADIUS * 0.56, 0);
+  check('touch stick: half way out is about half speed', right.x > 0.4 && right.x < 0.6 && right.y === 0, JSON.stringify(right));
+  const diag = stickVector(STICK_RADIUS, STICK_RADIUS);
+  check('touch stick: diagonals are no faster than straight', near(Math.hypot(diag.x, diag.y), 1), JSON.stringify(diag));
+  const far = stickVector(0, -STICK_RADIUS * (SPRINT_PAST + 0.1));
+  check('touch stick: pushed well past the ring sprints', far.sprint && near(far.y, 1), JSON.stringify(far));
 }
 
 if (failed) {

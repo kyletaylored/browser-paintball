@@ -3,11 +3,13 @@
 //
 // "Playing" means either the mouse is locked to the game, or you started with a controller or a
 // touch screen, where there's no pointer lock (phones don't have it). Start on a controller, or the
-// on-screen menu button on a phone, goes back to the menu.
+// on-screen menu button on a phone, goes back to the menu. On a touch screen with no controller, the
+// on-screen controls (touch.ts) move, aim and fire.
 
 import { Gamepads, type PadSettings } from './gamepad';
+import type { TouchControls } from './touch';
 
-/** a phone or tablet: no mouse to lock, so Play goes straight in (made for a clip-on controller) */
+/** a phone or tablet: no mouse to lock, so Play goes straight in (on-screen controls, or a controller) */
 export const TOUCH = typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches && !matchMedia('(pointer: fine)').matches;
 
 export type Device = 'keyboard' | 'pad';
@@ -54,6 +56,8 @@ export class Input {
   /** what the player used last, for on-screen hints */
   device: Device = 'keyboard';
   readonly pad: Gamepads;
+  /** the on-screen controls (touch screens), once main.ts has made them */
+  touch: TouchControls | null = null;
   /** called when play starts or stops, and when a controller connects or disconnects */
   onChange: () => void = () => {};
   /** the controller we were playing with went away mid-game */
@@ -209,20 +213,37 @@ export class Input {
 
   // ---- actions, from whichever device ---------------------------------------------------------
 
+  /** the on-screen controls, while they're showing and we're playing */
+  private get onScreen(): TouchControls | null {
+    return this.active && this.touch?.shown ? this.touch : null;
+  }
+
+  /** the on-screen Crouch (or Lie) button went down or up: like pressing C (or Z) */
+  touchStance(which: 'crouch' | 'prone', down: boolean): void {
+    const t = performance.now();
+    const [key, other] = which === 'crouch' ? [this.crouchKey, this.proneKey] : [this.proneKey, this.crouchKey];
+    if (down) {
+      key.press(t);
+      other.clear();
+    } else {
+      key.release(t);
+    }
+  }
+
   get forward(): number {
-    return clamp1(+this.isDown('KeyW') - +this.isDown('KeyS') + this.padIn(this.pad.state.moveY));
+    return clamp1(+this.isDown('KeyW') - +this.isDown('KeyS') + this.padIn(this.pad.state.moveY) + (this.onScreen?.moveY ?? 0));
   }
 
   get right(): number {
-    return clamp1(+this.isDown('KeyD') - +this.isDown('KeyA') + this.padIn(this.pad.state.moveX));
+    return clamp1(+this.isDown('KeyD') - +this.isDown('KeyA') + this.padIn(this.pad.state.moveX) + (this.onScreen?.moveX ?? 0));
   }
 
   get jump(): boolean {
-    return this.isDown('Space') || (this.active && this.pad.state.jump && !this.holdA);
+    return this.isDown('Space') || (this.active && this.pad.state.jump && !this.holdA) || !!this.onScreen?.jump;
   }
 
   get sprint(): boolean {
-    return this.isDown('ShiftLeft') || this.isDown('ShiftRight') || (this.active && this.pad.state.sprint);
+    return this.isDown('ShiftLeft') || this.isDown('ShiftRight') || (this.active && this.pad.state.sprint) || !!this.onScreen?.sprint;
   }
 
   get crouch(): boolean {
@@ -235,7 +256,7 @@ export class Input {
   }
 
   get fireHeld(): boolean {
-    return (this.locked && this.mouseFire) || (this.active && this.pad.state.fire);
+    return (this.locked && this.mouseFire) || (this.active && this.pad.state.fire) || !!this.onScreen?.fire;
   }
 
   /** switch first / third person: H, or click the right stick */
@@ -261,11 +282,11 @@ export class Input {
 
   /** spectating: watch the next player (Space, or A) */
   get nextPressed(): boolean {
-    return this.wasPressed('Space') || (this.active && this.pad.state.aPressed);
+    return this.wasPressed('Space') || (this.active && this.pad.state.aPressed) || !!this.onScreen?.jumpPressed;
   }
 
   get reloadPressed(): boolean {
-    return this.wasPressed('KeyR') || (this.active && this.pad.state.reloadPressed);
+    return this.wasPressed('KeyR') || (this.active && this.pad.state.reloadPressed) || !!this.onScreen?.reloadPressed;
   }
 
   get scoreboardHeld(): boolean {
@@ -280,15 +301,22 @@ export class Input {
     return this.active && (this.isDown('KeyV') || this.pad.state.talk || this.touchTalk);
   }
 
+  /** how far the mouse (or an aiming finger) moved since the last call */
   takeLook(): { dx: number; dy: number } {
     const out = { dx: this.dx, dy: this.dy };
     this.dx = 0;
     this.dy = 0;
+    const t = this.touch?.takeLook();
+    if (t && this.onScreen) {
+      out.dx += t.dx;
+      out.dy += t.dy;
+    }
     return out;
   }
 
   endFrame(): void {
     this.pressed.clear();
+    this.touch?.endFrame();
   }
 
   private padIn(v: number): number {
@@ -301,6 +329,7 @@ export class Input {
     // back from the menu standing up, not crouched from a key you let go of while it was open
     this.crouchKey.clear();
     this.proneKey.clear();
+    this.touch?.reset();
   }
 }
 

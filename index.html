@@ -338,6 +338,40 @@
         font: inherit; font-size: 15px; cursor: pointer; padding: 10px 14px;
       }
       #menubtn[hidden] { display: none; }
+      /* on-screen controls (src/touch.ts) */
+      #touch { position: absolute; inset: 0; pointer-events: none; user-select: none; -webkit-user-select: none; }
+      #touch[hidden] { display: none; }
+      #touch .tzone { position: absolute; top: 18%; bottom: 0; pointer-events: auto; touch-action: none; }
+      #touch .tzone.move { left: 0; width: 45%; }
+      #touch .tzone.aim { right: 0; width: 55%; }
+      #touch .tstick {
+        position: absolute; width: 112px; height: 112px; margin: -56px 0 0 -56px; border-radius: 50%;
+        border: 2px solid rgba(255, 255, 255, 0.35); background: rgba(10, 8, 14, 0.25); pointer-events: none;
+      }
+      #touch .tstick[hidden] { display: none; }
+      #touch .tstick.sprint { border-color: var(--accent); }
+      #touch .knob {
+        position: absolute; left: 31px; top: 31px; width: 50px; height: 50px; border-radius: 50%;
+        background: rgba(255, 255, 255, 0.55);
+      }
+      #touch .tbtn {
+        position: absolute; display: grid; place-items: center; border-radius: 50%; pointer-events: auto; touch-action: none;
+        font: inherit; font-size: 13px; font-weight: 800; letter-spacing: 0.02em; color: var(--ink);
+        background: rgba(10, 8, 14, 0.45); border: 2px solid rgba(255, 255, 255, 0.28); -webkit-tap-highlight-color: transparent;
+      }
+      #touch .tbtn.down { background: rgba(255, 255, 255, 0.35); }
+      #touch .tbtn.on { border-color: var(--accent); color: var(--accent); }
+      #touch .fire {
+        width: 92px; height: 92px; right: calc(28px + var(--sr)); bottom: calc(40px + var(--sb)); font-size: 16px;
+        background: rgba(255, 59, 59, 0.42); border-color: rgba(255, 255, 255, 0.45);
+      }
+      #touch .fire.down { background: rgba(255, 59, 59, 0.7); }
+      #touch .jump { width: 62px; height: 62px; right: calc(134px + var(--sr)); bottom: calc(26px + var(--sb)); }
+      #touch .crouch { width: 58px; height: 58px; right: calc(132px + var(--sr)); bottom: calc(104px + var(--sb)); }
+      #touch .prone { width: 52px; height: 52px; right: calc(66px + var(--sr)); bottom: calc(150px + var(--sb)); }
+      #touch .reload { width: 52px; height: 52px; right: calc(200px + var(--sr)); bottom: calc(40px + var(--sb)); font-size: 11px; }
+      /* the ammo count moves up out of the buttons' way */
+      body.touchplay #ammo { top: calc(60px + var(--st)); bottom: auto; font-size: 20px; }
       #rotate {
         position: fixed; inset: 0; z-index: 10; display: none; place-items: center; padding: 24px; text-align: center;
         background: #0e0c12; font-size: 22px; font-weight: 800;
