@@ -26,7 +26,7 @@ import { waitLine } from '../shared/walkoff';
 import { Net, sampleRemote, phaseSecondsLeft } from './net';
 import { NetStats } from './netstats';
 import { Voice, type VoiceSettings } from './voice';
-import { BALL_SPEED, STAND_HEIGHT, stanceHeight, CLIENT_SEND_HZ, RESPAWN_SECONDS, INPUT_DT, INTERP_DELAY } from '../shared/sim';
+import { ballSpeed, STAND_HEIGHT, stanceHeight, CLIENT_SEND_HZ, RESPAWN_SECONDS, INPUT_DT, INTERP_DELAY } from '../shared/sim';
 import { DEFAULT_PORT, TEAM_COLORS, TEAM_NAMES, cleanName, type RoundPhase, type V3 } from '../shared/protocol';
 import { Trigger, MODE_RULES, DEFAULT_FIRE_MODE, isFireMode, type FireMode } from '../shared/fire';
 
@@ -164,6 +164,7 @@ hud.bindShoulder(player.shoulder, (v) => {
 const balls = new Paintballs(scene);
 const fx = new Fx(scene);
 const stars = new StarBursts(scene);
+if (field.map.theme.outFx) stars.setStyle(field.map.theme.outFx);
 balls.setStyle(field.map.theme.shots ?? 'paint');
 const sound = new SoundSystem(camera);
 player.placeAt(spawnPoint(0, 2));
@@ -258,7 +259,7 @@ function switchMap(id: string): boolean {
   world = buildWorld(scene, models);
   balls.clear();
   fx.clear();
-  stars.clear();
+  stars.setStyle(field.map.theme.outFx ?? 'stars');
   // the field's own look for shots and outfits (moonballs and space suits on the moon)
   balls.setStyle(field.map.theme.shots ?? 'paint');
   const outfit = fieldOutfit();
@@ -324,13 +325,13 @@ const net = new Net(serverUrl, {
   },
   ball(m) {
     remoteAvatars.get(m.owner)?.avatar.fire();
-    balls.spawn(m.o, m.v, m.owner, m.team, TEAM_COLORS[m.team], false);
+    balls.spawn(m.o, m.v, m.owner, m.team, paintOf(m.team), false);
     sound.playAt('shot', m.o[0], m.o[1], m.o[2], { volume: VOL.remoteShot });
   },
   hit(m) {
     if (SHOW_HITBOXES) showHitbox(m.tp);
-    fx.burst(m.p[0], m.p[1], m.p[2], 0, 1, 0, TEAM_COLORS[m.team], 20);
-    if (field.map.theme.outFx === 'stars') stars.pop(m.tp[0], m.tp[1], m.tp[2], TEAM_COLORS[m.team]);
+    fx.burst(m.p[0], m.p[1], m.p[2], 0, 1, 0, paintOf(m.team), 20);
+    if (field.map.theme.outFx) stars.pop(m.tp[0], m.tp[1], m.tp[2], TEAM_COLORS[m.team]);
     const mine = m.victim === net.id || m.shooter === net.id;
     const shooterTeam = net.roster.get(m.shooter)?.team ?? m.team;
     const victimTeam = net.roster.get(m.victim)?.team ?? (m.team === 0 ? 1 : 0);
@@ -597,6 +598,11 @@ function aimSlowdown(myTeam: number): number {
   return 1;
 }
 
+/** the paint a team shoots on this field: a bright fill, not the team colour */
+function paintOf(team: number): number {
+  return field.map.theme.paint[team === 1 ? 1 : 0];
+}
+
 function fire() {
   player.eye(eye);
   // straight ahead in first person; at what the crosshair is on in third
@@ -610,7 +616,8 @@ function fire() {
   const team = online ? net.team : 0;
   if (online) flushInputs(); // so the server has moved us to where we're shooting from
   // Draw the ball right away (no waiting for the server), then tell the server.
-  balls.spawn(o, [dir.x * BALL_SPEED, dir.y * BALL_SPEED, dir.z * BALL_SPEED], online ? net.id : 0, team, TEAM_COLORS[team], true);
+  const speed = ballSpeed(o); // the server picks the same one from o
+  balls.spawn(o, [dir.x * speed, dir.y * speed, dir.z * speed], online ? net.id : 0, team, paintOf(team), true);
   if (online) net.send({ t: 'fire', o, d: [dir.x, dir.y, dir.z] });
   hopper--;
   player.kick();
@@ -655,7 +662,7 @@ const ballEvents: BallEvents = {
       if (d) {
         d.alive = false;
         d.downUntil = performance.now() + RESPAWN_SECONDS * 1000;
-        if (field.map.theme.outFx === 'stars') stars.pop(d.x, d.y, d.z, b.color);
+        if (field.map.theme.outFx) stars.pop(d.x, d.y, d.z, TEAM_COLORS[b.team]);
         practiceHits++;
         hud.hitMarker();
         input.pad.rumble('hit');
@@ -1022,4 +1029,4 @@ requestAnimationFrame(frame);
 
 // Poke at the game from the browser console while developing, e.g. __game.player.body.
 // import.meta.env.DEV is false in `npm run build`, so this is stripped from production.
-if (import.meta.env.DEV) Object.assign(window, { __game: { THREE, scene, camera, renderer, composer, input, player, net, balls, fx, dummies, sound, hud, frame, prediction, models, remoteAvatars, menu, get mode() { return mode; }, get world() { return world; } } });
+if (import.meta.env.DEV) Object.assign(window, { __game: { THREE, scene, camera, renderer, composer, input, player, net, balls, fx, stars, dummies, sound, hud, frame, prediction, models, remoteAvatars, menu, get mode() { return mode; }, get world() { return world; } } });
