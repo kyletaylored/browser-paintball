@@ -164,6 +164,7 @@ hud.bindShoulder(player.shoulder, (v) => {
 const balls = new Paintballs(scene);
 const fx = new Fx(scene);
 const stars = new StarBursts(scene);
+if (field.map.theme.outFx) stars.setStyle(field.map.theme.outFx);
 balls.setStyle(field.map.theme.shots ?? 'paint');
 const sound = new SoundSystem(camera);
 player.placeAt(spawnPoint(0, 2));
@@ -258,7 +259,7 @@ function switchMap(id: string): boolean {
   world = buildWorld(scene, models);
   balls.clear();
   fx.clear();
-  stars.clear();
+  stars.setStyle(field.map.theme.outFx ?? 'stars');
   // the field's own look for shots and outfits (moonballs and space suits on the moon)
   balls.setStyle(field.map.theme.shots ?? 'paint');
   const outfit = fieldOutfit();
@@ -330,7 +331,7 @@ const net = new Net(serverUrl, {
   hit(m) {
     if (SHOW_HITBOXES) showHitbox(m.tp);
     fx.burst(m.p[0], m.p[1], m.p[2], 0, 1, 0, paintOf(m.team), 20);
-    if (field.map.theme.outFx === 'stars') stars.pop(m.tp[0], m.tp[1], m.tp[2], TEAM_COLORS[m.team]);
+    if (field.map.theme.outFx) stars.pop(m.tp[0], m.tp[1], m.tp[2], TEAM_COLORS[m.team]);
     const mine = m.victim === net.id || m.shooter === net.id;
     const shooterTeam = net.roster.get(m.shooter)?.team ?? m.team;
     const victimTeam = net.roster.get(m.victim)?.team ?? (m.team === 0 ? 1 : 0);
@@ -661,7 +662,7 @@ const ballEvents: BallEvents = {
       if (d) {
         d.alive = false;
         d.downUntil = performance.now() + RESPAWN_SECONDS * 1000;
-        if (field.map.theme.outFx === 'stars') stars.pop(d.x, d.y, d.z, TEAM_COLORS[b.team]);
+        if (field.map.theme.outFx) stars.pop(d.x, d.y, d.z, TEAM_COLORS[b.team]);
         practiceHits++;
         hud.hitMarker();
         input.pad.rumble('hit');
@@ -1028,4 +1029,4 @@ requestAnimationFrame(frame);
 
 // Poke at the game from the browser console while developing, e.g. __game.player.body.
 // import.meta.env.DEV is false in `npm run build`, so this is stripped from production.
-if (import.meta.env.DEV) Object.assign(window, { __game: { THREE, scene, camera, renderer, composer, input, player, net, balls, fx, dummies, sound, hud, frame, prediction, models, remoteAvatars, menu, get mode() { return mode; }, get world() { return world; } } });
+if (import.meta.env.DEV) Object.assign(window, { __game: { THREE, scene, camera, renderer, composer, input, player, net, balls, fx, stars, dummies, sound, hud, frame, prediction, models, remoteAvatars, menu, get mode() { return mode; }, get world() { return world; } } });

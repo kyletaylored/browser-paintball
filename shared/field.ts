@@ -11,7 +11,13 @@ import { MAPS, DEFAULT_MAP, type GameMap } from './maps';
 export type Look =
   | 'inflatable' | 'wood' | 'rock' | 'tree' | 'log' | 'hut' | 'dune' | 'boat' | 'spool' | 'sandbag' | 'barrel' | 'tower'
   // planets (orbs): a banded one, one with a ring round it, and a cratered moon
-  | 'planet' | 'ringed' | 'moon';
+  | 'planet' | 'ringed' | 'moon'
+  // holiday fields (src/holidays.ts)
+  | 'pumpkin' | 'jacko' | 'grave' | 'coffin' | 'witchhat' | 'deadtree'
+  | 'present' | 'xtree' | 'snowwall' | 'ornament'
+  | 'hay' | 'haybale' | 'cornshock' | 'wagon'
+  | 'rocket' | 'starbox' | 'stripes' | 'firecracker'
+  | 'lantern' | 'drum' | 'dragon' | 'pagoda';
 
 /** upright box, axis-aligned */
 export type BoxBunker = { kind: 'box'; x: number; z: number; w: number; d: number; h: number; color: number; look?: Look };

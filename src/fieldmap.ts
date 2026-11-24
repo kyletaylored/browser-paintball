@@ -4,7 +4,9 @@
 import type { GameMap } from '../shared/maps';
 import { logHalf, profileBox } from '../shared/field';
 
-const GROUND: Record<GameMap['theme']['ground'], string> = { turf: '#2f8a3a', sand: '#cdb27a', forest: '#2c5a2a', moon: '#8f8c86' };
+const GROUND: Record<GameMap['theme']['ground'], string> = {
+  turf: '#2f8a3a', sand: '#cdb27a', forest: '#2c5a2a', moon: '#8f8c86', patch: '#4a4632', snow: '#e8eef6', farm: '#a8954a', stone: '#8a6a62',
+};
 const cache = new Map<string, string>();
 
 /** a picture of the map's layout (a data: URL), made once per map */
