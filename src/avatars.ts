@@ -8,7 +8,8 @@
 import * as THREE from 'three';
 import { STAND_HEIGHT, PRONE_FEET, PRONE_RADIUS } from '../shared/sim';
 import { field } from '../shared/field';
-import { paintTeam, type Models } from './models';
+import { paintTeam, paintMaterial, type Models } from './models';
+import { CHARACTERS, type Character } from './characters';
 import { toonify } from './toon';
 
 export interface Avatar {
@@ -19,6 +20,8 @@ export interface Avatar {
   fire(): void;
   /** what they wear (follows the field: makeAvatar starts with the current field's) */
   dress(outfit: Outfit): void;
+  /** which character they are (src/characters.ts) */
+  wear(c: Character): void;
   dispose(): void;
 }
 
@@ -27,12 +30,16 @@ export type Outfit = 'jersey' | 'astronaut';
 /** what players wear on the field being played */
 export const fieldOutfit = (): Outfit => field.map.theme.outfit ?? 'jersey';
 
-export function makeAvatar(models: Models | null, color: number): Avatar {
+export function makeAvatar(models: Models | null, color: number, character: Character = CHARACTERS[0]): Avatar {
   const a = models ? new ModelAvatar(models, color) : new PrimitiveAvatar(color);
   toonify(a.root); // the arcade look (src/toon.ts)
+  a.wear(character);
   a.dress(fieldOutfit());
   return a;
 }
+
+/** the arm and leg meshes, made thicker or slimmer per character (across them, not along) */
+const LIMBS = ['shoulderR_mesh', 'shoulderL_mesh', 'elbowR_mesh', 'elbowL_mesh', 'thighR_mesh', 'thighL_mesh', 'kneeR_mesh', 'kneeL_mesh'];
 
 /** the space suit's colour for each of the figure's materials (by name; the team colour stays) */
 const SUIT: Readonly<Record<string, number>> = {
@@ -136,6 +143,7 @@ export class ModelAvatar implements Avatar {
   /** the jersey's materials, per mesh, while the suit is on */
   private jersey = new Map<THREE.Mesh, THREE.Material | THREE.Material[]>();
   private gear: THREE.Object3D[] = [];
+  private character: Character | null = null;
 
   constructor(models: Models, color: number) {
     this.model = models.player.scene.clone(true);
@@ -187,6 +195,28 @@ export class ModelAvatar implements Avatar {
   fire(): void {
     if (this.state === 'out' || this.state === 'outWalk' || !this.shoot) return;
     this.shoot.reset().play();
+  }
+
+  wear(c: Character): void {
+    if (c === this.character) return;
+    this.character = c;
+    // one head and one torso: theirs
+    this.model.traverse((o) => {
+      // "torso_bruiser" (a mesh with several materials loads as a group of "torso_bruiser_1", "_2"…)
+      const m = /^(head|torso)_([a-z]+)$/.exec(o.name);
+      if (m && m[2] !== 'mesh') o.visible = m[2] === c.id;
+    });
+    paintMaterial(this.model, 'accent', c.accent);
+    // thicker or slimmer about the joint. A compressed mesh's node already has a scale and offset (to
+    // undo the quantization), so scale both rather than setting the scale
+    for (const n of LIMBS) {
+      const o = this.model.getObjectByName(n);
+      if (!o) continue;
+      o.userData.rest ??= { p: o.position.clone(), s: o.scale.clone() };
+      const { p, s } = o.userData.rest as { p: THREE.Vector3; s: THREE.Vector3 };
+      o.position.set(p.x * c.limbs, p.y, p.z * c.limbs);
+      o.scale.set(s.x * c.limbs, s.y, s.z * c.limbs);
+    }
   }
 
   dress(outfit: Outfit): void {
@@ -303,6 +333,9 @@ export class PrimitiveAvatar implements Avatar {
   }
 
   private suitParts: THREE.Object3D[] = [];
+
+  /** the simple figure looks the same whoever it is */
+  wear(_c: Character): void {}
 
   dress(outfit: Outfit): void {
     for (const p of this.suitParts) p.visible = outfit === 'astronaut';

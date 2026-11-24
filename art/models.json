@@ -22,7 +22,7 @@
     {
       "source": "art/player.py",
       "out": "player.glb",
-      "what": "the player figure: its joints from scripts/player-rig.ts, with every animation",
+      "what": "the player figures: one rig from scripts/player-rig.ts with every animation, and a head and torso per character (src/characters.ts)",
       "input": "player",
       "clips": "player",
       "nodes": [
@@ -38,7 +38,11 @@
         "kneeR",
         "thighL",
         "kneeL",
-        "gun"
+        "gun",
+        "torso_rookie",
+        "head_rookie",
+        "torso_bruiser",
+        "head_bruiser"
       ],
       "animations": {
         "idle": 2.4,
@@ -50,12 +54,13 @@
         "outWalk": 0.9
       },
       "materials": [
-        "team"
+        "team",
+        "accent"
       ],
-      "maxTriangles": 14000,
-      "maxKB": 160,
+      "maxTriangles": 26000,
+      "maxKB": 280,
       "size": [
-        1.0,
+        1.15,
         1.85,
         1.2
       ]

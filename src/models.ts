@@ -96,16 +96,22 @@ export function bunkerModel(models: Models, key: string): THREE.Object3D | undef
 
 /** give every material named "team" in this object its own copy in the team colour */
 export function paintTeam(root: THREE.Object3D, color: number): void {
+  paintMaterial(root, 'team', color);
+}
+
+/** give every material called `name` in this object its own copy in `color` ("team", "accent") */
+export function paintMaterial(root: THREE.Object3D, name: string, color: number): void {
+  const mine = `${name}Copy`;
   root.traverse((o) => {
     const mesh = o as THREE.Mesh;
     if (!mesh.isMesh) return;
     const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
     const next = mats.map((m) => {
-      if (m.name !== 'team') return m;
+      if (m.name !== name) return m;
       const c = (m as THREE.MeshStandardMaterial).clone();
       c.color.setHex(color);
-      if (m.userData.teamCopy) m.dispose(); // replacing a copy we made earlier
-      c.userData.teamCopy = true;
+      if (m.userData[mine]) m.dispose(); // replacing a copy we made earlier
+      c.userData[mine] = true;
       return c;
     });
     mesh.material = Array.isArray(mesh.material) ? next : next[0];

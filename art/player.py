@@ -1,7 +1,11 @@
-# The player figure, in the arcade look: a big rounded helmet with a wide goggle and a mouth vent,
-# a boxy jersey in the team colour with darker side panels and a number patch, shoulder, elbow and
-# knee pads, chunky gloves, high-top boots with white soles, a pod pack on the belt, and a marker
-# with a big hopper.  npm run assets:blender -- player
+# The player figures, in the arcade look: one rig and one set of animations, worn by several
+# characters. Shared by all of them: shorts with a pod pack, sleeves, elbow and knee pads, chunky
+# gloves, high-top boots with white soles, and a marker with a big hopper. Each character has its own
+# head (helmet) and torso (build), named "head_<character>" and "torso_<character>"; the game shows
+# one of each (src/characters.ts) and makes the limbs thicker or slimmer to suit.
+#
+# Two materials are recoloured by the game: "team" (the jersey, red or blue) and "accent" (the
+# character's own colour: pads, boot tops and goggle lens).  npm run assets:blender -- player
 #
 # The joints come from the game (scripts/player-rig.ts, handed over in SPLAT_INPUT), and so do the
 # animations: scripts/blender-assets.ts adds them after the export. This script only builds the
@@ -34,7 +38,7 @@ M = {
     'sole': kit.material('sole', 0xf3efe4, roughness=0.7),
     'white': kit.material('white', 0xf3efe4, roughness=0.6),
     'mask': kit.material('mask', 0x30343c, roughness=0.45),
-    'lens': kit.material('lens', 0x2fd0ff, roughness=0.15, metallic=0.2),
+    'accent': kit.material('accent', 0xb45cff, roughness=0.45),
     'trim': kit.material('trim', 0x14131a, roughness=0.6),
     'gun': kit.material('gunbody', 0x2d3442, roughness=0.4, metallic=0.5),
     'barrel': kit.material('barrel', 0x1a1c22, roughness=0.3, metallic=0.6),
@@ -101,8 +105,8 @@ class Part:
         self.objs.append(kit.sphere('p', r, self._at(at), M[mat], scale=(scale[0], scale[2], scale[1]), segments=segments, rings=rings))
         return self
 
-    def done(self):
-        mesh = kit.join(self.bone + '_mesh', self.objs, origin=b(self.origin))
+    def done(self, name=None):
+        mesh = kit.join(name or self.bone + '_mesh', self.objs, origin=b(self.origin))
         mesh.parent = empties[self.bone]
         mesh.location = (0, 0, 0)
         return mesh
@@ -118,31 +122,76 @@ class Part:
  .cyl('team', 0.037, 0.035, (-0.1, 0.27, 0.23)).cyl('team', 0.037, 0.035, (0, 0.27, 0.23)).cyl('team', 0.037, 0.035, (0.1, 0.27, 0.23))
  .done())
 
-# ---- torso: a boxy jersey, two-tone, with a number patch on the front and back ------------------
-(Part('torso')
- .box('team', (0.5, 0.5, 0.31), (0, 0.29, 0), bevel=0.08)
- .box('side', (0.06, 0.4, 0.315), (-0.24, 0.26, 0), bevel=0.02)
- .box('side', (0.06, 0.4, 0.315), (0.24, 0.26, 0), bevel=0.02)
- .box('white', (0.2, 0.15, 0.012), (0, 0.33, -0.158), bevel=0.01)
- .box('white', (0.24, 0.18, 0.012), (0, 0.34, 0.158), bevel=0.01)
- .box('trim', (0.52, 0.05, 0.33), (0, 0.05, 0), bevel=0.015)  # hem
- .cyl('side', 0.1, 0.07, (0, 0.56, 0))  # collar
- .ball('pad', 0.12, (-0.28, 0.47, 0), scale=(1.05, 0.75, 1.1))  # shoulder pads
- .ball('pad', 0.12, (0.28, 0.47, 0), scale=(1.05, 0.75, 1.1))
- .done())
-
-# ---- head: a big rounded helmet, the top at the standing height -----------------------------------
+# ---- the characters: a torso (build) and a head (helmet) each --------------------------------------
+# The top of every helmet is at the standing height, where the hitbox ends.
 R = 0.17
 cy = HEAD_TOP - R
-(Part('head')
- .ball('mask', R, (0, cy, 0), segments=24, rings=16)
- .box('team', (0.33, 0.14, 0.08), (0, cy + 0.02, -0.13), bevel=0.03)  # goggle frame
- .box('lens', (0.27, 0.09, 0.05), (0, cy + 0.02, -0.165), bevel=0.02)
- .box('mask', (0.19, 0.12, 0.1), (0, cy - 0.11, -0.12), bevel=0.035)  # mouth vent
- .box('trim', (0.13, 0.015, 0.02), (0, cy - 0.09, -0.172)).box('trim', (0.13, 0.015, 0.02), (0, cy - 0.125, -0.172))
- .box('team', (0.3, 0.03, 0.12), (0, cy + 0.12, -0.14), bevel=0.01)  # visor brim
- .cyl('trim', 0.055, 0.36, (0, cy + 0.01, 0.0), axis='x')  # ear pieces
- .done())
+
+
+def torso_rookie():
+    """the rookie: the standard kit, a boxy jersey with a number patch front and back"""
+    return (Part('torso')
+            .box('team', (0.5, 0.5, 0.31), (0, 0.29, 0), bevel=0.08)
+            .box('side', (0.06, 0.4, 0.315), (-0.24, 0.26, 0), bevel=0.02)
+            .box('side', (0.06, 0.4, 0.315), (0.24, 0.26, 0), bevel=0.02)
+            .box('white', (0.2, 0.15, 0.012), (0, 0.33, -0.158), bevel=0.01)
+            .box('white', (0.24, 0.18, 0.012), (0, 0.34, 0.158), bevel=0.01)
+            .box('trim', (0.52, 0.05, 0.33), (0, 0.05, 0), bevel=0.015)  # hem
+            .cyl('side', 0.1, 0.07, (0, 0.56, 0))  # collar
+            .ball('accent', 0.12, (-0.28, 0.47, 0), scale=(1.05, 0.75, 1.1))  # shoulder pads
+            .ball('accent', 0.12, (0.28, 0.47, 0), scale=(1.05, 0.75, 1.1)))
+
+
+def head_rookie():
+    """the rookie: a round helmet, a wide goggle, a mouth vent and a little visor brim"""
+    return (Part('head')
+            .ball('mask', R, (0, cy, 0), segments=24, rings=16)
+            .box('team', (0.33, 0.14, 0.08), (0, cy + 0.02, -0.13), bevel=0.03)  # goggle frame
+            .box('accent', (0.27, 0.09, 0.05), (0, cy + 0.02, -0.165), bevel=0.02)  # lens
+            .box('mask', (0.19, 0.12, 0.1), (0, cy - 0.11, -0.12), bevel=0.035)  # mouth vent
+            .box('trim', (0.13, 0.015, 0.02), (0, cy - 0.09, -0.172)).box('trim', (0.13, 0.015, 0.02), (0, cy - 0.125, -0.172))
+            .box('team', (0.3, 0.03, 0.12), (0, cy + 0.12, -0.14), bevel=0.01)  # visor brim
+            .cyl('trim', 0.055, 0.36, (0, cy + 0.01, 0.0), axis='x'))  # ear pieces
+
+
+def torso_bruiser():
+    """the bruiser: a barrel chest under a dark chest plate, and huge shoulder pads with a rim"""
+    t = (Part('torso')
+         .box('team', (0.6, 0.52, 0.4), (0, 0.29, 0), bevel=0.12)
+         .box('side', (0.07, 0.4, 0.405), (-0.29, 0.25, 0), bevel=0.025)
+         .box('side', (0.07, 0.4, 0.405), (0.29, 0.25, 0), bevel=0.025)
+         .box('pad', (0.44, 0.2, 0.05), (0, 0.39, -0.2), bevel=0.03)  # chest plate
+         .box('accent', (0.44, 0.035, 0.055), (0, 0.3, -0.205), bevel=0.01)  # a stripe under it
+         .box('white', (0.26, 0.2, 0.012), (0, 0.33, 0.203), bevel=0.01)  # number patch on the back
+         .box('trim', (0.62, 0.06, 0.42), (0, 0.05, 0), bevel=0.02)  # hem
+         .cyl('pad', 0.13, 0.09, (0, 0.56, 0)))  # thick collar
+    for x in (-0.34, 0.34):
+        t.ball('accent', 0.16, (x, 0.47, 0), scale=(1.1, 0.8, 1.15))
+        t.cyl('pad', 0.15, 0.05, (x, 0.43, 0), r2=0.17)  # the pad's dark rim
+    return t
+
+
+def head_bruiser():
+    """the bruiser: a wide, heavy helmet with a brow ridge, a narrow goggle and a barred jaw guard"""
+    h = (Part('head')
+         .ball('mask', R, (0, cy, 0), scale=(1.16, 1, 1.06), segments=24, rings=16)
+         .box('pad', (0.36, 0.06, 0.12), (0, cy + 0.07, -0.12), bevel=0.025)  # brow ridge
+         .box('team', (0.34, 0.09, 0.08), (0, cy + 0.005, -0.135), bevel=0.025)  # goggle frame
+         .box('accent', (0.28, 0.05, 0.05), (0, cy + 0.005, -0.17), bevel=0.015)  # narrow lens
+         .box('mask', (0.27, 0.15, 0.13), (0, cy - 0.105, -0.11), bevel=0.045)  # jaw guard
+         .cyl('trim', 0.065, 0.4, (0, cy - 0.01, 0.0), axis='x'))  # ear pieces
+    for x in (-0.08, 0, 0.08):  # bars across the jaw
+        h.box('trim', (0.025, 0.11, 0.02), (x, cy - 0.105, -0.178))
+    return h
+
+
+CHARACTERS = {
+    'rookie': (torso_rookie, head_rookie),
+    'bruiser': (torso_bruiser, head_bruiser),
+}
+for name, (torso, head) in CHARACTERS.items():
+    torso().done('torso_' + name)
+    head().done('head_' + name)
 
 # ---- arms: sleeves, elbow pads, chunky gloves --------------------------------------------------
 for side in ('R', 'L'):
@@ -150,7 +199,7 @@ for side in ('R', 'L'):
      .cyl('team', 0.075, 0.24, (0, -0.13, 0))
      .done())
     (Part('elbow' + side)
-     .ball('pad', 0.07, (0, 0, -0.01), scale=(1, 0.9, 1.1))
+     .ball('accent', 0.07, (0, 0, -0.01), scale=(1, 0.9, 1.1))
      .cyl('side', 0.062, 0.2, (0, -0.12, 0))
      .ball('glove', 0.088, (0, -0.27, 0), scale=(1, 1.05, 1.15))
      .box('team', (0.13, 0.04, 0.13), (0, -0.2, 0), bevel=0.015)  # glove cuff
@@ -164,11 +213,11 @@ for side in ('R', 'L'):
     knee = world['knee' + side]
     foot = -knee[1]  # down to the ground
     (Part('knee' + side)
-     .ball('pad', 0.085, (0, 0.0, -0.06), scale=(1, 1.2, 0.8))
+     .ball('accent', 0.085, (0, 0.0, -0.06), scale=(1, 1.2, 0.8))
      .cyl('pants', 0.078, 0.3, (0, -0.18, 0))
      .box('boot', (0.16, 0.16, 0.3), (0, foot + 0.1, -0.05), bevel=0.05)
      .box('sole', (0.17, 0.035, 0.31), (0, foot + 0.0175, -0.05), bevel=0.012)
-     .box('team', (0.165, 0.03, 0.2), (0, foot + 0.17, -0.01), bevel=0.01)  # top of the boot
+     .box('accent', (0.165, 0.03, 0.2), (0, foot + 0.17, -0.01), bevel=0.01)  # top of the boot
      .done())
 
 # ---- the marker in their hands: chunky, with a big team-colour hopper -------------------------------
@@ -182,4 +231,4 @@ for side in ('R', 'L'):
  .cyl('tank', 0.042, 0.2, (0, -0.085, 0.17), axis='z')
  .done())
 
-print('built the player figure')
+print('built the player figures: ' + ', '.join(CHARACTERS))
