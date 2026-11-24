@@ -160,6 +160,8 @@ src/          the browser game
   Your browser predicts the same steps locally, so moving feels instant, and quietly corrects itself if the server
   disagrees (`src/prediction.ts`).
 - **Paintballs:** your browser draws them the instant you click. The server *also* flies them using the same `shared/sim.ts` code, in the same fixed steps, and is the only one that decides eliminations.
+- **Paint colours:** paint comes in bright fills (yellow, lime, pink, orange, cyan, purple), not the team colours. Each
+  field gives each team a different one (`theme.paint` in `shared/maps.ts`). Look only.
 - **Paint speed:** shots leave at 280 ft/s on average, each one up to 2% faster or slower (picked from the firing
   point, so the shooter and the server agree without sending it); drag slows them down, so aim a little high at range.
 - **Bounces:** paint that hits the ground always breaks. Paint that hits a bunker at a shallow angle (under about 30°)

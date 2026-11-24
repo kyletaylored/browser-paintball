@@ -18,7 +18,7 @@
 // Shaped tops: paint follows a pyramid's slope and a wall's top line (over a dip, through a notch).
 // Planets: paint hits a ball where it's round, a sunk dome only above the ground, and nobody stands on one.
 
-import { MAP_LIST, DEFAULT_MAP, nextMap, unanimousVote, voteWinner } from '../shared/maps';
+import { MAP_LIST, DEFAULT_MAP, PAINT, nextMap, unanimousVote, voteWinner } from '../shared/maps';
 import { field, setMap, useBunkers, spawnPoint, footprintDistance, taperHeight, topOf, type Bunker } from '../shared/field';
 import {
   traceWorld, stepMovement, advanceBall, hitWorld, hitPlayer, ballSeed, ballSpeed, bounceChance, ballFlightTime, ballDrop, playerBounceChance, segmentHitsPlayer, BALL_DT, BALL_SPEED, STAND_HEIGHT,
@@ -67,6 +67,11 @@ for (const m of MAP_LIST) {
   console.log(`-- ${m.name}`);
   setMap(m.id);
   const bs = field.bunkers;
+
+  // paint: two different bright fills, so you can tell whose paint is whose
+  const fills: number[] = Object.values(PAINT);
+  const [pr, pb] = m.theme.paint;
+  check('each team shoots its own bright paint', fills.includes(pr) && fills.includes(pb) && pr !== pb);
 
   // inside the lines: every footprint corner/edge within the field (sample around the outline)
   const outside = bs.filter((b, i) => {

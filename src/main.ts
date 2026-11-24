@@ -324,12 +324,12 @@ const net = new Net(serverUrl, {
   },
   ball(m) {
     remoteAvatars.get(m.owner)?.avatar.fire();
-    balls.spawn(m.o, m.v, m.owner, m.team, TEAM_COLORS[m.team], false);
+    balls.spawn(m.o, m.v, m.owner, m.team, paintOf(m.team), false);
     sound.playAt('shot', m.o[0], m.o[1], m.o[2], { volume: VOL.remoteShot });
   },
   hit(m) {
     if (SHOW_HITBOXES) showHitbox(m.tp);
-    fx.burst(m.p[0], m.p[1], m.p[2], 0, 1, 0, TEAM_COLORS[m.team], 20);
+    fx.burst(m.p[0], m.p[1], m.p[2], 0, 1, 0, paintOf(m.team), 20);
     if (field.map.theme.outFx === 'stars') stars.pop(m.tp[0], m.tp[1], m.tp[2], TEAM_COLORS[m.team]);
     const mine = m.victim === net.id || m.shooter === net.id;
     const shooterTeam = net.roster.get(m.shooter)?.team ?? m.team;
@@ -597,6 +597,11 @@ function aimSlowdown(myTeam: number): number {
   return 1;
 }
 
+/** the paint a team shoots on this field: a bright fill, not the team colour */
+function paintOf(team: number): number {
+  return field.map.theme.paint[team === 1 ? 1 : 0];
+}
+
 function fire() {
   player.eye(eye);
   // straight ahead in first person; at what the crosshair is on in third
@@ -611,7 +616,7 @@ function fire() {
   if (online) flushInputs(); // so the server has moved us to where we're shooting from
   // Draw the ball right away (no waiting for the server), then tell the server.
   const speed = ballSpeed(o); // the server picks the same one from o
-  balls.spawn(o, [dir.x * speed, dir.y * speed, dir.z * speed], online ? net.id : 0, team, TEAM_COLORS[team], true);
+  balls.spawn(o, [dir.x * speed, dir.y * speed, dir.z * speed], online ? net.id : 0, team, paintOf(team), true);
   if (online) net.send({ t: 'fire', o, d: [dir.x, dir.y, dir.z] });
   hopper--;
   player.kick();
@@ -656,7 +661,7 @@ const ballEvents: BallEvents = {
       if (d) {
         d.alive = false;
         d.downUntil = performance.now() + RESPAWN_SECONDS * 1000;
-        if (field.map.theme.outFx === 'stars') stars.pop(d.x, d.y, d.z, b.color);
+        if (field.map.theme.outFx === 'stars') stars.pop(d.x, d.y, d.z, TEAM_COLORS[b.team]);
         practiceHits++;
         hud.hitMarker();
         input.pad.rumble('hit');
