@@ -21,7 +21,7 @@
 import { MAP_LIST, DEFAULT_MAP, nextMap, unanimousVote, voteWinner } from '../shared/maps';
 import { field, setMap, useBunkers, spawnPoint, footprintDistance, taperHeight, topOf, type Bunker } from '../shared/field';
 import {
-  traceWorld, stepMovement, advanceBall, hitWorld, hitPlayer, ballSeed, bounceChance, playerBounceChance, segmentHitsPlayer, BALL_DT, STAND_HEIGHT,
+  traceWorld, stepMovement, advanceBall, hitWorld, hitPlayer, ballSeed, bounceChance, groundBounceChance, ballFlightTime, ballDrop, playerBounceChance, segmentHitsPlayer, BALL_DT, STAND_HEIGHT,
   PRONE_HEIGHT, PLAYER_RADIUS, INPUT_DT,
   type Ball, type Body, type MoveInput, type Contact,
 } from '../shared/sim';
@@ -365,24 +365,44 @@ function paintRules() {
   let square = 0;
   let after: Ball | null = null;
   for (let s = 1; s <= 400; s++) {
-    const g = firstContact([-10, 0.3, z], [80, -3, 0], s * 2654435761);
+    const g = firstContact([-10, 0.3, z], [55, -3, 0], s * 2654435761);
     if (g?.c === 'bounce') {
       glancing++;
       after ??= g.ball;
     }
-    if (firstContact([0, 1.5, z], [0, -60, 0], s * 2654435761)?.c !== 'break') square++;
+    if (firstContact([0, 1.5, z], [0, -50, 0], s * 2654435761)?.c === 'bounce') square++;
   }
-  check(`a glancing hit usually bounces (${glancing} of 400)`, glancing > 280 && glancing < 400);
-  check(`a square hit never does (${square} of 400 didn't break)`, square === 0);
+  check(`paint skimming the ground nearly always bounces (${glancing} of 400)`, glancing > 340 && glancing < 400);
+  check(`even straight down, the ground bounces about half (${square} of 400)`, square > 140 && square < 300);
   check('a bounced ball flies on, slower, away from the surface',
-    after !== null && after.vy > 0 && Math.hypot(after.vx, after.vy, after.vz) < 80 && after.bounces === 1);
-  check('slow paint bounces more easily than fast paint at the same angle', bounceChance(0.4, 20) > bounceChance(0.4, 80));
+    after !== null && after.vy > 0 && Math.hypot(after.vx, after.vy, after.vz) < 55 && after.bounces === 1);
+  // the arena's centre bunker: a box 2 m across at the origin
+  let squareBunker = 0;
+  let angledBunker = 0;
+  let glancingBunker = 0;
+  for (let s = 1; s <= 400; s++) {
+    if (firstContact([-5, 1, 0.3], [55, 0, 0], s * 2654435761)?.c !== 'break') squareBunker++;
+    if (firstContact([-5, 1, -3.5], [40, 0, 40], s * 2654435761)?.c !== 'break') angledBunker++;
+    if (firstContact([-6, 1, -2], [55, 0, 8], s * 2654435761)?.c === 'bounce') glancingBunker++;
+  }
+  check(`a square hit on a bunker always breaks (${squareBunker} of 400 didn't)`, squareBunker === 0);
+  check(`so does one at 45° (${angledBunker} of 400 didn't)`, angledBunker === 0);
+  check(`a shallow hit on a bunker usually bounces (${glancingBunker} of 400)`, glancingBunker > 260 && glancingBunker < 400);
+  check('the ground bounces more than a bunker at the same angle', groundBounceChance(0.4) > bounceChance(0.4) && bounceChance(0.6) === 0);
+  // what bots aim with matches how the ball really flies
+  {
+    const b: Ball = { x: 0, y: 10, z: z, vx: 55, vy: 0, vz: 0, age: 0, owner: 0, team: 0, seed: 1, bounces: 0 };
+    while (b.x < 30) advanceBall(b, BALL_DT);
+    const t = ballFlightTime(30);
+    check(`flight time to 30 m is close (${t.toFixed(3)} s, really ${b.age.toFixed(3)} s)`, Math.abs(t - b.age) < 0.03);
+    check(`and so is the drop (${ballDrop(t).toFixed(2)} m, really ${(10 - b.y).toFixed(2)} m)`, Math.abs(ballDrop(t) - (10 - b.y)) < 0.12);
+  }
   // the seed is the firing point rounded the way the wire sends it, so the server and every browser agree
   const o: [number, number, number] = [3.14159265, 1.23456789, -7.7777777];
   const sent = Array.from(new Float32Array(o));
   check('the shooter, the server and everyone else get the same seed', ballSeed(o) === ballSeed(sent) && ballSeed(o) !== ballSeed([o[0] + 0.01, o[1], o[2]]));
-  const a = firstContact([-10, 0.3, z], [80, -3, 0], ballSeed(o));
-  const b = firstContact([-10, 0.3, z], [80, -3, 0], ballSeed(sent));
+  const a = firstContact([-10, 0.3, z], [55, -3, 0], ballSeed(o));
+  const b = firstContact([-10, 0.3, z], [55, -3, 0], ballSeed(sent));
   check('so the same ball bounces the same way on every machine', a !== null && b !== null && a.c === b.c && a.ball.vx === b.ball.vx && a.ball.vy === b.ball.vy);
 }
 

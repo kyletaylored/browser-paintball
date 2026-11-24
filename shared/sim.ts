@@ -10,8 +10,11 @@ import { field, logHalf, topOf, footprintDistance, profileBox, profileHeight, or
 // ---- tuning -------------------------------------------------------------------------------
 
 export const GRAVITY = 9.81;
-/** ~280 fps, a typical field limit */
-export const BALL_SPEED = 85;
+/**
+ * Well under a real field's limit (about 180 fps), on purpose: slow enough that a shot from across
+ * the field can be seen and dodged, so not every point is decided off the break.
+ */
+export const BALL_SPEED = 55;
 export const BALL_DRAG = 0.35;
 export const BALL_RADIUS = 0.0085;
 export const BALL_LIFETIME = 2.5;
@@ -325,14 +328,20 @@ const BOUNCE_FRICTION = 0.72;
 const BOUNCE_MIN_SPEED = 6;
 
 /**
- * How likely a ball is to bounce instead of breaking. cos is how square-on it hits (1 = straight
- * at the surface, 0 = skimming along it). A glancing hit usually bounces, a square one never does,
- * and a slow ball (long range, or one that already bounced) bounces more easily.
+ * How likely a ball is to bounce off a bunker instead of breaking. cos is how square-on it hits
+ * (1 = straight at the surface, 0 = skimming along it). Only a shallow hit (under about 30° to the
+ * surface) can bounce, and the shallower it is the likelier; anything squarer breaks.
  */
-export function bounceChance(cos: number, speed: number): number {
-  const angle = clamp01((0.5 - cos) / 0.38);
-  const slow = clamp01((40 - speed) / 40) * 0.45;
-  return Math.min(0.92, angle * 0.85 + (cos < 0.75 ? slow : 0));
+export function bounceChance(cos: number): number {
+  return clamp01((0.5 - cos) / 0.38) * 0.9;
+}
+
+/**
+ * How likely a ball is to bounce off the ground instead of breaking. The ground is soft: most balls
+ * skip off it, even fairly square ones, and only some straight-down ones break.
+ */
+export function groundBounceChance(cos: number): number {
+  return 0.95 - clamp01((cos - 0.5) / 0.5) * 0.45;
 }
 
 /**
@@ -354,7 +363,7 @@ export type Contact = 'break' | 'bounce' | 'stop';
  * machine stays in step.
  */
 export function hitWorld(b: Ball, w: WorldHit): Contact {
-  return deflect(b, w.x, w.y, w.z, w.nx, w.ny, w.nz, bounceChance);
+  return deflect(b, w.x, w.y, w.z, w.nx, w.ny, w.nz, w.bunker < 0 ? groundBounceChance : bounceChance);
 }
 
 /**
@@ -438,6 +447,21 @@ function deflect(
   b.z = z + nz * 0.01;
   b.bounces++;
   return Math.hypot(b.vx, b.vy, b.vz) < BOUNCE_MIN_SPEED ? 'stop' : 'bounce';
+}
+
+/**
+ * About how long a ball takes to cover `dist` metres along the ground (drag slows it down), or
+ * BALL_LIFETIME if it never gets there. For aiming (bots), not for deciding hits.
+ */
+export function ballFlightTime(dist: number): number {
+  const left = 1 - (dist * BALL_DRAG) / BALL_SPEED;
+  return left <= 0 ? BALL_LIFETIME : Math.min(BALL_LIFETIME, -Math.log(left) / BALL_DRAG);
+}
+
+/** about how far a ball fired flat has dropped after t seconds (gravity, with drag) */
+export function ballDrop(t: number): number {
+  const k = BALL_DRAG;
+  return (GRAVITY / k) * t - (GRAVITY / (k * k)) * (1 - Math.exp(-k * t));
 }
 
 export function advanceBall(b: Ball, dt: number): void {

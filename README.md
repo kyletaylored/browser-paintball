@@ -160,7 +160,10 @@ src/          the browser game
   Your browser predicts the same steps locally, so moving feels instant, and quietly corrects itself if the server
   disagrees (`src/prediction.ts`).
 - **Paintballs:** your browser draws them the instant you click. The server *also* flies them using the same `shared/sim.ts` code, in the same fixed steps, and is the only one that decides eliminations.
-- **Bounces:** paint that hits at a glancing angle (or slowly) usually bounces off instead of breaking, flies on and can
+- **Slow paint:** shots fly at 55 m/s, well under a real field's limit, so a shot from across the field takes about
+  three quarters of a second and can be dodged; aim a little high at range.
+- **Bounces:** paint that hits the ground usually bounces off it (even a fairly square hit), and paint that hits a
+  bunker at a shallow angle (under about 30°) usually bounces too; a squarer hit on a bunker breaks. A bounced ball flies on and can
   still eliminate someone. Whether it bounces is a roll of the dice, but every machine rolls the same dice: each ball's
   random numbers start from a hash of the point it was fired from, which the shooter, the server and every other browser
   all know. Inflatable bunkers wobble when hit (`src/world.ts`), wood and rock don't. Paint can bounce off players too:
