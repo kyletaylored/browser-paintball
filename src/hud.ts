@@ -420,24 +420,28 @@ export class Hud {
 
   /** balls left, and the marker: its name, or that it's ramping / mid-pump */
   setAmmo(n: number, max: number, reloading: boolean, marker: string): void {
-    const html = reloading ? `RELOADING<small>…</small>` : `${n}<small>/ ${max} · ${marker}</small>`;
+    // the count, and a meter of what's left in the hopper (empty while reloading)
+    const fill = reloading || max <= 0 ? 0 : Math.round((n / max) * 100);
+    const meter = `<i class="meter"><i style="width:${fill}%"></i></i>`;
+    const html = (reloading ? `RELOAD<small>…</small>` : `${n}<small>/ ${max} · ${esc(marker)}</small>`) + meter;
     if (this.last.ammo === html) return;
     this.last.ammo = html;
     this.ammo.innerHTML = html;
+    this.ammo.classList.toggle('low', !reloading && max > 0 && n / max < 0.2);
   }
 
   /**
-   * The score bar. Online: each team's points in its colour block, with a pip per player under it
-   * (lit while they're still in), and the clock or what's happening in the middle. Practice
-   * (teams null): just the middle, with your hits.
+   * The score bar. Online: each team as a fighter card (a badge, the name, a life bar with a segment
+   * per player, lit while they're still in, and the points in a starburst), and the clock or what's
+   * happening in a pill in the middle. Practice (teams null): just the middle, with your hits.
    */
   setScoreBar(s: { teams: [number, number] | null; clock: string; sub: string; alive: [boolean[], boolean[]] }): void {
-    const pips = (a: boolean[]) => `<div class="pips">${a.map((on) => `<i class="pip${on ? ' in' : ''}"></i>`).join('')}</div>`;
+    const life = (a: boolean[]) => `<div class="life">${a.map((on) => `<i class="seg${on ? ' in' : ''}"></i>`).join('')}</div>`;
+    const side = (t: 0 | 1, name: string) =>
+      `<div class="side ${t ? 'b' : 'r'}"><span class="badge">${name[0]}</span>` +
+      `<div class="meta"><span class="tname">${name}</span>${life(s.alive[t])}</div><span class="pts">${s.teams![t]}</span></div>`;
     const mid = `<div class="mid${s.teams ? '' : ' solo'}"><span class="clock">${esc(s.clock)}</span>${s.sub ? `<span class="sub">${esc(s.sub)}</span>` : ''}</div>`;
-    const html = s.teams
-      ? `<div class="team r"><div class="block"><span>Red</span><span class="n">${s.teams[0]}</span></div>${pips(s.alive[0])}</div>${mid}` +
-        `<div class="team b"><div class="block"><span>Blue</span><span class="n">${s.teams[1]}</span></div>${pips(s.alive[1])}</div>`
-      : mid;
+    const html = s.teams ? `${side(0, 'Red')}${mid}${side(1, 'Blue')}` : mid;
     if (this.last.score === html) return;
     this.last.score = html;
     this.score.innerHTML = html;
