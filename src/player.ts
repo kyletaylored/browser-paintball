@@ -6,7 +6,7 @@ import { stepMovement, traceWorld, segmentHitsPlayer, STAND_HEIGHT, EYE_FROM_TOP
 import { TEAM_COLORS, type Spawn, type Team } from '../shared/protocol';
 import type { Input } from './input';
 import { paintTeam } from './models';
-import type { Avatar } from './avatars';
+import type { Avatar, Outfit } from './avatars';
 import type { Target } from './paintballs';
 import { walkOffInput } from '../shared/walkoff';
 
@@ -161,6 +161,11 @@ export class LocalPlayer {
   }
 
   /** how to make your own figure for third person, and where to put it */
+  /** change what your own figure wears (the field changed); a new one starts in the field's outfit */
+  dressFigure(outfit: Outfit): void {
+    this.bodyFig?.dress(outfit);
+  }
+
   setFigure(scene: THREE.Object3D, make: (team: Team) => Avatar): void {
     this.figScene = scene;
     this.makeFig = make;
