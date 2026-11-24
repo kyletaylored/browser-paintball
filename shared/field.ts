@@ -9,7 +9,9 @@ import { MAPS, DEFAULT_MAP, type GameMap } from './maps';
 
 /** how a bunker is drawn (src/world.ts); collision only depends on its shape */
 export type Look =
-  | 'inflatable' | 'wood' | 'rock' | 'tree' | 'log' | 'hut' | 'dune' | 'boat' | 'spool' | 'sandbag' | 'barrel' | 'tower';
+  | 'inflatable' | 'wood' | 'rock' | 'tree' | 'log' | 'hut' | 'dune' | 'boat' | 'spool' | 'sandbag' | 'barrel' | 'tower'
+  // planets (orbs): a banded one, one with a ring round it, and a cratered moon
+  | 'planet' | 'ringed' | 'moon';
 
 /** upright box, axis-aligned */
 export type BoxBunker = { kind: 'box'; x: number; z: number; w: number; d: number; h: number; color: number; look?: Look };
@@ -35,12 +37,21 @@ export type TaperBunker = {
 export type ProfileBunker = {
   kind: 'profile'; x: number; z: number; axis: 'x' | 'z'; d: number; line: [number, number][]; color: number; look?: Look;
 };
-export type Bunker = BoxBunker | CanBunker | PolyBunker | LogBunker | TaperBunker | ProfileBunker;
+/**
+ * A ball (planets on the space field): radius r, its centre y above the ground (r if left out, so it
+ * sits on the ground; less and it's sunk into it, like a dome). Keep 0 <= y <= r.
+ */
+export type OrbBunker = { kind: 'orb'; x: number; z: number; r: number; y?: number; color: number; look?: Look };
+export type Bunker = BoxBunker | CanBunker | PolyBunker | LogBunker | TaperBunker | ProfileBunker | OrbBunker;
+
+/** how high an orb's centre is */
+export const orbY = (b: OrbBunker): number => b.y ?? b.r;
 
 /** a bunker's height (its highest point) */
 export function topOf(b: Bunker): number {
   if (b.kind === 'log') return b.r * 2;
   if (b.kind === 'profile') return Math.max(...b.line.map(([, y]) => y));
+  if (b.kind === 'orb') return orbY(b) + b.r;
   return b.h;
 }
 
@@ -224,7 +235,7 @@ export function useBunkers(bunkers: readonly Bunker[]): void {
   field.bounds = bunkers.map((b) => {
     let r: number;
     if (b.kind === 'box') r = Math.hypot(b.w, b.d) / 2;
-    else if (b.kind === 'can') r = b.r;
+    else if (b.kind === 'can' || b.kind === 'orb') r = b.r;
     else if (b.kind === 'log') r = Math.hypot(b.len / 2, b.r);
     else if (b.kind === 'profile') {
       const f = profileBox(b);
@@ -240,7 +251,8 @@ export const logHalf = (b: LogBunker): [number, number] => (b.axis === 'x' ? [b.
 
 /** distance from (x, z) to a bunker's footprint, seen from above (negative inside) */
 export function footprintDistance(b: Bunker, x: number, z: number, i = field.bunkers.indexOf(b)): number {
-  if (b.kind === 'can') return Math.hypot(x - b.x, z - b.z) - b.r;
+  // an orb is widest at its middle, which is never below the ground
+  if (b.kind === 'can' || b.kind === 'orb') return Math.hypot(x - b.x, z - b.z) - b.r;
   if (b.kind === 'poly' || b.kind === 'taper') {
     const s = field.polys[i] ?? polyShape(b);
     let inside = -Infinity;
@@ -276,6 +288,7 @@ export function bunkerKey(b: Bunker): string {
   if (b.kind === 'box') return `box-${b.w}x${b.d}x${b.h}-${c}`;
   if (b.kind === 'can') return `can-${b.r}x${b.h}-${c}`;
   if (b.kind === 'log') return `log-${b.len}x${b.r}-${c}`;
+  if (b.kind === 'orb') return `orb-${b.r}x${orbY(b)}-${c}`;
   // two wedges can share a corner count, height and colour but not their shape: name them by their corners
   if (b.kind === 'profile') return `profile-${b.axis}-${b.d}-${c}-${hashPoints(b.line)}`;
   if (b.kind === 'taper') return `taper-${b.pts.length}x${b.h}-${b.top}-${c}-${hashPoints([...b.pts, b.apex ?? [99, 99]])}`;

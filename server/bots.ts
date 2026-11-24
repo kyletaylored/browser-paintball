@@ -90,12 +90,12 @@ export class NavGrid {
     for (const b of field.bunkers) {
       if (topOf(b) < 1.15) continue; // too low to hide behind
       // thin trees and barrels only need a few spots round them
-      const n = b.kind === 'can' && b.r < 0.5 ? 8 : 16;
+      const n = (b.kind === 'can' || b.kind === 'orb') && b.r < 0.5 ? 8 : 16;
       for (let i = 0; i < n; i++) {
         const a = (i / n) * Math.PI * 2;
         let x: number;
         let z: number;
-        if (b.kind === 'can') {
+        if (b.kind === 'can' || b.kind === 'orb') {
           x = b.x + Math.cos(a) * (b.r + CLEARANCE + 0.12);
           z = b.z + Math.sin(a) * (b.r + CLEARANCE + 0.12);
         } else {

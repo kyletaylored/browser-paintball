@@ -39,6 +39,7 @@ field only, with no vote.
 | Tournament (`tournament`) | 54 × 36 m | big symmetrical inflatable layout: a snake wall down one side, triangles down the other, a centre diamond |
 | Beach (`beach`) | 52 × 32 m | sand and surf: beach huts, a lifeguard tower, dunes, driftwood and an upturned boat |
 | Woods (`woods`) | 90 × 60 m | a forest: about a hundred trees, boulders, fallen logs, pallets and cable spools |
+| Moonbase (`space`) | 48 × 30 m | the moon: planets for bunkers, moonballs with comet tails, astronaut suits and a star burst for every out |
 
 Each half is the mirror image of the other, so neither team has an advantage.
 
