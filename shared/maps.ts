@@ -84,6 +84,18 @@ const taper = (x: number, z: number, s: Shape, color: number, look?: Look): Tape
   ({ kind: 'taper', x, z, pts: s.pts, h: s.h, top: s.top, ...(s.apex ? { apex: s.apex } : {}), color, ...(look ? { look } : {}) });
 const profile = (x: number, z: number, axis: 'x' | 'z', w: Wall, color: number, look?: Look): ProfileBunker =>
   ({ kind: 'profile', x, z, axis, d: w.d, line: w.line, color, ...(look ? { look } : {}) });
+/** a regular polygon round the middle, a flat side to each axis: a near-round base for cones */
+const ngon = (r: number, n = 8): [number, number][] =>
+  Array.from({ length: n }, (_, i) => {
+    const a = ((i + 0.5) / n) * Math.PI * 2;
+    return [Math.round(Math.cos(a) * r * 1000) / 1000, Math.round(Math.sin(a) * r * 1000) / 1000] as [number, number];
+  });
+/**
+ * A sand dune: a round mound r across the base and h tall, its top 0.72 as wide. A taper (24 sides),
+ * so paint hits the slope where it's drawn (src/world.ts draws it on the same corners).
+ */
+const dune = (x: number, z: number, r: number, h: number, color: number): TaperBunker =>
+  ({ kind: 'taper', x, z, pts: ngon(r, 24), h, top: 0.72, color, look: 'dune' });
 
 /** Blue's copy of one of Red's bunkers: mirrored across the centre line */
 function mirror(b: Bunker): Bunker {
@@ -274,8 +286,8 @@ const BEACH: GameMap = {
       log(-18.5, -4.5, 4.2, 0.42, 'x', DRIFT),
       log(-8.5, 3.5, 3.8, 0.45, 'z', DRIFT),
       log(-5, -12.5, 4.6, 0.4, 'x', DRIFT),
-      can(-11.5, 1.5, 1.9, 1.2, SAND, 'dune'),
-      can(-20, 11.5, 1.6, 1.15, SAND, 'dune'),
+      dune(-11.5, 1.5, 1.9, 1.2, SAND),
+      dune(-20, 11.5, 1.6, 1.15, SAND),
       poly(-6, 9, HULL, 1.05, HULL_C, 'boat'),
       box(-3, -5, 3.2, 0.8, 1.2, 0xc9b37f, 'sandbag'),
       can(-15, -2, 0.35, 1, 0x3c6e91, 'barrel'),
@@ -400,12 +412,6 @@ const SPACE: GameMap = {
 
 // ---- holiday fields (drawn by src/holidays.ts) ----------------------------------------------------
 
-/** a regular polygon round the middle, a flat side to each axis: a near-round base for cones */
-const ngon = (r: number, n = 8): [number, number][] =>
-  Array.from({ length: n }, (_, i) => {
-    const a = ((i + 0.5) / n) * Math.PI * 2;
-    return [Math.round(Math.cos(a) * r * 1000) / 1000, Math.round(Math.sin(a) * r * 1000) / 1000] as [number, number];
-  });
 /** a cone (eight sides) r across the base, h tall, with `top` of it left at the top */
 const cone = (r: number, h: number, top = 0): Shape => ({ pts: ngon(r), h, top });
 
