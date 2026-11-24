@@ -261,10 +261,10 @@ const dummies: Dummy[] = field.map.targets.map(([x, z], i) => {
 /** play on another field: rebuild the scene and move the practice targets; false if it's already on */
 function switchMap(id: string): boolean {
   if (!setMap(id)) return false;
+  fx.clear(); // first: splats on bunkers hang off the old field
   world.dispose();
   world = buildWorld(scene, models);
   balls.clear();
-  fx.clear();
   stars.setStyle(field.map.theme.outFx ?? 'stars');
   // the field's own look for shots and outfits (moonballs and space suits on the moon)
   balls.setStyle(field.map.theme.shots ?? 'paint');
@@ -655,7 +655,7 @@ function fire() {
 
 const ballEvents: BallEvents = {
   onWorld(b, w) {
-    fx.splat(w.x, w.y, w.z, w.nx, w.ny, w.nz, b.color);
+    fx.splat(w.x, w.y, w.z, w.nx, w.ny, w.nz, b.color, w.bunker >= 0 ? world.bunker(w.bunker) : null);
     fx.burst(w.x, w.y, w.z, w.nx, w.ny, w.nz, b.color, 6);
     sound.playAt('splat', w.x, w.y, w.z, { volume: VOL.splat });
     if (w.bunker >= 0) {

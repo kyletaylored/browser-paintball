@@ -1,7 +1,9 @@
 // The menus: main menu (over a slow flight around the field), pause, settings and controls.
 // Plain DOM buttons, so mouse, touch and keyboard (Tab / arrows / Enter) work as usual; on top of
 // that a controller moves the focus with the d-pad or left stick, A picks, B goes back, and left /
-// right nudge sliders.
+// right nudge sliders. The pause menu has two columns online: its buttons, and the votes (a tab for
+// the field and one for the marker, each a grid of cards). Left / right (arrow keys or d-pad) switch
+// tabs, move along a row of cards and step between the columns; up / down move by rows.
 
 import type { PadState } from './gamepad';
 
@@ -10,6 +12,12 @@ export type Screen = 'main' | 'pause' | 'settings' | 'controls' | 'players';
 export type MenuAction = 'online' | 'practice' | 'resume' | 'leave';
 
 const $ = (id: string) => document.getElementById(id)!;
+
+/** show one of the pause menu's vote tabs ('field' or 'mode') in its column */
+export function showTab(col: HTMLElement, name: string): void {
+  col.dataset.tab = name;
+  for (const t of col.querySelectorAll<HTMLElement>('[role=tab]')) t.setAttribute('aria-selected', String(t.dataset.tab === name));
+}
 const SCREENS: readonly Screen[] = ['main', 'pause', 'settings', 'controls', 'players'];
 /** screens reached from main or pause, with a Back button */
 const SUB: readonly Screen[] = ['settings', 'controls', 'players'];
@@ -24,6 +32,12 @@ export class Menu {
 
   constructor(private onAction: (action: MenuAction, viaPad: boolean) => void) {
     this.root.addEventListener('click', (e) => {
+      const tab = (e.target as HTMLElement).closest<HTMLElement>('[role=tab]');
+      const col = tab?.closest<HTMLElement>('.pause-votes');
+      if (tab && col) {
+        showTab(col, tab.dataset.tab!);
+        return;
+      }
       const btn = (e.target as HTMLElement).closest<HTMLElement>('[data-act]');
       if (!btn || (btn as HTMLButtonElement).disabled) return;
       const viaPad = this.padClick;
@@ -35,7 +49,9 @@ export class Menu {
       if (e.target instanceof HTMLInputElement && e.target.type === 'text') return; // typing a name
       if (e.code === 'ArrowDown' || e.code === 'ArrowUp') {
         e.preventDefault();
-        this.move(e.code === 'ArrowDown' ? 1 : -1);
+        this.step(e.code === 'ArrowDown' ? 'down' : 'up');
+      } else if ((e.code === 'ArrowLeft' || e.code === 'ArrowRight') && this.across(e.code === 'ArrowRight' ? 'right' : 'left')) {
+        e.preventDefault();
       } else if (e.code === 'Escape' || e.code === 'Backspace') {
         if (this.screen && SUB.includes(this.screen)) this.show(this.parent);
       }
@@ -77,7 +93,9 @@ export class Menu {
     const inMenu = el && this.root.contains(el) && el !== this.root;
     if (p.nav || p.aPressed) this.root.classList.add('pad-nav');
     if (p.nav === 'down' || p.nav === 'up') {
-      this.move(p.nav === 'down' ? 1 : -1);
+      this.step(p.nav);
+    } else if ((p.nav === 'left' || p.nav === 'right') && this.across(p.nav)) {
+      // moved across the pause menu (tabs, cards, columns)
     } else if ((p.nav === 'left' || p.nav === 'right') && inMenu && el instanceof HTMLInputElement && el.type === 'range') {
       const step = Number(el.step) || 1;
       el.value = String(Number(el.value) + (p.nav === 'right' ? step : -step));
@@ -113,6 +131,84 @@ export class Menu {
     const els = $(`m-${this.screen}`).querySelectorAll<HTMLElement>('button, input, select');
     // tabindex -1: mouse and touch only (the field chooser's arrows; the select beside them takes left / right)
     return [...els].filter((e) => !(e as HTMLButtonElement).disabled && e.offsetParent !== null && e.tabIndex !== -1);
+  }
+
+  /**
+   * Up / down: on a vote card, a row up or down the grid (off the top to its tab); down from a tab,
+   * its first card; anywhere else the next or previous control.
+   */
+  private step(dir: 'up' | 'down'): void {
+    const el = document.activeElement as HTMLElement | null;
+    // down from a tab: into its cards (not across to the other tab)
+    if (el?.getAttribute('role') === 'tab' && dir === 'down') {
+      const card = this.visible($('pause-votes').querySelectorAll<HTMLElement>('.vcard'))[0];
+      if (card) return this.focus(card);
+    }
+    const grid = el?.classList.contains('vcard') ? el.parentElement : null;
+    if (el && grid) {
+      const cards = this.visible(grid.querySelectorAll<HTMLElement>('.vcard'));
+      const cols = getComputedStyle(grid).gridTemplateColumns.split(' ').length || 1;
+      const i = cards.indexOf(el) + (dir === 'down' ? cols : -cols);
+      if (i >= 0 && i < cards.length) return this.focus(cards[i]);
+      if (i < 0) return this.focus(this.activeTab());
+      // below the last row: the last card if this row is short of it, else on past the grid
+      const last = cards[cards.length - 1];
+      if (Math.floor(cards.indexOf(el) / cols) < Math.floor((cards.length - 1) / cols)) return this.focus(last);
+      last.focus(); // the last row: on past the grid from its last card
+    }
+    this.move(dir === 'down' ? 1 : -1);
+  }
+
+  /**
+   * Left / right in the pause menu: on a tab, the other tab (left of the first goes back to the
+   * buttons); on a card, along the row (left of the first column goes back to the buttons); on a
+   * button, over to the votes. False if it's none of those (sliders and selects keep the keys).
+   */
+  private across(dir: 'left' | 'right'): boolean {
+    if (this.screen !== 'pause') return false;
+    const el = document.activeElement as HTMLElement | null;
+    const col = $('pause-votes');
+    if (!el || !this.root.contains(el) || col.hidden) return false;
+    const back = () => this.focus(this.visible($('m-pause').querySelectorAll<HTMLElement>('.pause-side .mbtn'))[0]);
+    if (el.getAttribute('role') === 'tab') {
+      const tabs = this.visible(col.querySelectorAll<HTMLElement>('[role=tab]'));
+      const t = tabs[tabs.indexOf(el) + (dir === 'right' ? 1 : -1)];
+      if (t) {
+        showTab(col, t.dataset.tab!);
+        this.focus(t);
+      } else if (dir === 'left') back();
+      return true;
+    }
+    if (el.classList.contains('vcard') && el.parentElement) {
+      const grid = el.parentElement;
+      const cards = this.visible(grid.querySelectorAll<HTMLElement>('.vcard'));
+      const cols = getComputedStyle(grid).gridTemplateColumns.split(' ').length || 1;
+      const i = cards.indexOf(el);
+      if (dir === 'left' && i % cols === 0) back();
+      else this.focus(cards[i + (dir === 'right' ? 1 : -1)] ?? el);
+      return true;
+    }
+    if (el.classList.contains('mbtn') && el.closest('.pause-side') && dir === 'right') {
+      this.focus(this.activeTab());
+      return true;
+    }
+    return false;
+  }
+
+  /** the pause menu's vote tab that's showing */
+  private activeTab(): HTMLElement | undefined {
+    const col = $('pause-votes');
+    return this.visible(col.querySelectorAll<HTMLElement>('[role=tab]')).find((t) => t.dataset.tab === col.dataset.tab);
+  }
+
+  private visible(els: NodeListOf<HTMLElement>): HTMLElement[] {
+    return [...els].filter((e) => e.offsetParent !== null);
+  }
+
+  private focus(el: HTMLElement | undefined): void {
+    if (!el) return;
+    el.focus();
+    el.scrollIntoView({ block: 'nearest' });
   }
 
   private move(dir: 1 | -1): void {

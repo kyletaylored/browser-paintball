@@ -527,7 +527,8 @@ try {
     } finally {
       withVoice.stop();
     }
-    const bots = await startServer({ BOT_TEAM_SIZE: '2', BOT_SKILL: 'hard' });
+    // a short clock: if only our idle human is left in, nobody hits the buzzer and time decides it
+    const bots = await startServer({ BOT_TEAM_SIZE: '2', BOT_SKILL: 'hard', ROUND_SECONDS: '60' });
     try {
       await botTest(bots.url);
     } finally {

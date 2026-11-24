@@ -160,7 +160,7 @@ src/          the browser game
   touch.ts      on-screen controls for phones: move stick, aim by dragging, Fire / Jump / Crouch / Lie / Reload
   gamepad.ts    controllers: deadzones, aim curve, buttons, rumble (gamepad-test.ts checks it)
   paintballs.ts all balls in flight, drawn as glowing streaks (three InstancedMeshes); near-miss whizzes
-  fx.ts         paint splat decals + droplet bursts
+  fx.ts         paint splats (flat on the ground, wrapped onto the bunker models) + droplet bursts
   objective.ts  the buzzers and flags on the field, and the marker over what to go for
   models.ts     loads the models (with a loading bar); falls back to code-drawn shapes if they fail
   avatars.ts    other players: the animated model, driven by speed / crouch / lying down / eliminated / shots

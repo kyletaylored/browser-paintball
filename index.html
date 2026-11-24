@@ -404,6 +404,36 @@
         content: 'NEXT'; position: absolute; top: 4px; left: 4px; z-index: 1; font-size: 10px; padding: 0 5px; background: var(--pink); color: #fff;
         border: 2px solid var(--line); border-radius: 4px;
       }
+      /* the pause menu: online, its buttons on the left and the votes on the right, one tab at a time */
+      .pause-side { display: flex; flex-direction: column; gap: 10px; }
+      #m-pause:has(> .pause-votes:not([hidden])) {
+        display: grid; grid-template-columns: 280px minmax(0, 1fr); gap: 26px; align-items: start; width: min(1000px, 100%);
+      }
+      .pause-votes { display: flex; flex-direction: column; gap: 10px; text-align: left; }
+      .ptabs { display: flex; gap: 10px; }
+      .ptab {
+        flex: 1; min-width: 0; padding: 8px 14px 9px; font: inherit; font-family: var(--display); font-size: 17px; text-transform: uppercase;
+        text-align: left; color: var(--paper); background: transparent; border: 3px solid var(--line); border-radius: 8px; cursor: pointer;
+        box-shadow: inset 0 0 0 2px rgba(255, 255, 255, 0.12); transition: transform 0.08s, box-shadow 0.08s;
+      }
+      .ptab small {
+        display: block; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-family: system-ui, sans-serif; font-size: 12px;
+        font-weight: 700; text-transform: none; color: var(--dim);
+      }
+      .ptab:hover, .ptab:focus-visible, .pad-nav .ptab:focus { outline: none; box-shadow: inset 0 0 0 2px var(--accent); }
+      .ptab[aria-selected='true'] { color: var(--line); background: var(--accent); box-shadow: 4px 4px 0 var(--line); transform: translate(-2px, -2px); }
+      .ptab[aria-selected='true'] small { color: var(--line); }
+      .pad-nav .ptab:focus { outline: 3px solid var(--accent); outline-offset: 3px; }
+      .pause-votes[data-tab='field'] #mode-vote-box, .pause-votes[data-tab='mode'] #vote-box { display: none; }
+      #m-pause .vcards { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 9px; }
+      #m-pause .vcards.fields .pic { height: 50px; }
+      #m-pause .vcards.modes .pic { height: 64px; font-size: 32px; }
+      #m-pause .vote .info { margin: 2px 0 0; }
+      /* a narrow window: the votes go under the buttons */
+      @media (max-width: 760px) {
+        #m-pause:has(> .pause-votes:not([hidden])) { grid-template-columns: 1fr; width: min(560px, 100%); }
+        #m-pause .vcards { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      }
       /* after a match: the field cards over the camera shots */
       #vote-now {
         position: absolute; left: 50%; top: 50%; translate: -50% -50%; z-index: 2; width: min(720px, 92vw); padding: 14px 16px 12px;
@@ -515,6 +545,20 @@
         .mbtn { padding: 9px 14px; font-size: 16px; }
         .mbtn small { display: none; }
         .screen { gap: 6px; }
+        /* the pause menu side by side, short: smaller cards, the note only in practice */
+        .screen.panel#m-pause { padding: 18px 16px 14px; }
+        #m-pause:has(> .pause-votes:not([hidden])) { grid-template-columns: 200px minmax(0, 1fr); gap: 16px; }
+        #m-pause:has(> .pause-votes:not([hidden])) #pause-note { display: none; }
+        .pause-side, .pause-votes { gap: 6px; }
+        .ptab { padding: 4px 10px 5px; font-size: 14px; }
+        .ptab small { font-size: 11px; }
+        #m-pause .vcards { gap: 6px; }
+        #m-pause .vcards.fields .pic { height: 30px; }
+        #m-pause .vcards.modes .pic { height: 40px; font-size: 24px; }
+        #m-pause .vcard { padding-bottom: 3px; }
+        #m-pause .vcard .nm { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; letter-spacing: -0.01em; }
+        #m-pause .vcard .cnt { font-size: 16px; bottom: 2px; }
+        #m-pause .vote .info { font-size: 11px; }
         .groups { gap: 6px 24px; }
         .group h3 { margin: 6px 0 2px; }
         .keys { font-size: 13px; line-height: 1.55; }
@@ -605,24 +649,31 @@
         </div>
       </section>
 
+      <!-- the pause menu: the buttons on the left and, online, the votes on the right (a tab each) -->
       <section id="m-pause" class="screen panel" hidden>
-        <h2>Paused</h2>
-        <p id="pause-note" class="sub"></p>
-        <button class="mbtn primary" type="button" data-act="resume">Resume</button>
-        <div id="vote-box" class="vote" hidden>
-          <span class="fp-label">Your vote for the field</span>
-          <div id="vote-cards" class="vcards fields" role="group" aria-label="Your vote for the field"></div>
-          <p id="vote-info" class="info"></p>
+        <div class="pause-side">
+          <h2>Paused</h2>
+          <p id="pause-note" class="sub"></p>
+          <button class="mbtn primary" type="button" data-act="resume">Resume</button>
+          <button id="players-btn" class="mbtn" type="button" data-act="players">Players<small>scores, and muting voices</small></button>
+          <button class="mbtn" type="button" data-act="settings">Settings</button>
+          <button class="mbtn" type="button" data-act="controls">Controls</button>
+          <button id="leave" class="mbtn" type="button" data-act="leave">Leave match</button>
         </div>
-        <div id="mode-vote-box" class="vote" hidden>
-          <span class="fp-label">Your vote for the marker</span>
-          <div id="mode-cards" class="vcards modes" role="group" aria-label="Your vote for the marker"></div>
-          <p id="mode-vote-info" class="info"></p>
+        <div id="pause-votes" class="pause-votes" data-tab="field" hidden>
+          <div class="ptabs" role="tablist" aria-label="Vote">
+            <button id="tab-field" class="ptab" type="button" role="tab" aria-selected="true" data-tab="field" aria-controls="vote-box">Next field<small id="tab-field-now"></small></button>
+            <button id="tab-mode" class="ptab" type="button" role="tab" aria-selected="false" data-tab="mode" aria-controls="mode-vote-box">Marker<small id="tab-mode-now"></small></button>
+          </div>
+          <div id="vote-box" class="vote" role="tabpanel" aria-labelledby="tab-field" hidden>
+            <div id="vote-cards" class="vcards fields" role="group" aria-label="Your vote for the field"></div>
+            <p id="vote-info" class="info"></p>
+          </div>
+          <div id="mode-vote-box" class="vote" role="tabpanel" aria-labelledby="tab-mode" hidden>
+            <div id="mode-cards" class="vcards modes" role="group" aria-label="Your vote for the marker"></div>
+            <p id="mode-vote-info" class="info"></p>
+          </div>
         </div>
-        <button id="players-btn" class="mbtn" type="button" data-act="players">Players<small>scores, and muting voices</small></button>
-        <button class="mbtn" type="button" data-act="settings">Settings</button>
-        <button class="mbtn" type="button" data-act="controls">Controls</button>
-        <button id="leave" class="mbtn" type="button" data-act="leave">Leave match</button>
       </section>
 
       <section id="m-players" class="screen panel wide" hidden>

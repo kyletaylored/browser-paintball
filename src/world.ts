@@ -25,6 +25,8 @@ export interface World {
    * strength 0..1 (a direct hit is 1, a glancing bounce less). Inflatables wobble; wood and rock don't.
    */
   hit(i: number, nx: number, nz: number, strength: number): void;
+  /** bunker i's model (what it wobbles), for splats to wrap round */
+  bunker(i: number): THREE.Object3D | undefined;
   /** let the wobbles settle; once per rendered frame */
   update(dt: number): void;
 }
@@ -83,7 +85,9 @@ export function buildWorld(scene: THREE.Scene, models: Models | null): World {
 
   const mats = new Materials();
   const wobbles: (Wobble | null)[] = [];
+  const groups: THREE.Object3D[] = [];
   const addWobble = (g: THREE.Object3D, b: Bunker) => {
+    groups.push(g);
     const h = topOf(b);
     wobbles.push(SOFT.has(b.look ?? 'inflatable') ? { g, give: 1.6 / Math.max(1.2, h), tx: 0, tz: 0, vx: 0, vz: 0 } : null);
   };
@@ -122,6 +126,7 @@ export function buildWorld(scene: THREE.Scene, models: Models | null): World {
   const axis = new THREE.Vector3();
   let time = 0;
   return {
+    bunker: (i) => groups[i],
     hit(i, nx, nz, strength) {
       const w = wobbles[i];
       if (!w) return;
@@ -322,10 +327,6 @@ function drawBunker(b: Bunker, mats: Materials): THREE.Group {
       }
       return g;
     }
-    if (look === 'dune') {
-      add(new THREE.CylinderGeometry(b.r * 0.72, b.r, b.h, 28, 1), mats.plain(b.color, 1), b.h / 2);
-      return g;
-    }
     if (look === 'spool') {
       const wood = mats.textured('planks', plankTexture, b.color);
       add(new THREE.CylinderGeometry(b.r, b.r, 0.12, 24), wood, 0.06);
@@ -364,6 +365,15 @@ function drawBunker(b: Bunker, mats: Materials): THREE.Group {
     return g;
   }
 
+  if (b.kind === 'taper' && look === 'dune') {
+    // a smooth sand mound on exactly the corners paint hits: the base is a regular polygon round the
+    // middle (ngon in shared/maps.ts), which a cylinder of the same sides, turned by this start
+    // angle, puts its corners on
+    const n = b.pts.length;
+    const r = Math.hypot(b.pts[0][0], b.pts[0][1]);
+    add(new THREE.CylinderGeometry(r * b.top, r, b.h, n, 1, false, Math.PI / 2 - Math.PI / n), mats.plain(b.color, 1), b.h / 2);
+    return g;
+  }
   if (b.kind === 'taper') {
     add(taperGeometry(b), mats.inflatable(b.color));
     const y = b.h * 0.4;
