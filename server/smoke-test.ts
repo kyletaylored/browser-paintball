@@ -23,6 +23,8 @@ import { createHmac } from 'node:crypto';
 import { cleanName, type ServerMsg, type InputFrame } from '../shared/protocol';
 import { EYE_FROM_TOP } from '../shared/sim';
 import { field } from '../shared/field';
+import { baseOf } from '../shared/objective';
+import { NavGrid } from './bots';
 import {
   join, send, viewOf, wait, waitFor, walkTo, lastAck, snapWhere, rosterWhere, startServer, fastOpen,
   type Client, type Ack, type Hit,
@@ -78,13 +80,27 @@ async function rulesTest(url: string) {
   const hit = await waitFor(shooter.inbox, (m): m is Hit => m.t === 'hit', 1000);
   const sawBall = target.inbox.some((m) => m.t === 'ball');
   const afterHit = target.inbox.length;
+  // the other team is all out, but that isn't the point won: the shooter has to hit their buzzer
+  await wait(1000);
+  const stillLive = !shooter.inbox.slice(afterHit).some((m) => m.t === 'snap' && m.round.phase !== 'live');
+  const buzzer = baseOf(target.team);
+  const path = new NavGrid().findPath(shooter.body.x, shooter.body.z, buzzer.x, buzzer.z) ?? [];
+  const beforeBuzz = shooter.inbox.length;
+  for (const wp of path) await walkTo(shooter, wp.x, wp.z, true);
+  const buzzed = await waitFor(
+    shooter.inbox,
+    (m): m is Extract<ServerMsg, { t: 'objective' }> => m.t === 'objective' && m.event?.e === 'buzz' && m.event.by === shooter.id,
+    2000,
+    beforeBuzz,
+  );
   const point = await waitFor(
     shooter.inbox,
     snapWhere((m) => m.round.phase === 'point' && m.round.winner === shooter.team && m.score[shooter.team] === 1),
     1000,
+    beforeBuzz,
   );
   // the next point resets everyone to their start box
-  const respawn = await waitFor(target.inbox, (m): m is Extract<ServerMsg, { t: 'respawn' }> => m.t === 'respawn', 6000, afterHit);
+  const respawn = await waitFor(target.inbox, (m): m is Extract<ServerMsg, { t: 'respawn' }> => m.t === 'respawn', 10000, afterHit);
   const stats = await waitFor(
     target.inbox,
     rosterWhere((m) =>
@@ -92,13 +108,15 @@ async function rulesTest(url: string) {
       m.players.some((p) => p.id === target.id && p.name === 'Target' && p.d === 1)),
     1000,
   );
-  const next = await waitFor(target.inbox, snapWhere((m) => m.round.phase === 'countdown' && m.round.round === 2), 1000, afterHit);
+  const next = await waitFor(target.inbox, snapWhere((m) => m.round.phase === 'countdown' && m.round.round === 2), 3000, afterHit);
   a.ws.close();
   b.ws.close();
 
   check('countdown ran and the point went live', live !== null);
   check('target was told about the ball', sawBall);
   check('server reported the hit', hit?.victim === target.id && hit?.shooter === shooter.id);
+  check('knocking out the last one leaves the point live: the buzzer is still to hit', stillLive);
+  check(`the shooter walks to the other team's buzzer and hits it (${path.length} turns on the way)`, path.length > 0 && buzzed !== null);
   check("shooter's team won the point", point !== null);
   check('target respawned for the next point', respawn !== null);
   check('point 2 countdown started', next !== null);

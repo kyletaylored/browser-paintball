@@ -21,7 +21,18 @@ Open http://localhost:5173. `npm run dev` starts both the client (Vite, port 517
 Open a second browser window to play against yourself: the server puts the next player on the other team.
 
 **How a match works:** once both teams have a player, everyone is put back in their start box for a 3-second countdown.
-Then the point is live: if you're hit you're out until the point ends, and you walk off the field with your marker up (the game walks you to the nearer side line, round the bunkers). Then you watch a teammate who's still in, from behind them: move the mouse (right stick, or drag on a phone) to swing the camera round them, and Space (A on a controller) switches to the next one. Watching a bot on your team, press E (X on a controller, Reload on a phone) to take it over and play on as it, from where it is; it goes out in your place. Between points (8 s) the camera cuts between a few shots, like a broadcast: the winners, the bunker that took the most paint, a sweep over the field. Eliminate the whole other team to win the point.
+Then the point is live: if you're hit you're out until the point ends, and you walk off the field with your marker up (the game walks you to the nearer side line, round the bunkers). Then you watch a teammate who's still in, from behind them: move the mouse (right stick, or drag on a phone) to swing the camera round them, and Space (A on a controller) switches to the next one. Watching a bot on your team, press E (X on a controller, Reload on a phone) to take it over and play on as it, from where it is; it goes out in your place. Between points (8 s) the camera cuts between a few shots, like a broadcast: the winners, the bunker that took the most paint, a sweep over the field.
+
+**Winning a point.** Knocking the other team out isn't enough: someone still in has to finish it (`shared/objective.ts`).
+- **Speedball fields: hit the buzzer.** Each team has a buzzer at the back of its own end. Touch the other team's buzzer
+  while you're still in and your team wins the point. A gold marker over it shows where to go.
+- **Woods: capture the flag.** Each team has a flag at its end. Grab theirs and carry it back to your own end. If the
+  carrier is eliminated the flag drops where they were: their team can pick it up again, and a defender who touches
+  it sends it home.
+- **Time runs out** (2 minutes): the team with more players still in wins the point; level, nobody does.
+
+Bots play the objective too: once the other team is out they all go for it, and when they're ahead (or short of time)
+a runner goes for the buzzer or the flag while the rest hold their bunkers.
 First team to 5 points wins the match. While a team is empty it's warm-up: you respawn a few seconds after being hit.
 The game opens on the main menu, flying slowly around the field. Pick a name (it shows over your head, in the kill
 feed and on the scoreboard), then **Play online** to join the match. The menu shows how many are playing. **Practice**
@@ -120,12 +131,13 @@ shared/       code BOTH sides run, so they agree
   maps.ts       every field: size, bunker layout, look (ground, sky, scenery)
   field.ts      the field being played: bunker shapes, spawn points, footprint maths
   sim.ts        movement, paintball flight, collision (no physics engine needed)
+  objective.ts  what wins a point: the buzzers and flags, where they stand, who touched what
   walkoff.ts    the way off the field for out players (a distance map round the bunkers)
   netsim.ts     fake latency and packet loss for development and tests
 server/
   index.ts      authoritative game server: simulates paintballs, decides hits, runs the match, sends snapshots
   voice.ts      voice chat tokens for the LiveKit media server (who's in the room, on which team)
-  bots.ts       server-side bots: navigation grid + A*, cover spots, aim with reaction delay and error
+  bots.ts       server-side bots: navigation grid + A*, cover spots, aim with reaction delay and error, runs for the objective
   rtc.ts        WebRTC data channel to each browser, for snapshots, acks and input (UDP, never resent)
   smoke-test.ts headless end-to-end checks (starts its own servers)
   map-test.ts   checks every field's layout, collision and bot navigation
@@ -149,6 +161,7 @@ src/          the browser game
   gamepad.ts    controllers: deadzones, aim curve, buttons, rumble (gamepad-test.ts checks it)
   paintballs.ts all balls in flight, drawn as glowing streaks (three InstancedMeshes); near-miss whizzes
   fx.ts         paint splat decals + droplet bursts
+  objective.ts  the buzzers and flags on the field, and the marker over what to go for
   models.ts     loads the models (with a loading bar); falls back to code-drawn shapes if they fail
   avatars.ts    other players: the animated model, driven by speed / crouch / lying down / eliminated / shots
   net.ts        WebSocket client + snapshot interpolation
@@ -178,7 +191,8 @@ src/          the browser game
   most hits break, but a glancing one often skips off (about 5 in 100 hits overall), and that player plays on. The server
   decides, and the feed says "bounce, plays on".
 - **Event feed:** besides who hit whom, the corner feed calls doubles and triples, eliminations off a bounce, paint
-  bouncing off a player, and the last one standing on a team. Your own eliminations in a row pop up as a streak.
+  bouncing off a player, the last one standing on a team, and buzzers and flags (taken, dropped, returned, captured).
+  Your own eliminations in a row pop up as a streak.
 - **Other players:** drawn 100 ms in the past, blended between the server's snapshots, so they move smoothly instead of jumping 20 times a second.
 - **On the wire:** the messages sent many times a second (snapshots, your position acks, paintballs, your input) are
   packed into small binary frames (`shared/codec.ts`): positions to the centimetre, angles to a few thousandths of a

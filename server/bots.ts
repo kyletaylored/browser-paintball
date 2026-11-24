@@ -6,7 +6,8 @@
 //    smoothing, plus a list of cover spots tucked in next to each bunker. Build a new one per map.
 //  - BotBrain: picks a cover spot toward the enemy, runs there, crouches, peeks and shoots at enemies
 //    it can see, and ducks when paint flies past. It reacts after a delay and aims with some error,
-//    so it can be beaten.
+//    so it can be beaten. Given a goal (the server's call: the other team's buzzer, a flag, home
+//    with one), it runs straight there instead, shooting at whoever it sees on the way.
 
 import { field, footprintDistance, topOf, type Bunker } from '../shared/field';
 import {
@@ -341,6 +342,9 @@ export class BotBrain {
   private strafe = 0;
   private strafeUntil = 0;
   private lastSeenPos = new Map<number, { x: number; z: number; t: number; vx: number; vz: number }>();
+  /** the path is to the goal, not to cover */
+  private goalPath = false;
+  private replanAt = 0;
   private readonly out: BotOutput = {
     move: { forward: 0, right: 0, jump: false, sprint: false, crouch: false, prone: false, yaw: 0 },
     yaw: 0,
@@ -372,6 +376,7 @@ export class BotBrain {
     this.lastKnownEnemy = null;
     this.lastSeenPos.clear();
     this.takingCover = false;
+    this.goalPath = false;
   }
 
   /** paint flew close by */
@@ -379,7 +384,8 @@ export class BotBrain {
     this.suppressedUntil = Math.max(this.suppressedUntil, now + 0.8 + Math.random() * 0.8);
   }
 
-  update(now: number, dt: number, me: BotSelf, others: Iterable<Seen>, canShoot: boolean): BotOutput {
+  /** `goal`: run there (re-planned as it moves), or null to play the bunkers as usual */
+  update(now: number, dt: number, me: BotSelf, others: Iterable<Seen>, canShoot: boolean, goal: { x: number; z: number } | null = null): BotOutput {
     const o = this.out;
     o.fire = null;
     const eyeY = me.y + me.height - EYE_FROM_TOP;
@@ -428,24 +434,45 @@ export class BotBrain {
 
     // --- decide where to be ---
     const suppressed = now < this.suppressedUntil;
+    if (goal) {
+      // the objective: a path there, planned again when the goal moves (a flag being carried) or now and then
+      const end = this.path[this.path.length - 1];
+      if (!this.goalPath || !end || Math.hypot(end.x - goal.x, end.z - goal.z) > 1 || now >= this.replanAt) {
+        this.replanAt = now + 1;
+        const path = this.nav.findPath(me.x, me.z, goal.x, goal.z);
+        if (path) {
+          this.releaseSpot();
+          this.path = path.length ? path : [goal];
+          this.goalPath = true;
+          this.mode = 'advance';
+          this.takingCover = false;
+          this.lastProgress = { t: now, x: me.x, z: me.z };
+        }
+      }
+    } else if (this.goalPath) {
+      this.goalPath = false;
+      this.path = [];
+    }
     if (this.mode === 'hold' && now >= this.holdUntil && !suppressed && !target) this.mode = 'advance';
     // caught in the open with someone shooting at us: get behind the nearest thing that hides us from them
-    if (this.mode === 'advance' && target && !this.takingCover && (suppressed || targetDist < 14)) this.seekCover(now, me, target);
-    if (this.mode === 'advance' && !this.path.length) this.pickSpot(now, me);
+    if (!this.goalPath && this.mode === 'advance' && target && !this.takingCover && (suppressed || targetDist < 14)) this.seekCover(now, me, target);
+    if (!this.goalPath && this.mode === 'advance' && !this.path.length) this.pickSpot(now, me);
 
     // --- movement ---
     let wantX = 0;
     let wantZ = 0;
     let sprint = false;
     let crouch = false;
-    if (this.mode === 'advance' && this.path.length && (this.takingCover || !(target && targetDist < 14))) {
+    if (this.mode === 'advance' && this.path.length && (this.takingCover || this.goalPath || !(target && targetDist < 14))) {
       const wp = this.path[0];
       const dx = wp.x - me.x;
       const dz = wp.z - me.z;
       const d = Math.hypot(dx, dz);
       if (d < 0.35) {
         this.path.shift();
-        if (!this.path.length) {
+        if (!this.path.length && this.goalPath) {
+          this.replanAt = 0; // there (or the goal moved on): plan again next tick
+        } else if (!this.path.length) {
           this.mode = 'hold';
           this.takingCover = false;
           this.holdUntil = now + 1.5 + Math.random() * 3;
@@ -453,7 +480,7 @@ export class BotBrain {
       } else {
         wantX = dx / d;
         wantZ = dz / d;
-        sprint = !target || this.takingCover;
+        sprint = !target || this.takingCover || this.goalPath;
       }
       // stuck on something? try again from here
       if (Math.hypot(me.x - this.lastProgress.x, me.z - this.lastProgress.z) > 0.5) {
