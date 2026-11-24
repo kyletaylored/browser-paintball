@@ -40,6 +40,11 @@ field only, with no vote.
 | Beach (`beach`) | 52 × 32 m | sand and surf: beach huts, a lifeguard tower, dunes, driftwood and an upturned boat |
 | Woods (`woods`) | 90 × 60 m | a forest: about a hundred trees, boulders, fallen logs, pallets and cable spools |
 | Moonbase (`space`) | 48 × 30 m | the moon: planets for bunkers, moonballs with comet tails, astronaut suits and a star burst for every out |
+| Pumpkin Patch (`halloween`) | 46 × 30 m | Halloween night: jack-o'-lanterns, gravestones, coffins and witch hats under a full moon; bats for every out |
+| Snowfall (`christmas`) | 48 × 30 m | Christmas in the snow: presents, decorated trees, snow forts and giant ornaments, with snow falling; snowflakes for every out |
+| Harvest Farm (`harvest`) | 50 × 32 m | Thanksgiving on an autumn farm: hay bales, pumpkins, corn shocks and a wagon, a red barn behind; leaves for every out |
+| Fireworks Park (`fourth`) | 46 × 30 m | the Fourth of July after dark: rockets, star boxes, striped walls and firecrackers, fireworks overhead; a firework for every out |
+| Lantern Square (`lunar`) | 48 × 30 m | Chinese New Year at night: giant lanterns, drums, dragons and firecrackers in a temple square; firecracker sparks for every out |
 
 Each half is the mirror image of the other, so neither team has an advantage.
 
@@ -137,6 +142,7 @@ src/          the browser game
   toon.ts       the arcade look: toon (banded) materials and the ink outline pass
   render.ts     WebGLRenderer + postprocessing (bloom, vignette, tone mapping, SMAA)
   world.ts      builds the current field: sky, lights, ground, boundary, bunkers, scenery
+  holidays.ts   the holiday fields' bunkers, ground, scenery (falling snow, fireworks) and boundaries
   player.ts     first-person controller + the gun on screen
   input.ts      keyboard + mouse (pointer lock) and controllers, combined into actions; phone start
   touch.ts      on-screen controls for phones: move stick, aim by dragging, Fire / Jump / Crouch / Lie / Reload
