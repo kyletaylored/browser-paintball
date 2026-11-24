@@ -18,8 +18,8 @@ import { makeHttpHandler } from './http';
 import { field, setMap, spawnPoint } from '../shared/field';
 import { MAPS, MAP_LIST, DEFAULT_MAP, voteWinner, unanimousVote } from '../shared/maps';
 import {
-  advanceBall, traceWorld, segmentHitsPlayer, stanceHeight, isOutOfBounds, stepMovement, hitWorld, hitPlayer, ballSeed, BALL_DT,
-  BALL_SPEED, BALL_LIFETIME, STAND_HEIGHT, CROUCH_HEIGHT, EYE_FROM_TOP,
+  advanceBall, traceWorld, segmentHitsPlayer, stanceHeight, isOutOfBounds, stepMovement, hitWorld, hitPlayer, ballSeed, ballSpeed, BALL_DT,
+  BALL_LIFETIME, STAND_HEIGHT, CROUCH_HEIGHT, EYE_FROM_TOP,
   RESPAWN_SECONDS, SERVER_TICK_HZ, SNAPSHOT_HZ, INPUT_DT, INTERP_DELAY, type Ball, type Body, type MoveInput,
 } from '../shared/sim';
 import { BotBrain, NavGrid, SKILLS, botName, type CoverSpot, type Seen } from './bots';
@@ -384,7 +384,8 @@ function walkOff(p: Player) {
 }
 
 function spawnBall(p: Player, o: V3, dir: V3) {
-  const v: V3 = [dir[0] * BALL_SPEED, dir[1] * BALL_SPEED, dir[2] * BALL_SPEED];
+  const speed = ballSpeed(o);
+  const v: V3 = [dir[0] * speed, dir[1] * speed, dir[2] * speed];
   if (balls.length < MAX_BALLS) {
     balls.push({
       x: o[0], y: o[1], z: o[2], vx: v[0], vy: v[1], vz: v[2], age: 0, owner: p.id, team: p.team,

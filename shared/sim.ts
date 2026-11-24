@@ -10,11 +10,10 @@ import { field, logHalf, topOf, footprintDistance, profileBox, profileHeight, or
 // ---- tuning -------------------------------------------------------------------------------
 
 export const GRAVITY = 9.81;
-/**
- * Well under a real field's limit (about 180 fps), on purpose: slow enough that a shot from across
- * the field can be seen and dodged, so not every point is decided off the break.
- */
-export const BALL_SPEED = 55;
+/** 280 ft/s, a typical field limit (the average: each shot is a little faster or slower, see ballSpeed) */
+export const BALL_SPEED = 280 * 0.3048;
+/** how far one shot's speed can be off the average, either way (a real marker isn't exact) */
+export const BALL_SPEED_SPREAD = 0.02;
 export const BALL_DRAG = 0.35;
 export const BALL_RADIUS = 0.0085;
 export const BALL_LIFETIME = 2.5;
@@ -312,6 +311,19 @@ export function ballSeed(o: readonly number[]): number {
   return h >>> 0;
 }
 
+/**
+ * How fast a ball fired from o leaves the barrel: BALL_SPEED, give or take BALL_SPEED_SPREAD. From
+ * the firing point like ballSeed, so the shooter and the server pick the same speed without sending it.
+ */
+export function ballSpeed(o: readonly number[]): number {
+  let h = Math.imul(ballSeed(o) ^ 0x5bd1e995, 0x27d4eb2d);
+  h ^= h >>> 13;
+  h = Math.imul(h, 0x165667b1);
+  h ^= h >>> 16;
+  const u = (h >>> 0) / 4294967296;
+  return BALL_SPEED * (1 + BALL_SPEED_SPREAD * (2 * u - 1));
+}
+
 /** the ball's next random number in [0, 1) (mulberry32) */
 function roll(b: Ball): number {
   let t = (b.seed = (b.seed + 0x6d2b79f5) | 0);
@@ -337,14 +349,6 @@ export function bounceChance(cos: number): number {
 }
 
 /**
- * How likely a ball is to bounce off the ground instead of breaking. The ground is soft: most balls
- * skip off it, even fairly square ones, and only some straight-down ones break.
- */
-export function groundBounceChance(cos: number): number {
-  return 0.95 - clamp01((cos - 0.5) / 0.5) * 0.45;
-}
-
-/**
  * How likely a ball is to bounce off a player instead of breaking. Bodies are soft: most hits
  * break, but a glancing one often skips off, and then the player plays on.
  */
@@ -363,7 +367,9 @@ export type Contact = 'break' | 'bounce' | 'stop';
  * machine stays in step.
  */
 export function hitWorld(b: Ball, w: WorldHit): Contact {
-  return deflect(b, w.x, w.y, w.z, w.nx, w.ny, w.nz, w.bunker < 0 ? groundBounceChance : bounceChance);
+  // the ground: always paint, at any angle
+  if (w.bunker < 0) return 'break';
+  return deflect(b, w.x, w.y, w.z, w.nx, w.ny, w.nz, bounceChance);
 }
 
 /**
