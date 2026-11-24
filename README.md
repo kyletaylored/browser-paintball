@@ -54,7 +54,7 @@ plays one mode only, with no vote. The server holds every shooter, bots included
 | Semi-auto (`semi`) | a mechanical marker: one ball every time you pull, never more than 10 a second. Holding does nothing |
 | Pump (`pump`) | one ball, then a half-second pump stroke before the next (pulls during it are lost). A 20-ball tube |
 
-- **Playing alone?** The server fills both teams with bots (3 a side by default), so you can play a match on your own.
+- **Playing alone?** The server fills both teams with bots (5 a side by default), so you can play a match on your own.
   A friend who joins takes a bot's place.
 - **No server running?** Practice works without one, and if the server drops mid-match you practise until it's back.
 - **Slow machine?** Add `?low` to the URL to turn off shadows, bloom and anti-aliasing. Phones and tablets start
