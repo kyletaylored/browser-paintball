@@ -16,6 +16,7 @@
 // Lying down: the body is hit along the ground, not as a short upright stub.
 // Out: from anywhere on every field, an eliminated player walks off past the side line.
 // Shaped tops: paint follows a pyramid's slope and a wall's top line (over a dip, through a notch).
+// Planets: paint hits a ball where it's round, a sunk dome only above the ground, and nobody stands on one.
 
 import { MAP_LIST, DEFAULT_MAP, nextMap, unanimousVote, voteWinner } from '../shared/maps';
 import { field, setMap, useBunkers, spawnPoint, footprintDistance, taperHeight, topOf, type Bunker } from '../shared/field';
@@ -51,6 +52,7 @@ function mirrored(b: Bunker, all: readonly Bunker[]): boolean {
       }
       return true;
     }
+    if (b.kind === 'orb' && o.kind === 'orb') return b.r === o.r;
     if (b.kind === 'profile' && o.kind === 'profile') {
       if (b.axis !== o.axis || b.d !== o.d) return false;
       // a wall along x runs the other way on the other half; one along z is the same wall
@@ -112,7 +114,7 @@ for (const m of MAP_LIST) {
       // (a sloped or shaped top is hit inside its footprint, not on its outline)
       const fd = footprintDistance(b, hit.x, hit.z, i);
       const onThis = Math.abs(fd) < 0.02 || (b.kind === 'log' && hit.y <= topOf(b) + 0.02) ||
-        ((b.kind === 'taper' || b.kind === 'profile') && fd < 0.02);
+        ((b.kind === 'taper' || b.kind === 'profile' || b.kind === 'orb') && fd < 0.02);
       const elsewhere = bs.some((o, j) => j !== i && footprintDistance(o, hit.x, hit.z, j) < 0.02);
       if (!onThis && !elsewhere) misses++;
     }
@@ -209,6 +211,28 @@ for (const m of MAP_LIST) {
   check('players are kept out of an M wall, even at a dip', footprintDistance(field.bunkers[2], body.x, body.z, 2) > PLAYER_RADIUS - 0.02, JSON.stringify(body));
   body = walk(0.1, 0.1, 0, 0, 2.6);
   check('a player dropped on a pyramid slides off it', footprintDistance(field.bunkers[0], body.x, body.z, 0) > PLAYER_RADIUS - 0.02 && body.y < 0.05, JSON.stringify(body));
+
+  // planets: a ball resting on the ground (centre 1 m up) and a dome sunk to 0.3 m
+  useBunkers([
+    { kind: 'orb', x: 0, z: 0, r: 1, color: 0 },
+    { kind: 'orb', x: 0, z: 10, r: 1.4, y: 0.3, color: 0 },
+  ]);
+  h = traceWorld(-5, 1, 0, 5, 1, 0);
+  check('a shot at the middle of a planet hits it square on', !!h && h.bunker === 0 && near(h.x, -1) && near(h.nx, -1), JSON.stringify(h));
+  h = traceWorld(-5, 1.6, 0, 5, 1.6, 0);
+  check('higher up it hits the curve, further back, facing up', !!h && h.bunker === 0 && near(h.x, -0.8) && h.ny > 0.5, JSON.stringify(h));
+  h = traceWorld(-5, 1, 1.05, 5, 1, 1.05);
+  check('a shot just past a planet flies by', !h, JSON.stringify(h));
+  h = traceWorld(-5, 1.0, 10, 5, 1.0, 10);
+  check('a dome is hit on its slope, above the ground', !!h && h.bunker === 1 && near(h.x, -Math.sqrt(1.4 * 1.4 - 0.7 * 0.7)) && h.ny > 0, JSON.stringify(h));
+  h = traceWorld(-5, 1.8, 10, 5, 1.8, 10);
+  check('a shot over a dome clears it', !h && near(topOf(field.bunkers[1]), 1.7), JSON.stringify(h));
+  body = walk(-3, 0.05, 1, 0);
+  check('players are kept out of a planet', footprintDistance(field.bunkers[0], body.x, body.z, 0) > PLAYER_RADIUS - 0.02, JSON.stringify(body));
+  body = walk(0.1, 0.1, 0, 0, 2.2);
+  check('a player dropped on a planet slides off it', footprintDistance(field.bunkers[0], body.x, body.z, 0) > PLAYER_RADIUS - 0.02 && body.y < 0.05, JSON.stringify(body));
+  const sunk = MAP_LIST.flatMap((m) => m.bunkers).filter((b) => b.kind === 'orb' && ((b.y ?? b.r) > b.r + 1e-9 || (b.y ?? b.r) < 0));
+  check('no planet floats above the ground or sits under it', sunk.length === 0, sunk.map((b) => `${b.x},${b.z}`).join('; '));
 
   useBunkers(field.map.bunkers);
 }

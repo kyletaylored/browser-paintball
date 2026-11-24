@@ -5,7 +5,7 @@
 // shapes (doritos, spikes) and walls with a shaped top, and the player is treated as an upright
 // capsule. Everything reads the current map from shared/field.ts.
 
-import { field, logHalf, topOf, footprintDistance, profileBox, profileHeight, type Bunker, type ProfileBunker } from './field';
+import { field, logHalf, topOf, footprintDistance, profileBox, profileHeight, orbY, type Bunker, type OrbBunker, type ProfileBunker } from './field';
 
 // ---- tuning -------------------------------------------------------------------------------
 
@@ -141,8 +141,8 @@ function groundHeightAt(x: number, z: number, feetY: number): number {
     const b = bs[i];
     const top = topOf(b);
     if (top > feetY + 0.06 || top <= g) continue;
-    // sloped and shaped tops can't be stood on: you slide off them (see pushOutOfBunkers)
-    if (b.kind === 'taper' || b.kind === 'profile') continue;
+    // sloped, shaped and round tops can't be stood on: you slide off them (see pushOutOfBunkers)
+    if (b.kind === 'taper' || b.kind === 'profile' || b.kind === 'orb') continue;
     const bound = field.bounds[i];
     if (Math.abs(x - bound.x) > bound.r + r || Math.abs(z - bound.z) > bound.r + r) continue;
     if (b.kind === 'box') {
@@ -496,11 +496,12 @@ export function traceWorld(x0: number, y0: number, z0: number, x1: number, y1: n
     const bound = field.bounds[i];
     if (y0 > bound.top && y1 > bound.top) continue;
     if (!segmentNearCircle(x0, z0, dx, dz, lenXZ, bound.x, bound.z, bound.r)) continue;
-    if (b.kind === 'poly' || b.kind === 'log' || b.kind === 'taper' || b.kind === 'profile') {
+    if (b.kind === 'poly' || b.kind === 'log' || b.kind === 'taper' || b.kind === 'profile' || b.kind === 'orb') {
       const t =
         b.kind === 'poly' ? segPoly(x0, y0, z0, dx, dy, dz, i, b.h)
         : b.kind === 'taper' ? segHull(x0, y0, z0, dx, dy, dz, i)
         : b.kind === 'profile' ? segProfile(x0, y0, z0, dx, dy, dz, b)
+        : b.kind === 'orb' ? segOrb(x0, y0, z0, dx, dy, dz, b)
         : segLog(x0, y0, z0, dx, dy, dz, b);
       if (t >= 0 && t < best) {
         best = t;
@@ -793,6 +794,26 @@ function segLog(x0: number, y0: number, z0: number, dx: number, dy: number, dz: 
     hitN[2] = alongX ? 0 : s;
   }
   return best;
+}
+
+/** Segment against an orb (a ball whose bottom may be under the ground). Entry t in 0..1 (normal in hitN), or -1. */
+function segOrb(x0: number, y0: number, z0: number, dx: number, dy: number, dz: number, b: OrbBunker): number {
+  const fx = x0 - b.x;
+  const fy = y0 - orbY(b);
+  const fz = z0 - b.z;
+  const c = fx * fx + fy * fy + fz * fz - b.r * b.r;
+  if (c <= 0) return -1; // started inside
+  const a = dx * dx + dy * dy + dz * dz;
+  if (a < 1e-12) return -1;
+  const bb = 2 * (fx * dx + fy * dy + fz * dz);
+  const disc = bb * bb - 4 * a * c;
+  if (disc < 0) return -1;
+  const t = (-bb - Math.sqrt(disc)) / (2 * a);
+  if (t < 0 || t > 1 || y0 + dy * t < 0) return -1;
+  hitN[0] = (fx + dx * t) / b.r;
+  hitN[1] = (fy + dy * t) / b.r;
+  hitN[2] = (fz + dz * t) / b.r;
+  return t;
 }
 
 /** Slab test. Returns entry t in 0..1 (and writes the face normal to boxN), or -1. */

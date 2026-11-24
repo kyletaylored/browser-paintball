@@ -5,19 +5,25 @@
 // Shapes are in shared/field.ts. Keep bunkers inside the field lines and off the start lines; the
 // map checks (server/map-test.ts) make sure of that.
 
-import type { Bunker, BoxBunker, CanBunker, LogBunker, Look, PolyBunker, ProfileBunker, TaperBunker } from './field';
+import type { Bunker, BoxBunker, CanBunker, LogBunker, Look, OrbBunker, PolyBunker, ProfileBunker, TaperBunker } from './field';
 
 export interface MapTheme {
   /** what the field is drawn on */
-  ground: 'turf' | 'sand' | 'forest';
-  /** around the field: grass, grass with stands, the sea along one side, or more forest */
-  surround: 'grass' | 'stands' | 'sea' | 'forest';
-  /** netting all round (speedball), or a low rope line (beach, woods) */
-  boundary: 'net' | 'rope';
+  ground: 'turf' | 'sand' | 'forest' | 'moon';
+  /** around the field: grass, grass with stands, the sea along one side, more forest, or the moon under a starry sky */
+  surround: 'grass' | 'stands' | 'sea' | 'forest' | 'space';
+  /** netting all round (speedball), a low rope line (beach, woods), or a glowing line on posts (space) */
+  boundary: 'net' | 'rope' | 'glow';
   sky: number;
   fog: [near: number, far: number];
   sun: { color: number; intensity: number };
   hemi: { sky: number; ground: number; intensity: number };
+  /** how shots are drawn: paintballs, or little moons with comet tails (look only: they fly the same) */
+  shots?: 'paint' | 'moon';
+  /** what players wear: the jersey, or a space suit and helmet */
+  outfit?: 'jersey' | 'astronaut';
+  /** an elimination pops a star burst where it happened */
+  outFx?: 'stars';
 }
 
 export interface GameMap {
@@ -46,6 +52,9 @@ const poly = (x: number, z: number, pts: [number, number][], h: number, color: n
   ({ kind: 'poly', x, z, pts, h, color, ...(look ? { look } : {}) });
 const log = (x: number, z: number, len: number, r: number, axis: 'x' | 'z', color: number, look: Look = 'log'): LogBunker =>
   ({ kind: 'log', x, z, len, r, axis, color, look });
+/** a planet: resting on the ground, or sunk into it (centre y above the ground) */
+const orb = (x: number, z: number, r: number, color: number, look: Look, y?: number): OrbBunker =>
+  ({ kind: 'orb', x, z, r, color, look, ...(y !== undefined ? { y } : {}) });
 const taper = (x: number, z: number, s: Shape, color: number): TaperBunker =>
   ({ kind: 'taper', x, z, pts: s.pts, h: s.h, top: s.top, ...(s.apex ? { apex: s.apex } : {}), color });
 const profile = (x: number, z: number, axis: 'x' | 'z', w: Wall, color: number): ProfileBunker =>
@@ -320,10 +329,54 @@ const WOODS: GameMap = {
   targets: [[12, 4], [20, -8], [26, 10]],
 };
 
+// ---- the moon ---------------------------------------------------------------------------------
+
+const MOON_GREY = 0xc9c6bd;
+const SATURN_GOLD = 0xe3b25a;
+const DEEP_BLUE = 0x4f86d9;
+const NEBULA_PURPLE = 0x9b6ad8;
+const MINT = 0x67d6a4;
+const EMBER = 0xe0713f;
+const CRATER_TEAL = 0x7fb8b6;
+
+const SPACE: GameMap = {
+  id: 'space',
+  name: 'Moonbase',
+  blurb: 'A field on the moon: planets for bunkers, moonballs with comet tails and a star for every out.',
+  length: 48,
+  width: 30,
+  margin: 2,
+  bunkers: layout(
+    [
+      orb(0, 0, 1.3, NEBULA_PURPLE, 'ringed'), // the big one in the middle
+      orb(0, 9, 0.65, MOON_GREY, 'moon'),
+      orb(0, -9, 0.65, MOON_GREY, 'moon'),
+    ],
+    [
+      orb(-19, 0, 1.0, EMBER, 'planet'), // home planet
+      orb(-15, 6, 0.7, MOON_GREY, 'moon'),
+      orb(-15, -6, 0.7, MOON_GREY, 'moon'),
+      orb(-12, 11, 1.4, CRATER_TEAL, 'moon', 0.3), // half-sunk domes: low cover you slide off
+      orb(-12, -11, 1.4, CRATER_TEAL, 'moon', 0.3),
+      orb(-9, 0, 1.1, DEEP_BLUE, 'planet'),
+      orb(-6, 4.5, 0.5, MOON_GREY, 'moon'), // small moons: crouch behind them
+      orb(-6, -4.5, 0.5, MOON_GREY, 'moon'),
+      orb(-4.5, 11.5, 0.95, MINT, 'ringed'),
+      orb(-4.5, -11.5, 0.95, SATURN_GOLD, 'ringed'),
+    ],
+  ),
+  theme: {
+    ground: 'moon', surround: 'space', boundary: 'glow', sky: 0x04050c, fog: [90, 420],
+    sun: { color: 0xffffff, intensity: 3.1 }, hemi: { sky: 0x8a97c8, ground: 0x34343c, intensity: 0.75 },
+    shots: 'moon', outfit: 'astronaut', outFx: 'stars',
+  },
+  targets: [[7.5, 2.5], [13, -3], [11, 7.5]],
+};
+
 // ---- the list -------------------------------------------------------------------------------
 
 /** in rotation order */
-export const MAP_LIST: readonly GameMap[] = [ARENA, TOURNAMENT, BEACH, WOODS];
+export const MAP_LIST: readonly GameMap[] = [ARENA, TOURNAMENT, BEACH, WOODS, SPACE];
 export const MAPS: Readonly<Record<string, GameMap>> = Object.fromEntries(MAP_LIST.map((m) => [m.id, m]));
 export const DEFAULT_MAP = 'arena';
 

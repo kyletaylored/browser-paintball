@@ -12,7 +12,8 @@ import type { PadSettings } from './gamepad';
 import { LocalPlayer } from './player';
 import { Paintballs, type Target, type BallEvents } from './paintballs';
 import { Fx } from './fx';
-import { makeAvatar, type Avatar } from './avatars';
+import { makeAvatar, fieldOutfit, type Avatar } from './avatars';
+import { StarBursts } from './stars';
 import { loadModels } from './models';
 import { Hud } from './hud';
 import { SoundSystem, Footsteps } from './audio';
@@ -154,6 +155,8 @@ hud.bindShoulder(player.shoulder, (v) => {
 });
 const balls = new Paintballs(scene);
 const fx = new Fx(scene);
+const stars = new StarBursts(scene);
+balls.setStyle(field.map.theme.shots ?? 'paint');
 const sound = new SoundSystem(camera);
 player.placeAt(spawnPoint(0, 2));
 
@@ -247,6 +250,13 @@ function switchMap(id: string): boolean {
   world = buildWorld(scene, models);
   balls.clear();
   fx.clear();
+  stars.clear();
+  // the field's own look for shots and outfits (moonballs and space suits on the moon)
+  balls.setStyle(field.map.theme.shots ?? 'paint');
+  const outfit = fieldOutfit();
+  for (const d of dummies) d.avatar.dress(outfit);
+  for (const ra of remoteAvatars.values()) ra.avatar.dress(outfit);
+  player.dressFigure(outfit);
   dummies.forEach((d, i) => {
     const [x, z] = field.map.targets[i % field.map.targets.length];
     Object.assign(d, { x, z, baseZ: z, alive: true });
@@ -312,6 +322,7 @@ const net = new Net(serverUrl, {
   hit(m) {
     if (SHOW_HITBOXES) showHitbox(m.tp);
     fx.burst(m.p[0], m.p[1], m.p[2], 0, 1, 0, TEAM_COLORS[m.team], 20);
+    if (field.map.theme.outFx === 'stars') stars.pop(m.tp[0], m.tp[1], m.tp[2], TEAM_COLORS[m.team]);
     const mine = m.victim === net.id || m.shooter === net.id;
     const shooterTeam = net.roster.get(m.shooter)?.team ?? m.team;
     const victimTeam = net.roster.get(m.victim)?.team ?? (m.team === 0 ? 1 : 0);
@@ -636,6 +647,7 @@ const ballEvents: BallEvents = {
       if (d) {
         d.alive = false;
         d.downUntil = performance.now() + RESPAWN_SECONDS * 1000;
+        if (field.map.theme.outFx === 'stars') stars.pop(d.x, d.y, d.z, b.color);
         practiceHits++;
         hud.hitMarker();
         input.pad.rumble('hit');
@@ -989,6 +1001,7 @@ function frame(now: number) {
   updatePlates(online);
   netStats.update(now);
   fx.update(dt);
+  stars.update(dt);
   world.update(dt);
   balls.sync(camera);
   composer.render(dt);

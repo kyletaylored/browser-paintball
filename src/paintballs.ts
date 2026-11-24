@@ -5,6 +5,10 @@
 // A real paintball is a 17 mm dot moving at 85 m/s: drawn to scale you'd never see one coming. So
 // each ball gets a streak along its flight, never shrinks below a few pixels on screen, and glows a
 // little: a ball coming straight at you is end-on to its streak, so the glow is what you see.
+//
+// On the moon (theme.shots 'moon') the same balls are drawn as moonballs: a bigger cratered head, a
+// bright glow in the team colour, a long comet tail that fades out, and sparkly dust left behind.
+// Only the look changes: they fly and hit exactly the same, and the server still decides every hit.
 
 import * as THREE from 'three';
 import {
@@ -59,6 +63,24 @@ const STREAK_PER_SPEED = 0.0055;
 const STREAK_MAX = 0.5;
 const NEAR_MISS = 1.6;
 
+/** how each kind of shot is drawn */
+interface ShotLook {
+  head: number;
+  glow: number;
+  streakPerSpeed: number;
+  streakMax: number;
+  /** how much of the team colour is in the head (the rest is white) */
+  headTint: number;
+  /** comet dust left behind per second of flight */
+  dust: number;
+  /** the streak's width at the head, as a multiple of the head */
+  tailWidth: number;
+}
+const PAINT: ShotLook = { head: HEAD, glow: GLOW, streakPerSpeed: STREAK_PER_SPEED, streakMax: STREAK_MAX, headTint: 1, dust: 0, tailWidth: 1 };
+const MOON: ShotLook = { head: 0.05, glow: 3.4, streakPerSpeed: 0.032, streakMax: 2.8, headTint: 0.3, dust: 70, tailWidth: 1.8 };
+const DUST = 3000;
+const DUST_LIFE = 0.55;
+
 export class Paintballs {
   private heads: THREE.InstancedMesh;
   private tails: THREE.InstancedMesh;
@@ -72,6 +94,19 @@ export class Paintballs {
   private s = new THREE.Vector3();
   private dir = new THREE.Vector3();
   private static readonly Z = new THREE.Vector3(0, 0, 1);
+  private look = PAINT;
+  private paintMats: { head: THREE.Material; tail: THREE.Material };
+  private moonMats: { head: THREE.Material; tail: THREE.Material } | null = null;
+  private white = new THREE.Color(0xffffff);
+  // comet dust: points that fade to nothing (additive, so dark is invisible)
+  private dust: THREE.Points;
+  private dustPos = new Float32Array(DUST * 3).fill(-999);
+  private dustCol = new Float32Array(DUST * 3);
+  private dustBase = new Float32Array(DUST * 3);
+  private dustVel = new Float32Array(DUST * 3);
+  private dustLife = new Float32Array(DUST);
+  private nextDust = 0;
+  private lastSync = 0;
 
   constructor(scene: THREE.Scene) {
     this.heads = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 10, 8), new THREE.MeshBasicMaterial(), MAX);
@@ -89,6 +124,16 @@ export class Paintballs {
       new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.22, depthWrite: false, blending: THREE.AdditiveBlending }),
       MAX,
     );
+    this.paintMats = { head: this.heads.material as THREE.Material, tail: this.tails.material as THREE.Material };
+    const dg = new THREE.BufferGeometry();
+    dg.setAttribute('position', new THREE.BufferAttribute(this.dustPos, 3).setUsage(THREE.DynamicDrawUsage));
+    dg.setAttribute('color', new THREE.BufferAttribute(this.dustCol, 3).setUsage(THREE.DynamicDrawUsage));
+    this.dust = new THREE.Points(dg, new THREE.PointsMaterial({
+      size: 0.11, map: softDot(), vertexColors: true, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    }));
+    this.dust.frustumCulled = false;
+    this.dust.visible = false;
+    scene.add(this.dust);
     for (const mesh of this.meshes) {
       mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       mesh.frustumCulled = false;
@@ -111,6 +156,25 @@ export class Paintballs {
   /** drop every ball in flight (the field changed) */
   clear(): void {
     for (const b of this.pool) b.active = false;
+    this.dustLife.fill(0);
+    this.dustPos.fill(-999);
+  }
+
+  /** draw shots as paintballs, or as moonballs with comet tails */
+  setStyle(style: 'paint' | 'moon'): void {
+    this.look = style === 'moon' ? MOON : PAINT;
+    if (style === 'moon' && !this.moonMats) {
+      this.moonMats = {
+        head: new THREE.MeshBasicMaterial({ map: moonTexture() }),
+        tail: new THREE.MeshBasicMaterial({
+          alphaMap: fadeTexture(), transparent: true, opacity: 0.85, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending,
+        }),
+      };
+    }
+    const mats = style === 'moon' ? this.moonMats! : this.paintMats;
+    this.heads.material = mats.head;
+    this.tails.material = mats.tail;
+    this.dust.visible = style === 'moon';
   }
 
   spawn(o: V3, v: V3, owner: number, team: number, color: number, local: boolean): void {
@@ -133,6 +197,7 @@ export class Paintballs {
       const y0 = b.y;
       const z0 = b.z;
       advanceBall(b, dt);
+      if (this.look.dust && Math.random() < this.look.dust * dt) this.puff(b);
       const w = traceWorld(x0, y0, z0, b.x, b.y, b.z);
       let bestT = w ? w.t : Infinity;
       let hit: Target | null = null;
@@ -190,26 +255,71 @@ export class Paintballs {
     }
   }
 
+  /** a speck of comet dust where ball b is, drifting a little and fading */
+  private puff(b: LiveBall): void {
+    const i = this.nextDust;
+    this.nextDust = (this.nextDust + 1) % DUST;
+    const j = i * 3;
+    this.dustPos[j] = b.x + (Math.random() - 0.5) * 0.06;
+    this.dustPos[j + 1] = b.y + (Math.random() - 0.5) * 0.06;
+    this.dustPos[j + 2] = b.z + (Math.random() - 0.5) * 0.06;
+    this.dustVel[j] = b.vx * 0.04 + (Math.random() - 0.5) * 0.5;
+    this.dustVel[j + 1] = b.vy * 0.04 + (Math.random() - 0.5) * 0.5;
+    this.dustVel[j + 2] = b.vz * 0.04 + (Math.random() - 0.5) * 0.5;
+    // mostly white, some in the team colour
+    this.c.setHex(b.color).lerp(this.white, Math.random() < 0.5 ? 0.75 : 0.2);
+    this.dustBase[j] = this.c.r;
+    this.dustBase[j + 1] = this.c.g;
+    this.dustBase[j + 2] = this.c.b;
+    this.dustLife[i] = DUST_LIFE * (0.6 + Math.random() * 0.4);
+  }
+
+  private moveDust(dt: number): void {
+    for (let i = 0; i < DUST; i++) {
+      if (this.dustLife[i] <= 0) continue;
+      const j = i * 3;
+      this.dustLife[i] -= dt;
+      if (this.dustLife[i] <= 0) {
+        this.dustPos[j + 1] = -999;
+        continue;
+      }
+      const k = this.dustLife[i] / DUST_LIFE;
+      for (let a = 0; a < 3; a++) {
+        this.dustPos[j + a] += this.dustVel[j + a] * dt;
+        this.dustCol[j + a] = this.dustBase[j + a] * k;
+      }
+    }
+    const g = this.dust.geometry;
+    g.attributes.position.needsUpdate = true;
+    g.attributes.color.needsUpdate = true;
+  }
+
   /** copy live balls into the instance buffers, once per rendered frame */
   sync(camera: THREE.Camera): void {
+    const now = performance.now() / 1000;
+    const dt = this.lastSync ? Math.min(0.1, now - this.lastSync) : 0;
+    this.lastSync = now;
+    if (this.dust.visible) this.moveDust(dt);
+    const L = this.look;
     const eye = camera.position;
     let n = 0;
     for (const b of this.pool) {
       if (!b.active) continue;
-      const r = Math.max(HEAD, Math.hypot(b.x - eye.x, b.y - eye.y, b.z - eye.z) * MIN_ANGLE);
+      const r = Math.max(L.head, Math.hypot(b.x - eye.x, b.y - eye.y, b.z - eye.z) * MIN_ANGLE);
       this.p.set(b.x, b.y, b.z);
       this.heads.setMatrixAt(n, this.m.compose(this.p, this.q.identity(), this.s.setScalar(r)));
-      this.heads.setColorAt(n, this.c.setHex(b.color));
-      this.glows.setMatrixAt(n, this.m.compose(this.p, this.q, this.s.setScalar(r * GLOW)));
+      this.heads.setColorAt(n, this.c.setHex(b.color).lerp(this.white, 1 - L.headTint));
+      this.c.setHex(b.color);
+      this.glows.setMatrixAt(n, this.m.compose(this.p, this.q, this.s.setScalar(r * L.glow)));
       this.glows.setColorAt(n, this.c);
       // the streak points back along the flight, no longer than the ball has flown (not out of the barrel)
       const speed = Math.hypot(b.vx, b.vy, b.vz);
-      const len = Math.min(STREAK_MAX, speed * STREAK_PER_SPEED, speed * b.age);
+      const len = Math.min(L.streakMax, speed * L.streakPerSpeed, speed * b.age);
       if (speed > 1e-3) {
         this.dir.set(-b.vx / speed, -b.vy / speed, -b.vz / speed);
         this.q.setFromUnitVectors(Paintballs.Z, this.dir);
       }
-      this.tails.setMatrixAt(n, this.m.compose(this.p, this.q, this.s.set(r, r, Math.max(len, 1e-3))));
+      this.tails.setMatrixAt(n, this.m.compose(this.p, this.q, this.s.set(r * L.tailWidth, r * L.tailWidth, Math.max(len, 1e-3))));
       this.tails.setColorAt(n, this.c);
       n++;
     }
@@ -219,4 +329,51 @@ export class Paintballs {
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
     }
   }
+}
+
+/** a grey, cratered moon, wrapped round a ball's head (tinted a little by the team colour) */
+function moonTexture(): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = 64;
+  c.height = 32;
+  const g = c.getContext('2d')!;
+  g.fillStyle = '#e4e2dc';
+  g.fillRect(0, 0, 64, 32);
+  for (let i = 0; i < 18; i++) {
+    g.fillStyle = 'rgba(120,118,112,0.6)';
+    g.beginPath();
+    g.arc(Math.random() * 64, 4 + Math.random() * 24, 1 + Math.random() * 3.5, 0, Math.PI * 2);
+    g.fill();
+  }
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+/** for the comet tail: solid at the head, fading to nothing at its end (alpha maps read green) */
+function fadeTexture(): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = 4;
+  c.height = 64;
+  const g = c.getContext('2d')!;
+  const grad = g.createLinearGradient(0, 0, 0, 64);
+  grad.addColorStop(0, '#000');
+  grad.addColorStop(1, '#fff');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 4, 64);
+  return new THREE.CanvasTexture(c);
+}
+
+/** a soft round dot, for the dust */
+function softDot(): THREE.CanvasTexture {
+  const c = document.createElement('canvas');
+  c.width = c.height = 32;
+  const g = c.getContext('2d')!;
+  const grad = g.createRadialGradient(16, 16, 0, 16, 16, 16);
+  grad.addColorStop(0, 'rgba(255,255,255,1)');
+  grad.addColorStop(0.4, 'rgba(255,255,255,0.6)');
+  grad.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 32, 32);
+  return new THREE.CanvasTexture(c);
 }

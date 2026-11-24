@@ -4,7 +4,7 @@
 import type { GameMap } from '../shared/maps';
 import { logHalf, profileBox } from '../shared/field';
 
-const GROUND: Record<GameMap['theme']['ground'], string> = { turf: '#2f8a3a', sand: '#cdb27a', forest: '#2c5a2a' };
+const GROUND: Record<GameMap['theme']['ground'], string> = { turf: '#2f8a3a', sand: '#cdb27a', forest: '#2c5a2a', moon: '#8f8c86' };
 const cache = new Map<string, string>();
 
 /** a picture of the map's layout (a data: URL), made once per map */
@@ -47,7 +47,7 @@ export function layoutImage(map: GameMap, width = 240): string {
   for (const b of map.bunkers) {
     g.fillStyle = `#${b.color.toString(16).padStart(6, '0')}`;
     g.beginPath();
-    if (b.kind === 'can') {
+    if (b.kind === 'can' || b.kind === 'orb') {
       g.arc(X(b.x), Z(b.z), Math.max(1.2, b.r * scale), 0, Math.PI * 2);
     } else if (b.kind === 'profile') {
       const f = profileBox(b);

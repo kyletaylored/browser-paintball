@@ -1,8 +1,13 @@
 // Other players. ModelAvatar is the animated figure from player.glb; PrimitiveAvatar is the simple
 // shape drawn from code, used if the models didn't load. Both have the same set() interface.
+//
+// Outfits: on the moon (theme.outfit 'astronaut') the same figure is dressed in a space suit: white
+// where the jersey's sides, trousers and pads were (the team colour stays on the chest, sleeves and
+// hopper), a gold visor, a glass helmet bubble and a backpack with an aerial.
 
 import * as THREE from 'three';
 import { STAND_HEIGHT, PRONE_FEET, PRONE_RADIUS } from '../shared/sim';
+import { field } from '../shared/field';
 import { paintTeam, type Models } from './models';
 import { toonify } from './toon';
 
@@ -12,13 +17,78 @@ export interface Avatar {
   set(x: number, y: number, z: number, yaw: number, pitch: number, height: number, alive: boolean, prone?: boolean): void;
   /** they fired: play the recoil */
   fire(): void;
+  /** what they wear (follows the field: makeAvatar starts with the current field's) */
+  dress(outfit: Outfit): void;
   dispose(): void;
 }
+
+export type Outfit = 'jersey' | 'astronaut';
+
+/** what players wear on the field being played */
+export const fieldOutfit = (): Outfit => field.map.theme.outfit ?? 'jersey';
 
 export function makeAvatar(models: Models | null, color: number): Avatar {
   const a = models ? new ModelAvatar(models, color) : new PrimitiveAvatar(color);
   toonify(a.root); // the arcade look (src/toon.ts)
+  a.dress(fieldOutfit());
   return a;
+}
+
+/** the space suit's colour for each of the figure's materials (by name; the team colour stays) */
+const SUIT: Readonly<Record<string, number>> = {
+  side: 0xeef0f5, pants: 0xe4e7ee, pad: 0xc3c9d5, glove: 0xdde1e8, boot: 0xb7bdc8, sole: 0x7d838f,
+  mask: 0xf3f4f8, lens: 0xe5ab45, trim: 0x6a7180,
+};
+/** suit copies of the figure's materials, shared by every astronaut */
+const suitCopies = new Map<THREE.Material, THREE.Material>();
+function suitMaterial(m: THREE.Material): THREE.Material {
+  const color = SUIT[m.name];
+  if (color === undefined) return m;
+  let c = suitCopies.get(m);
+  if (!c) {
+    c = m.clone();
+    (c as THREE.MeshToonMaterial).color?.setHex(color);
+    suitCopies.set(m, c);
+  }
+  return c;
+}
+
+/** the glass bubble round a helmet: see-through and drawn without depth, so it gets no ink outline */
+const BUBBLE = new THREE.MeshBasicMaterial({ color: 0xcdeeff, transparent: true, opacity: 0.16, depthWrite: false });
+const SHINE = new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.55, depthWrite: false });
+const PACK = new THREE.MeshStandardMaterial({ color: 0xe8eaf0, roughness: 0.6 });
+const DARK = new THREE.MeshStandardMaterial({ color: 0x4a505c, roughness: 0.5 });
+const TIP = new THREE.MeshBasicMaterial({ color: 0xff5a5a });
+
+/** the helmet bubble, centred on a head of radius r */
+function bubble(r: number): THREE.Group {
+  const g = new THREE.Group();
+  g.add(new THREE.Mesh(new THREE.SphereGeometry(r, 24, 16), BUBBLE));
+  // a highlight on the glass, up and to one side at the front
+  const shine = new THREE.Mesh(new THREE.SphereGeometry(r * 0.16, 10, 8), SHINE);
+  shine.scale.set(1, 1.6, 0.4);
+  shine.position.set(-r * 0.45, r * 0.45, -r * 0.72);
+  g.add(shine);
+  return g;
+}
+
+/** the life-support backpack with an aerial; team: a team-colour panel on it (or none) */
+function backpack(team: THREE.Material | null): THREE.Group {
+  const g = new THREE.Group();
+  const add = (geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number) => {
+    const m = new THREE.Mesh(geo, mat);
+    m.position.set(x, y, z);
+    m.castShadow = true;
+    g.add(m);
+    return m;
+  };
+  add(new THREE.BoxGeometry(0.36, 0.42, 0.15), PACK, 0, 0, 0);
+  if (team) add(new THREE.BoxGeometry(0.22, 0.06, 0.012), team, 0, 0.1, 0.081);
+  add(new THREE.CylinderGeometry(0.035, 0.035, 0.3, 10), DARK, -0.12, -0.02, 0.09).rotation.x = 0;
+  add(new THREE.CylinderGeometry(0.035, 0.035, 0.3, 10), DARK, 0.12, -0.02, 0.09);
+  add(new THREE.CylinderGeometry(0.008, 0.008, 0.32, 5), DARK, 0.13, 0.36, 0);
+  add(new THREE.SphereGeometry(0.025, 8, 6), TIP, 0.13, 0.53, 0);
+  return g;
 }
 
 type State = 'idle' | 'run' | 'crouch' | 'crouchMove' | 'out' | 'outWalk';
@@ -62,6 +132,10 @@ export class ModelAvatar implements Avatar {
   private last = { x: NaN, z: NaN, t: 0 };
   private speed = 0;
   private lying = new Lying();
+  private outfit: Outfit = 'jersey';
+  /** the jersey's materials, per mesh, while the suit is on */
+  private jersey = new Map<THREE.Mesh, THREE.Material | THREE.Material[]>();
+  private gear: THREE.Object3D[] = [];
 
   constructor(models: Models, color: number) {
     this.model = models.player.scene.clone(true);
@@ -115,7 +189,57 @@ export class ModelAvatar implements Avatar {
     this.shoot.reset().play();
   }
 
+  dress(outfit: Outfit): void {
+    if (outfit === this.outfit) return;
+    this.outfit = outfit;
+    if (outfit === 'astronaut' && !this.gear.length) this.makeGear();
+    for (const g of this.gear) g.visible = outfit === 'astronaut';
+    this.model.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (!mesh.isMesh || this.gear.some((g) => g === mesh || g.getObjectById(mesh.id))) return;
+      if (outfit === 'astronaut') {
+        this.jersey.set(mesh, mesh.material);
+        mesh.material = Array.isArray(mesh.material) ? mesh.material.map(suitMaterial) : suitMaterial(mesh.material);
+      } else {
+        const m = this.jersey.get(mesh);
+        if (m) mesh.material = m;
+      }
+    });
+    if (outfit !== 'astronaut') this.jersey.clear();
+  }
+
+  /** the helmet bubble on the head and the backpack on the torso, sized from the figure itself */
+  private makeGear(): void {
+    let team: THREE.Material | null = null;
+    this.model.traverse((o) => {
+      const mesh = o as THREE.Mesh;
+      if (mesh.isMesh && !team) {
+        const ms = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        team = ms.find((m) => m.name === 'team') ?? null;
+      }
+    });
+    if (this.head) {
+      // the helmet is everything on the head joint: centre the bubble on it, a little bigger
+      this.model.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(this.head);
+      const size = box.getSize(new THREE.Vector3());
+      const centre = this.head.worldToLocal(box.getCenter(new THREE.Vector3()));
+      const b = bubble(Math.max(size.x, size.y, size.z) / 2 + 0.05);
+      b.position.copy(centre);
+      this.head.add(b);
+      this.gear.push(b);
+    }
+    if (this.torso) {
+      const pack = backpack(team);
+      pack.position.set(0, 0.3, 0.235); // on the back (the figure faces -z)
+      this.torso.add(pack);
+      this.gear.push(pack);
+    }
+    for (const g of this.gear) toonify(g);
+  }
+
   dispose(): void {
+    for (const g of this.gear) g.traverse((o) => (o as THREE.Mesh).geometry?.dispose());
     this.mixer.stopAllAction();
     this.mixer.uncacheRoot(this.model);
     this.model.traverse((o) => {
@@ -143,6 +267,7 @@ export class PrimitiveAvatar implements Avatar {
   private alive = true;
   private lying = new Lying();
   private last = { x: NaN, z: NaN, t: 0 };
+  private suit: THREE.Group;
 
   constructor(color: number) {
     const suit = this.mat({ color, roughness: 0.8 });
@@ -165,6 +290,22 @@ export class PrimitiveAvatar implements Avatar {
 
     this.root.add(body, this.head, gun, hopper);
     this.root.traverse((o) => (o.castShadow = true));
+    // the space suit's extras: a helmet bubble and a backpack
+    this.suit = new THREE.Group();
+    const helmet = bubble(0.24);
+    this.head.add(helmet);
+    const pack = backpack(null);
+    pack.position.set(0, 1.05, 0.3);
+    this.suit.add(pack);
+    this.root.add(this.suit);
+    this.suitParts = [helmet, this.suit];
+    this.dress('jersey');
+  }
+
+  private suitParts: THREE.Object3D[] = [];
+
+  dress(outfit: Outfit): void {
+    for (const p of this.suitParts) p.visible = outfit === 'astronaut';
   }
 
   set(x: number, y: number, z: number, yaw: number, pitch: number, height: number, alive: boolean, prone = false): void {

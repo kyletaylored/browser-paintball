@@ -12,8 +12,8 @@ export type InflatableShape =
   | { key: string; kind: 'taper'; pts: [number, number][]; h: number; top: number; apex: [number, number]; color: number }
   | { key: string; kind: 'profile'; axis: 'x' | 'z'; d: number; line: [number, number][]; color: number };
 
-/** a bunker drawn from bunkers.glb (no look, or 'inflatable', and not a log) */
-export const isInflatable = (b: Bunker): boolean => (b.look ?? 'inflatable') === 'inflatable' && b.kind !== 'log';
+/** a bunker drawn from bunkers.glb (no look, or 'inflatable', and not a log or an orb) */
+export const isInflatable = (b: Bunker): boolean => (b.look ?? 'inflatable') === 'inflatable' && b.kind !== 'log' && b.kind !== 'orb';
 
 export function inflatableShapes(): InflatableShape[] {
   const out = new Map<string, InflatableShape>();
