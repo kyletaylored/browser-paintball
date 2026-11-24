@@ -26,7 +26,7 @@ import { waitLine } from '../shared/walkoff';
 import { Net, sampleRemote, phaseSecondsLeft } from './net';
 import { NetStats } from './netstats';
 import { Voice, type VoiceSettings } from './voice';
-import { BALL_SPEED, STAND_HEIGHT, stanceHeight, CLIENT_SEND_HZ, RESPAWN_SECONDS, INPUT_DT, INTERP_DELAY } from '../shared/sim';
+import { ballSpeed, STAND_HEIGHT, stanceHeight, CLIENT_SEND_HZ, RESPAWN_SECONDS, INPUT_DT, INTERP_DELAY } from '../shared/sim';
 import { DEFAULT_PORT, TEAM_COLORS, TEAM_NAMES, cleanName, type RoundPhase, type V3 } from '../shared/protocol';
 import { Trigger, MODE_RULES, DEFAULT_FIRE_MODE, isFireMode, type FireMode } from '../shared/fire';
 
@@ -616,7 +616,8 @@ function fire() {
   const team = online ? net.team : 0;
   if (online) flushInputs(); // so the server has moved us to where we're shooting from
   // Draw the ball right away (no waiting for the server), then tell the server.
-  balls.spawn(o, [dir.x * BALL_SPEED, dir.y * BALL_SPEED, dir.z * BALL_SPEED], online ? net.id : 0, team, paintOf(team), true);
+  const speed = ballSpeed(o); // the server picks the same one from o
+  balls.spawn(o, [dir.x * speed, dir.y * speed, dir.z * speed], online ? net.id : 0, team, paintOf(team), true);
   if (online) net.send({ t: 'fire', o, d: [dir.x, dir.y, dir.z] });
   hopper--;
   player.kick();
