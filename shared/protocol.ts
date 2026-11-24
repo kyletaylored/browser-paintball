@@ -9,6 +9,7 @@
 // not at all: receivers skip anything older than what they already have.
 
 import type { FireMode } from './fire';
+import type { ObjectiveKind, FlagState, ObjectiveEvent } from './objective';
 
 export type Team = 0 | 1;
 export type V3 = [number, number, number];
@@ -135,6 +136,11 @@ export type ServerMsg =
   /** a ball bounced off a player without breaking: they play on */
   | { t: 'bounce'; victim: number; shooter: number; p: V3 }
   | { t: 'respawn'; spawn: Spawn }
+  /**
+   * the field's objective (shared/objective.ts) and where the flags are: sent on joining, when a
+   * point starts, and with each thing that happens to a buzzer or flag (event)
+   */
+  | { t: 'objective'; kind: ObjectiveKind; flags: [FlagState, FlagState]; event?: ObjectiveEvent }
   /**
    * player `id` (out) stepped into teammate bot `bot`: they're in, where the bot was (body b, facing
    * yaw / pitch), and the bot is out where they were

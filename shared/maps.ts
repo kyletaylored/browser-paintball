@@ -5,6 +5,7 @@
 // Shapes are in shared/field.ts. Keep bunkers inside the field lines and off the start lines; the
 // map checks (server/map-test.ts) make sure of that.
 
+import type { ObjectiveKind } from './objective';
 import type { Bunker, BoxBunker, CanBunker, LogBunker, Look, OrbBunker, PolyBunker, ProfileBunker, TaperBunker } from './field';
 
 /**
@@ -56,6 +57,8 @@ export interface GameMap {
   name: string;
   /** one line for the menu */
   blurb: string;
+  /** what wins a point (shared/objective.ts): a buzzer, unless it says otherwise */
+  objective?: ObjectiveKind;
   /** field size inside the lines, metres: x end to end, z side to side */
   length: number;
   width: number;
@@ -354,7 +357,8 @@ function woods(): Bunker[] {
 const WOODS: GameMap = {
   id: 'woods',
   name: 'Woods',
-  blurb: 'A big forest field: trees, boulders and fallen logs. Slow, sneaky points.',
+  blurb: 'A big forest field: trees, boulders and fallen logs. Capture the flag.',
+  objective: 'flag',
   length: 90,
   width: 60,
   margin: 3,

@@ -29,6 +29,7 @@ import { NavGrid } from './bots';
 import { walkOffInput, walkOffMap, offField, waitLine } from '../shared/walkoff';
 import { join, send, startServer, waitFor, snapWhere, rosterWhere, type Hit } from './test-client';
 import type { ServerMsg } from '../shared/protocol';
+import { baseOf, homeFlags, objectiveKind, scorer, stepObjective, timeWinner, BUZZ_RANGE, type ObjectivePlayer } from '../shared/objective';
 
 let failed = 0;
 function check(name: string, ok: boolean, detail = '') {
@@ -242,6 +243,63 @@ for (const m of MAP_LIST) {
   useBunkers(field.map.bunkers);
 }
 
+// ---- objectives: the buzzer and the flags ----------------------------------------------------
+
+function objectiveRules() {
+  console.log('-- objectives');
+  setMap('arena');
+  check('the speedball fields have a buzzer', objectiveKind() === 'buzzer');
+  const red = baseOf(0);
+  const blue = baseOf(1);
+  check("each team's buzzer is at the back of its own end, in the middle", red.x < -field.halfL && blue.x > field.halfL && red.z === 0 && blue.z === 0);
+  const flags = homeFlags();
+  const at = (id: number, team: 0 | 1, x: number, z: number, alive = true): ObjectivePlayer => ({ id, team, x, z, alive });
+  check('Red touching their own buzzer does nothing', stepObjective('buzzer', flags, [at(1, 0, red.x, red.z)]).length === 0);
+  check('an out Red player at Blue\'s buzzer does nothing', stepObjective('buzzer', flags, [at(1, 0, blue.x, blue.z, false)]).length === 0);
+  check('just out of reach does nothing', stepObjective('buzzer', flags, [at(1, 0, blue.x - BUZZ_RANGE - 0.05, 0)]).length === 0);
+  const buzz = stepObjective('buzzer', flags, [at(1, 0, blue.x - BUZZ_RANGE + 0.1, 0.2)]);
+  check('Red in, touching Blue\'s buzzer: Red wins the point', buzz.length === 1 && buzz[0].e === 'buzz' && scorer(buzz[0]) === 0);
+  check('time out: more players still in wins, level is no point', timeWinner([3, 1]) === 0 && timeWinner([0, 2]) === 1 && timeWinner([2, 2]) === -1);
+
+  setMap('woods');
+  check('the woods is capture the flag', objectiveKind() === 'flag');
+  const f = homeFlags();
+  const rb = baseOf(0);
+  const bb = baseOf(1);
+  let ev = stepObjective('flag', f, [at(1, 0, bb.x + 0.5, 0.3)]);
+  check('Red grabs Blue\'s flag at Blue\'s base', ev.length === 1 && ev[0].e === 'take' && ev[0].team === 1 && f[1].at === 'carried' && f[1].carrier === 1);
+  stepObjective('flag', f, [at(1, 0, 10, 4)]);
+  check('the flag goes where its carrier goes', f[1].x === 10 && f[1].z === 4);
+  ev = stepObjective('flag', f, [at(1, 0, 10, 4, false), at(2, 1, 30, 0)]);
+  check('the carrier is out: it drops where they were', ev.length === 1 && ev[0].e === 'drop' && f[1].at === 'dropped' && f[1].x === 10 && f[1].z === 4);
+  ev = stepObjective('flag', f, [at(3, 0, 10.5, 4)]);
+  check('another Red picks it up off the ground', ev.length === 1 && ev[0].e === 'take' && f[1].carrier === 3);
+  stepObjective('flag', f, [at(3, 0, 0, 0)]);
+  stepObjective('flag', f, [at(3, 0, 0, 0, false)]);
+  ev = stepObjective('flag', f, [at(2, 1, 0.3, 0.3)]);
+  check('a Blue touching their dropped flag sends it home', ev.length === 1 && ev[0].e === 'return' && f[1].at === 'home' && f[1].x === bb.x);
+  stepObjective('flag', f, [at(4, 0, bb.x, 0)]);
+  ev = stepObjective('flag', f, [at(4, 0, rb.x + 0.6, 0)]);
+  check('Red brings it home: a capture wins Red the point', ev.length === 1 && ev[0].e === 'capture' && scorer(ev[0]) === 0);
+  const g = homeFlags();
+  stepObjective('flag', g, [at(5, 1, rb.x, 0)]);
+  ev = stepObjective('flag', g, [at(5, 1, rb.x, 0), at(6, 0, rb.x + 0.3, 0)]);
+  check('nobody takes their own flag, and only its carrier can lose it', ev.length === 0 && g[0].carrier === 5);
+
+  // every field: both bases can be reached on foot from the other team's start box
+  for (const m of MAP_LIST) {
+    setMap(m.id);
+    const nav = new NavGrid();
+    const ok = [0, 1].every((t) => {
+      const from = spawnPoint(t as 0 | 1, 0);
+      const to = baseOf((1 - t) as 0 | 1);
+      return nav.walkable(to.x, to.z) && nav.findPath(from.x, from.z, to.x, to.z) !== null;
+    });
+    check(`${m.name}: both ${objectiveKind() === 'flag' ? 'flags' : 'buzzers'} can be reached from the other end`, ok);
+  }
+  setMap(DEFAULT_MAP);
+}
+
 // ---- bots play a point on every field ------------------------------------------------------
 
 async function botsPlay(id: string, name: string) {
@@ -267,11 +325,14 @@ async function botsPlay(id: string, name: string) {
     const hits = c.inbox.slice(from).filter((m): m is Hit => m.t === 'hit').length;
     check(`${name}: the server plays it (welcome says "${welcome?.map}")`, welcome?.map === id);
     check(`${name}: bots fill both teams and leave the start box`, filled !== null && moved !== null);
-    // decided by eliminations, not the clock: a team (or both, trading paint on the same tick) is all out
+    // decided by the objective, not the clock: a buzzer hit or a flag brought home (or both teams out at once)
     const standing = [0, 1].map((t) => decided?.players.filter((p) => p.team === t && p.alive).length ?? -1);
     const secs = Math.round((decidedAt - liveAt) / 1000);
-    check(`${name}: the point is played out by eliminations in ${secs} s (${hits} hits, left standing ${standing.join('-')})`,
-      decided !== null && standing.includes(0));
+    const obj = c.inbox.slice(from).filter((m): m is Extract<ServerMsg, { t: 'objective' }> => m.t === 'objective' && !!m.event);
+    const won = obj.find((m) => m.event!.e === 'buzz' || m.event!.e === 'capture');
+    const story = obj.map((m) => m.event!.e).join(' ');
+    check(`${name}: the point is won ${won ? (won.event!.e === 'buzz' ? 'on the buzzer' : 'by bringing the flag home') : 'without the objective'} in ${secs} s (${hits} hits, left standing ${standing.join('-')}${story ? `; ${story}` : ''})`,
+      decided !== null && (won !== undefined || (standing[0] === 0 && standing[1] === 0)));
     if (rotating) {
       const next = nextMap(id);
       const changed = await waitFor(c.inbox, (m): m is Extract<ServerMsg, { t: 'map' }> => m.t === 'map', 5000, from);
@@ -513,6 +574,7 @@ function walkingOff() {
 }
 
 paintRules();
+objectiveRules();
 playerBounces();
 lyingDown();
 walkingOff();

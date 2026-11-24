@@ -23,6 +23,7 @@ import {
   RESPAWN_SECONDS, SERVER_TICK_HZ, SNAPSHOT_HZ, INPUT_DT, INTERP_DELAY, type Ball, type Body, type MoveInput,
 } from '../shared/sim';
 import { BotBrain, NavGrid, SKILLS, botName, type CoverSpot, type Seen } from './bots';
+import { objectiveKind, homeFlags, stepObjective, scorer, timeWinner, baseOf, type FlagState, type ObjectiveEvent } from '../shared/objective';
 import { decodeClient, encodeAck, encodeBall, encodeSnap } from '../shared/codec';
 import { walkOffInput } from '../shared/walkoff';
 import { MODE_RULES, DEFAULT_FIRE_MODE, isFireMode, modeVoteWinner, type FireMode } from '../shared/fire';
@@ -163,6 +164,8 @@ const score: [number, number] = [0, 0];
 let nextId = 1;
 
 const match = { phase: 'waiting' as RoundPhase, endsAt: 0, round: 1, winner: -1 as Team | -1 };
+/** where the flags are (capture the flag fields; shared/objective.ts) */
+let flags: [FlagState, FlagState] = homeFlags();
 
 const now = () => performance.now() / 1000;
 const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
@@ -232,6 +235,7 @@ wss.on('connection', (ws) => {
   };
   players.set(id, p);
   send(ws, { t: 'welcome', id, team, spawn: sp, round: roundState(), map: field.map.id, voice: VOICE !== null, vote: ROTATE, mode: fireMode, modeVote: MODE_VOTE });
+  send(ws, objectiveMsg());
   log(`+ player ${id} joined ${TEAM_NAMES[team]} (${humans().length} online)`);
   balanceBots();
   updateMatch();
@@ -490,6 +494,8 @@ function changeMap(id: string) {
     broadcast({ t: 'leave', id: p.id });
   }
   broadcast({ t: 'map', id });
+  flags = homeFlags(); // the new field's bases
+  broadcast(objectiveMsg());
   balanceBots(); // fresh bots, thinking about the new field
   log(`  map: ${field.map.name}`);
 }
@@ -537,9 +543,58 @@ function balanceBots() {
   sendRoster();
 }
 
+type Goal = { x: number; z: number };
+
+/**
+ * Which bots go for the objective this tick, and where to (shared/objective.ts); the rest play the
+ * bunkers. A team with nobody left to stop it all goes. Otherwise one runner (two when well ahead)
+ * goes for the buzzer or the other flag when the team is ahead, short of time, or already close;
+ * a bot with the flag runs it home; the nearest defender chases down their own flag.
+ */
+function botGoals(): Map<number, Goal> {
+  const goals = new Map<number, Goal>();
+  if (match.phase !== 'live') return goals;
+  const kind = objectiveKind();
+  const { alive } = teamCounts();
+  const late = match.endsAt - now() < 25;
+  for (const team of [0, 1] as const) {
+    const them = (1 - team) as Team;
+    const mine = [...players.values()].filter((p) => p.team === team && p.alive);
+    const bots = mine.filter((p) => p.bot);
+    if (!bots.length) continue;
+    const sendBots = (to: Goal, count: number, from = bots.filter((b) => !goals.has(b.id))) => {
+      const near = from.map((b) => ({ b, d: Math.hypot(b.x - to.x, b.z - to.z) })).sort((a, z) => a.d - z.d);
+      for (const { b } of near.slice(0, count)) goals.set(b.id, to);
+    };
+    const ahead = alive[team] - alive[them];
+    const runners = alive[them] === 0 ? bots.length : ahead >= 2 ? 2 : ahead >= 1 || late ? 1 : 0;
+    if (kind === 'buzzer') {
+      const buzzer = baseOf(them);
+      sendBots(buzzer, runners);
+      // anyone who's got close anyway goes for it
+      for (const b of bots) if (!goals.has(b.id) && Math.hypot(b.x - buzzer.x, b.z - buzzer.z) < 10) goals.set(b.id, buzzer);
+      continue;
+    }
+    const theirs = flags[them];
+    const ours = flags[team];
+    // got it: home
+    const carrier = bots.find((b) => theirs.at === 'carried' && theirs.carrier === b.id);
+    if (carrier) goals.set(carrier.id, baseOf(team));
+    // ours is out: chase it (the carrier, or where it lies)
+    if (ours.at !== 'home') sendBots({ x: ours.x, z: ours.z }, alive[them] === 0 ? bots.length : 1);
+    // theirs is there for the taking
+    if (theirs.at !== 'carried') {
+      sendBots({ x: theirs.x, z: theirs.z }, runners);
+      for (const b of bots) if (!goals.has(b.id) && Math.hypot(b.x - theirs.x, b.z - theirs.z) < 10) goals.set(b.id, { x: theirs.x, z: theirs.z });
+    }
+  }
+  return goals;
+}
+
 function updateBots(dt: number) {
   const t = now();
   const canMove = match.phase === 'live' || match.phase === 'waiting';
+  const goals = botGoals();
   const seen: Seen[] = [];
   for (const p of players.values()) seen.push({ id: p.id, team: p.team, x: p.x, y: p.y, z: p.z, crouch: p.crouch, prone: p.prone, alive: p.alive });
   for (const p of players.values()) {
@@ -555,7 +610,7 @@ function updateBots(dt: number) {
     if (!canMove) continue;
     const { brain } = p.bot;
     const body = p.body;
-    const out = brain.update(t, dt, { id: p.id, team: p.team, x: body.x, y: body.y, z: body.z, height: body.height, speed: Math.hypot(body.vx, body.vz) }, seen, canMove);
+    const out = brain.update(t, dt, { id: p.id, team: p.team, x: body.x, y: body.y, z: body.z, height: body.height, speed: Math.hypot(body.vx, body.vz) }, seen, canMove, goals.get(p.id) ?? null);
     stepMovement(body, out.move, dt);
     p.x = body.x;
     p.y = body.y;
@@ -738,7 +793,34 @@ function setPhase(phase: RoundPhase, seconds: number, winner: Team | -1 = -1) {
 function startCountdown() {
   balls.length = 0;
   for (const p of players.values()) respawn(p);
+  flags = homeFlags();
+  broadcast(objectiveMsg());
   setPhase('countdown', COUNTDOWN_SECONDS);
+}
+
+function objectiveMsg(event?: ObjectiveEvent): ServerMsg {
+  return { t: 'objective', kind: objectiveKind(), flags, ...(event ? { event } : {}) };
+}
+
+/** the objective this tick (a live point): tell everyone what happened; a buzz or capture wins the point */
+function updateObjective(): Team | -1 {
+  const events = stepObjective(objectiveKind(), flags, [...players.values()]);
+  for (const ev of events) {
+    const who = players.get(ev.by)?.name ?? `player ${ev.by}`;
+    log(`  ${who}: ${ev.e} (${TEAM_NAMES[ev.team]}'s ${objectiveKind()})`);
+    broadcast(objectiveMsg(ev));
+    const w = scorer(ev);
+    if (w !== -1) return w;
+  }
+  return -1;
+}
+
+function endPoint(winner: Team | -1) {
+  if (winner !== -1) score[winner]++;
+  const over = winner !== -1 && score[winner] >= POINTS_TO_WIN;
+  setPhase(over ? 'matchover' : 'point', over ? MATCH_OVER_SECONDS : POINT_PAUSE_SECONDS, winner);
+  if (!over) checkVotes(); // a switch everyone asked for waits for the break between points
+  checkModeVotes();
 }
 
 function updateMatch() {
@@ -763,16 +845,12 @@ function updateMatch() {
       if (t >= match.endsAt) setPhase('live', ROUND_SECONDS);
       break;
     case 'live': {
-      const redOut = alive[0] === 0;
-      const blueOut = alive[1] === 0;
-      if (redOut || blueOut || t >= match.endsAt) {
-        const winner: Team | -1 = redOut && !blueOut ? 1 : blueOut && !redOut ? 0 : -1;
-        if (winner !== -1) score[winner]++;
-        const over = winner !== -1 && score[winner] >= POINTS_TO_WIN;
-        setPhase(over ? 'matchover' : 'point', over ? MATCH_OVER_SECONDS : POINT_PAUSE_SECONDS, winner);
-        if (!over) checkVotes(); // a switch everyone asked for waits for the break between points
-        checkModeVotes();
-      }
+      // knocking everyone out isn't enough: someone still in has to hit the buzzer or bring the flag
+      // home (shared/objective.ts). Both teams out at once (traded paint): nobody can, so no point
+      const scored = updateObjective();
+      if (scored !== -1) endPoint(scored);
+      else if (alive[0] === 0 && alive[1] === 0) endPoint(-1);
+      else if (t >= match.endsAt) endPoint(timeWinner(alive));
       break;
     }
     case 'point':

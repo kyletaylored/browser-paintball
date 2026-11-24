@@ -24,6 +24,8 @@ export interface NetEvents {
   /** a ball bounced off a player without breaking */
   bounce(m: Extract<ServerMsg, { t: 'bounce' }>): void;
   respawn(spawn: Spawn): void;
+  /** the field's buzzers or flags, and anything that just happened to them */
+  objective(m: Extract<ServerMsg, { t: 'objective' }>): void;
   /** someone (maybe us) stepped into a teammate bot */
   takeover(m: Extract<ServerMsg, { t: 'takeover' }>): void;
   ack(m: Extract<ServerMsg, { t: 'ack' }>): void;
@@ -338,6 +340,9 @@ export class Net {
         break;
       case 'respawn':
         this.ev.respawn(m.spawn);
+        break;
+      case 'objective':
+        if ((m.kind === 'buzzer' || m.kind === 'flag') && Array.isArray(m.flags) && m.flags.length === 2) this.ev.objective(m);
         break;
       case 'takeover':
         if (Array.isArray(m.b) && m.b.length === 8) this.ev.takeover(m);

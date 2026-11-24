@@ -189,7 +189,7 @@ all with their defaults. For a local run you can copy it to `.env` (git ignores 
 | `FIRE_MODE` | `vote` | `ramp`, `semi` or `pump` (see `shared/fire.ts`) to play only that firing mode; `vote` lets players vote, and a mode more than half of them want takes over after the point |
 | `MAP` | `rotate` | a field id from `shared/maps.ts` (`arena`, `tournament`, `beach`, `woods`) to play only that one (no vote); `rotate` lets players vote, and moves to the most-voted (or next) field after every match |
 | `POINTS_TO_WIN` | 5 | |
-| `ROUND_SECONDS` | 120 | time limit per point |
+| `ROUND_SECONDS` | 120 | time limit per point (then the team with more players in wins it) |
 | `COUNTDOWN_SECONDS` / `POINT_PAUSE_SECONDS` / `MATCH_OVER_SECONDS` | 3 / 8 / 12 | the break between points is long enough for out players to walk off and for the camera shots; after a match there's time to vote for the next field |
 | `BOT_TEAM_SIZE` | 5 | fill each team to this many with bots while anyone is connected; `0` = off |
 | `BOT_SKILL` | `normal` | `easy`, `normal`, `hard` |

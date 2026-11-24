@@ -9,6 +9,8 @@ import { MAP_LIST } from '../shared/maps';
 import { Input, TOUCH } from './input';
 import { TouchControls } from './touch';
 import { Menu, type MenuAction } from './menu';
+import { ObjectiveView } from './objective';
+import type { ObjectiveEvent } from '../shared/objective';
 import type { PadSettings } from './gamepad';
 import { LocalPlayer } from './player';
 import { Paintballs, type Target, type BallEvents } from './paintballs';
@@ -164,6 +166,10 @@ hud.bindShoulder(player.shoulder, (v) => {
 const balls = new Paintballs(scene);
 const fx = new Fx(scene);
 const stars = new StarBursts(scene);
+/** the buzzers or flags, online (src/objective.ts) */
+const objective = new ObjectiveView(scene);
+/** how the point being shown was won: on the buzzer, a flag brought home, or neither (time, or traded out) */
+let wonHow: 'buzz' | 'capture' | null = null;
 if (field.map.theme.outFx) stars.setStyle(field.map.theme.outFx);
 balls.setStyle(field.map.theme.shots ?? 'paint');
 const sound = new SoundSystem(camera);
@@ -293,6 +299,7 @@ function clearRemotes() {
     ra.avatar.dispose();
   }
   remoteAvatars.clear();
+  objective.build(null); // the server sends the (new) field's objective again
 }
 
 // Where the game server is: VITE_SERVER_URL if the build set one (site and server on different hosts);
@@ -377,6 +384,11 @@ const net = new Net(serverUrl, {
     netStats.correction(prediction.lastError);
     if (fix.snap) player.clearCorrection();
     else player.addCorrection(fix.dx, fix.dy, fix.dz);
+  },
+  objective(m) {
+    if (objective.kind !== m.kind) objective.build(m.kind);
+    objective.set(m.flags);
+    if (m.event) objectiveEvent(m.event);
   },
   respawn(sp) {
     player.placeAt(sp);
@@ -705,6 +717,48 @@ let myStreak = 0;
 let lastAlive: [number, number] = [0, 0];
 const lastStandingCalled = new Set<number>();
 
+/** the kill feed and a toast for something that happened to a buzzer or flag */
+function objectiveEvent(ev: ObjectiveEvent) {
+  const mine = ev.by === net.id;
+  const who = { text: net.nameOf(ev.by), team: (1 - ev.team) as 0 | 1 };
+  const owner = TEAM_NAMES[ev.team];
+  switch (ev.e) {
+    case 'buzz':
+      wonHow = 'buzz';
+      hud.feedRow([who, { text: '· hits the buzzer', cls: 'note' }], mine, 'big');
+      if (mine) hud.toast('You hit the buzzer!');
+      break;
+    case 'capture':
+      wonHow = 'capture';
+      hud.feedRow([who, { text: `· brings ${owner}'s flag home`, cls: 'note' }], mine, 'big');
+      if (mine) hud.toast('Flag captured!');
+      break;
+    case 'take':
+      hud.feedRow([who, { text: `· has ${owner}'s flag`, cls: 'note' }], mine);
+      if (mine) hud.toast(`You've got ${owner}'s flag · bring it home`);
+      else if (ev.team === net.team) hud.toast(`${net.nameOf(ev.by)} has your flag · stop them`);
+      sound.play('confirm', { volume: VOL.confirm });
+      break;
+    case 'drop':
+      hud.feedRow([{ text: `${owner}'s flag`, team: ev.team }, { text: '· dropped', cls: 'note' }], mine);
+      break;
+    case 'return':
+      hud.feedRow([{ text: net.nameOf(ev.by), team: ev.team }, { text: `· returns ${owner}'s flag`, cls: 'note' }], mine);
+      if (mine) hud.toast('Flag returned');
+      break;
+  }
+}
+
+/** what to do now the other team is all out (said once a point) */
+function finishLine(): string {
+  const them = TEAM_NAMES[1 - net.team];
+  if (objective.kind === 'flag') {
+    const f = objective.flags[1 - net.team];
+    return f.at === 'carried' && f.carrier === net.id ? 'bring the flag home' : f.at === 'carried' ? 'get the flag home' : `grab ${them}'s flag and bring it home`;
+  }
+  return `hit ${them}'s buzzer`;
+}
+
 /** call out the last player standing on a team, once a point */
 function checkLastStanding(phase: RoundPhase | null) {
   if (phase !== 'live') {
@@ -719,6 +773,11 @@ function checkLastStanding(phase: RoundPhase | null) {
     if (!isIn) continue;
     alive[p.team]++;
     last[p.team] = p.id;
+  }
+  // the other team is all out: it isn't over until someone finishes it
+  const them = 1 - net.team;
+  if (objective.kind && alive[them] === 0 && lastAlive[them] > 0 && alive[net.team] > 0) {
+    hud.toast(`${TEAM_NAMES[them]} are all out · ${finishLine()}`);
   }
   for (const t of [0, 1] as const) {
     const other = alive[t === 0 ? 1 : 0];
@@ -780,12 +839,17 @@ function updateMatchCues(phase: RoundPhase | null, now: number) {
     if (phase === 'countdown') {
       myStreak = 0;
       paintHits = [];
+      wonHow = null;
     }
     if ((phase === 'point' || phase === 'matchover') && r) startBreakShots(phase, r.winner, phaseSecondsLeft(net, now));
     else director.stop();
     if (phase === 'live' && lastPhase === 'countdown') sound.play('go', { volume: VOL.beep, rate: 1 });
     if (phase === 'point' || phase === 'matchover') sound.play('horn', { volume: VOL.horn, rate: 1 });
-    if (phase === 'live' && r) hud.toast(`Point ${r.round} · eliminate the other team`);
+    if (phase === 'live' && r) {
+      const them = TEAM_NAMES[1 - net.team];
+      const goal = objective.kind === 'flag' ? `bring ${them}'s flag back to your end` : objective.kind === 'buzzer' ? `hit ${them}'s buzzer to win` : 'eliminate the other team';
+      hud.toast(`Point ${r.round} · ${goal}`);
+    }
     lastPhase = phase;
     lastCount = 0;
   }
@@ -805,14 +869,22 @@ function updateMatchCues(phase: RoundPhase | null, now: number) {
     case 'matchover': {
       const w = r.winner;
       const tally = `${net.score[0]} – ${net.score[1]}`;
+      const how = wonHow === 'buzz' ? 'on the buzzer · ' : wonHow === 'capture' ? 'flag captured · ' : w !== -1 && objective.kind ? 'more players in at the end · ' : '';
       if (w === -1) hud.setBanner(`TIME<small>no one wins the point · ${tally}</small>`);
-      else if (phase === 'point') hud.setBanner(`${TEAM_NAMES[w].toUpperCase()} WINS THE POINT<small>${tally}</small>`, teamClass(w));
+      else if (phase === 'point') hud.setBanner(`${TEAM_NAMES[w].toUpperCase()} WINS THE POINT<small>${how}${tally}</small>`, teamClass(w));
       else hud.setBanner(`${TEAM_NAMES[w].toUpperCase()} WINS THE MATCH<small>${tally} · new match soon</small>`, teamClass(w));
       break;
     }
     default:
       hud.setBanner(null);
   }
+}
+
+/** where a player is now (us, or a remote avatar), for a carried flag */
+function locate(id: number): { x: number; y: number; z: number; height: number } | null {
+  if (id === net.id) return player.alive ? { x: player.body.x, y: player.body.y, z: player.body.z, height: player.body.height } : null;
+  const t = remoteAvatars.get(id)?.target;
+  return t ? { x: t.x, y: t.y, z: t.z, height: t.height } : null;
 }
 
 const plateTargets: PlateTarget[] = [];
@@ -1040,6 +1112,7 @@ function frame(now: number) {
   netStats.update(now);
   fx.update(dt);
   stars.update(dt);
+  objective.update(dt, locate, net.team, net.id, online && (phase === 'live' || phase === 'countdown'));
   world.update(dt);
   balls.sync(camera);
   composer.render(dt);
@@ -1050,4 +1123,4 @@ requestAnimationFrame(frame);
 
 // Poke at the game from the browser console while developing, e.g. __game.player.body.
 // import.meta.env.DEV is false in `npm run build`, so this is stripped from production.
-if (import.meta.env.DEV) Object.assign(window, { __game: { THREE, scene, camera, renderer, composer, input, player, net, balls, fx, stars, dummies, sound, hud, frame, prediction, models, remoteAvatars, menu, get mode() { return mode; }, get world() { return world; } } });
+if (import.meta.env.DEV) Object.assign(window, { __game: { THREE, scene, camera, renderer, composer, input, player, net, balls, fx, stars, dummies, sound, hud, frame, prediction, models, remoteAvatars, menu, objective, get mode() { return mode; }, get world() { return world; } } });
