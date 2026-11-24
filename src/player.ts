@@ -2,7 +2,7 @@
 // the marker you see on screen in first person and your own figure in third.
 
 import * as THREE from 'three';
-import { stepMovement, traceWorld, segmentHitsPlayer, STAND_HEIGHT, EYE_FROM_TOP, type Body, type MoveInput } from '../shared/sim';
+import { stepMovement, traceWorld, segmentHitsPlayer, STAND_HEIGHT, CROUCH_HEIGHT, WALK_SPEED, SPRINT_SPEED, EYE_FROM_TOP, type Body, type MoveInput } from '../shared/sim';
 import { TEAM_COLORS, type Spawn, type Team } from '../shared/protocol';
 import type { Input } from './input';
 import { paintTeam } from './models';
@@ -85,6 +85,16 @@ export class LocalPlayer {
   private pumpT = 0;
   private pumpLen = 0.5;
   private bobPhase = 0;
+  /** how much the marker bobs now (0 still .. 1 a full sprint), easing toward what you're doing */
+  private bobAmt = 0;
+  /** 1 sprinting .. 0 not, eased: the marker swings more and sits lower and tipped on a run */
+  private runAmt = 0;
+  /** the marker's springy dip (metres down) and its speed: kicked by landing and by dropping down at a run */
+  private dip = 0;
+  private dipV = 0;
+  private lastHeight = STAND_HEIGHT;
+  private lastVy = 0;
+  private wasOnGround = true;
   private move: MoveInput = { forward: 0, right: 0, jump: false, sprint: false, crouch: false, prone: false, yaw: 0 };
   private euler = new THREE.Euler(0, 0, 0, 'YXZ');
   /** visual-only offset left over from a server correction; decays to zero so fixes don't look like teleports */
@@ -131,8 +141,8 @@ export class LocalPlayer {
       this.gun.add(this.markerModel);
       this.gun.scale.setScalar(0.55);
       this.gun.rotation.y = 0.05; // angled a touch toward the centre of the screen
-      // held up close, like it's at your mask: higher and nearer than a "gun at the hip" view
-      this.gunOffset.set(0.17, -0.18, -0.48);
+      // held right up at your mask, the way you'd shoot: close in under the right eye
+      this.gunOffset.set(0.13, -0.15, -0.28);
     } else {
       this.buildGun();
     }
@@ -344,11 +354,29 @@ export class LocalPlayer {
       return;
     }
     if (this.bodyFig) this.bodyFig.root.visible = false;
-    const speed = Math.hypot(this.body.vx, this.body.vz);
-    if (this.body.onGround && speed > 0.5) this.bobPhase += dt * speed * 1.6;
-    const bob = this.body.onGround ? Math.sin(this.bobPhase * 2) * 0.018 * Math.min(1, speed / 5) : 0;
+    const b = this.body;
+    const speed = Math.hypot(b.vx, b.vz);
+    const grounded = b.onGround;
+    // steps: one bob per footfall, quicker on a run, slow and heavy on hands and knees
+    const low = b.height < CROUCH_HEIGHT - 0.05;
+    if (grounded && speed > 0.3) this.bobPhase += dt * speed * (low ? 2.6 : 1.6);
+    const ease = Math.min(1, dt * 8);
+    this.bobAmt += ((grounded ? Math.min(1.3, speed / WALK_SPEED) : 0) - this.bobAmt) * ease;
+    this.runAmt += ((grounded && speed > (WALK_SPEED + SPRINT_SPEED) / 2 ? 1 : 0) - this.runAmt) * Math.min(1, dt * 6);
+    const bob = Math.sin(this.bobPhase * 2) * 0.014 * this.bobAmt;
     this.camera.position.y += bob;
     this.camera.rotation.set(this.pitch, this.yaw, 0);
+
+    // the springy dip: landing from a jump knocks the marker down, and so does dropping to a crouch
+    // or onto the ground at speed (diving into a bunker), harder the faster you were going
+    if (grounded && !this.wasOnGround) this.dipV += Math.min(0.9, Math.max(0, -this.lastVy) * 0.09);
+    const fell = this.lastHeight - b.height;
+    if (fell > 0 && speed > 2) this.dipV += fell * speed * 0.14;
+    this.dipV += (-90 * this.dip - 13 * this.dipV) * dt;
+    this.dip += this.dipV * dt;
+    this.wasOnGround = grounded;
+    this.lastVy = b.vy;
+    this.lastHeight = b.height;
 
     this.recoil = Math.max(0, this.recoil - dt * 14);
     this.pumpT = Math.max(0, this.pumpT - dt / this.pumpLen);
@@ -358,9 +386,20 @@ export class LocalPlayer {
     const bump = this.pumpT > 0 ? Math.sin(Math.PI * Math.min(1, (1 - this.pumpT) * 1.25)) : 0;
     const stroke = this.holding === 'pump' && this.pumpAction ? bump * 0.35 : bump;
     const o = this.gunOffset;
-    this.gun.position.set(o.x + Math.cos(this.bobPhase) * 0.005, o.y - bob * 0.5 - stroke * 0.012, o.z + this.recoil * 0.03 + stroke * 0.05);
-    this.gun.rotation.x = this.recoil * 0.05 - stroke * 0.12;
-    this.gun.rotation.z = -stroke * 0.08;
+    // the bounce: the marker drops a little on each footfall and rides back up (|sin|, so it lands
+    // on every step), swaying side to side once a stride; more on a run, where it also sits lower
+    // and tips in a little
+    const amt = this.bobAmt * (1 + this.runAmt * 0.8);
+    const step = Math.abs(Math.sin(this.bobPhase)) * 0.022 * amt;
+    const sway = Math.cos(this.bobPhase) * 0.009 * amt;
+    const run = this.runAmt;
+    this.gun.position.set(
+      o.x + sway + run * 0.012,
+      o.y + step - 0.008 * amt - this.dip - run * 0.02 - stroke * 0.012,
+      o.z + this.recoil * 0.03 + stroke * 0.05 + run * 0.02,
+    );
+    this.gun.rotation.x = this.recoil * 0.05 - stroke * 0.12 - this.dip * 2.2 - step * 1.2 - run * 0.08;
+    this.gun.rotation.z = -stroke * 0.08 + sway * 2.5 + run * 0.12;
     this.gun.visible = this.alive;
   }
 
