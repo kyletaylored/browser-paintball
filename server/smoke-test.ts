@@ -319,7 +319,8 @@ async function takeoverTest(url: string) {
     before,
   );
   const me = after?.players.find((p) => p.id === human.id);
-  check('you are in where the bot was, and it is out', !!me && Math.hypot(me.x - bot.x, me.z - bot.z) < 2);
+  // where the bot was when the server swapped us (it keeps running until then, so not its spot in outSnap)
+  check('you are in where the bot was, and it is out', !!me && !!took && Math.hypot(me.x - took.b[0], me.z - took.b[2]) < 2);
   human.ws.close();
 }
 
