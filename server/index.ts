@@ -306,6 +306,11 @@ function handle(p: Player, msg: ClientMsg) {
     if (!VOICE || t - p.lastVoiceToken < 5) return;
     p.lastVoiceToken = t;
     send(p.ws, { t: 'voice', url: VOICE.url, token: voiceToken(VOICE, p.id, p.name, p.team) });
+  } else if (msg.t === 'takeover') {
+    const b = finite(msg.id) ? players.get(msg.id) : undefined;
+    // only someone who's out, during a point, into a bot on their own team that's still in
+    if (!p.ws || p.alive || match.phase !== 'live' || !b || !b.bot || !b.alive || b.team !== p.team) return;
+    takeOver(p, b);
   } else if (msg.t === 'fire') {
     if (!p.alive || !isV3(msg.o) || !isV3(msg.d)) return;
     if (match.phase !== 'live' && match.phase !== 'waiting') return; // no shooting during countdowns and pauses
@@ -656,6 +661,25 @@ function respawn(p: Player) {
   p.body = newBody(sp.x, sp.y, sp.z);
   p.bot?.brain.reset(sp.yaw);
   send(p.ws, { t: 'respawn', spawn: sp });
+}
+
+/**
+ * Human p (out) plays on as bot b (a teammate still in): they swap places. p is in, exactly where b
+ * was (its body, aim and position history, so lag-compensated shots still find it), and b is out
+ * where p was, and walks off. Nobody is eliminated, so the score and stats don't change.
+ */
+function takeOver(p: Player, b: Player) {
+  const mine = { body: p.body, history: p.history, x: p.x, y: p.y, z: p.z, yaw: p.yaw };
+  Object.assign(p, {
+    alive: true, outUntil: 0, body: b.body, history: b.history, x: b.x, y: b.y, z: b.z, yaw: b.yaw, pitch: b.pitch, crouch: b.crouch, prone: b.prone,
+  });
+  Object.assign(b, { ...mine, alive: false, outUntil: Infinity, pitch: 0, crouch: false, prone: false });
+  b.bot!.walkLeft = 0;
+  const body = p.body;
+  broadcast({
+    t: 'takeover', id: p.id, bot: b.id, b: [body.x, body.y, body.z, body.vx, body.vy, body.vz, body.height, body.onGround ? 1 : 0], yaw: p.yaw, pitch: p.pitch,
+  });
+  log(`  player ${p.id} took over ${b.name}`);
 }
 
 function eliminate(victim: Player, ball: Ball, p: V3, pose: Pose, bounced: boolean) {

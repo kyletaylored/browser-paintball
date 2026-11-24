@@ -24,6 +24,8 @@ export interface NetEvents {
   /** a ball bounced off a player without breaking */
   bounce(m: Extract<ServerMsg, { t: 'bounce' }>): void;
   respawn(spawn: Spawn): void;
+  /** someone (maybe us) stepped into a teammate bot */
+  takeover(m: Extract<ServerMsg, { t: 'takeover' }>): void;
   ack(m: Extract<ServerMsg, { t: 'ack' }>): void;
   /** a voice server token (asked for with { t: 'voice' }) */
   voice(url: string, token: string): void;
@@ -336,6 +338,9 @@ export class Net {
         break;
       case 'respawn':
         this.ev.respawn(m.spawn);
+        break;
+      case 'takeover':
+        if (Array.isArray(m.b) && m.b.length === 8) this.ev.takeover(m);
         break;
       case 'leave':
         this.remotes.delete(m.id);

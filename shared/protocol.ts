@@ -108,7 +108,9 @@ export type ClientMsg =
   /** one of our ICE candidates */
   | { t: 'ice'; c: string; mid: string }
   /** a token for the voice server (only if the welcome said voice is on) */
-  | { t: 'voice' };
+  | { t: 'voice' }
+  /** out during a point: play on as bot `id`, a teammate still in (it goes out in your place) */
+  | { t: 'takeover'; id: number };
 
 /** server → browser */
 export type ServerMsg =
@@ -133,6 +135,11 @@ export type ServerMsg =
   /** a ball bounced off a player without breaking: they play on */
   | { t: 'bounce'; victim: number; shooter: number; p: V3 }
   | { t: 'respawn'; spawn: Spawn }
+  /**
+   * player `id` (out) stepped into teammate bot `bot`: they're in, where the bot was (body b, facing
+   * yaw / pitch), and the bot is out where they were
+   */
+  | { t: 'takeover'; id: number; bot: number; b: BodyState; yaw: number; pitch: number }
   | { t: 'leave'; id: number }
   /** names and stats; sent when they change and every couple of seconds (for ping) */
   | { t: 'roster'; players: RosterEntry[] }
