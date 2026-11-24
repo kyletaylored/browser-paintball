@@ -7,6 +7,20 @@
 
 import type { Bunker, BoxBunker, CanBunker, LogBunker, Look, OrbBunker, PolyBunker, ProfileBunker, TaperBunker } from './field';
 
+/**
+ * Bright paint fills, the colours real paint comes in (and the accents on the player art). Each field
+ * gives each team one of these, never the team's own colour, so splats read as paint, not as markers.
+ * Look only: who shot a ball is in the ball itself.
+ */
+export const PAINT = {
+  yellow: 0xffe01a,
+  lime: 0x8cff2e,
+  pink: 0xff3fa8,
+  orange: 0xff8a1f,
+  cyan: 0x2ee6ff,
+  purple: 0xb45cff,
+} as const;
+
 export interface MapTheme {
   /** what the field is drawn on */
   ground: 'turf' | 'sand' | 'forest' | 'moon';
@@ -16,6 +30,8 @@ export interface MapTheme {
   boundary: 'net' | 'rope' | 'glow';
   sky: number;
   fog: [near: number, far: number];
+  /** each team's paint (Red's, Blue's): two different PAINT colours */
+  paint: [red: number, blue: number];
   sun: { color: number; intensity: number };
   hemi: { sky: number; ground: number; intensity: number };
   /** how shots are drawn: paintballs, or little moons with comet tails (look only: they fly the same) */
@@ -161,7 +177,7 @@ const ARENA: GameMap = {
     ],
   ),
   theme: {
-    ground: 'turf', surround: 'grass', boundary: 'net', sky: 0x8cc2f2, fog: [70, 190],
+    ground: 'turf', surround: 'grass', boundary: 'net', sky: 0x8cc2f2, fog: [70, 190], paint: [PAINT.yellow, PAINT.pink],
     sun: { color: 0xfff2dd, intensity: 2.6 }, hemi: { sky: 0xcfe4ff, ground: 0x56703f, intensity: 1.1 },
   },
   targets: [[7.5, 2.5], [13.8, -6], [11, 8]],
@@ -214,7 +230,7 @@ const TOURNAMENT: GameMap = {
     ],
   ),
   theme: {
-    ground: 'turf', surround: 'stands', boundary: 'net', sky: 0x86bdf0, fog: [80, 220],
+    ground: 'turf', surround: 'stands', boundary: 'net', sky: 0x86bdf0, fog: [80, 220], paint: [PAINT.lime, PAINT.orange],
     sun: { color: 0xfff4e2, intensity: 2.7 }, hemi: { sky: 0xd0e6ff, ground: 0x4f6a3a, intensity: 1.1 },
   },
   targets: [[9, 3], [14, -7], [17, 9]],
@@ -258,7 +274,7 @@ const BEACH: GameMap = {
     ],
   ),
   theme: {
-    ground: 'sand', surround: 'sea', boundary: 'rope', sky: 0x9fd6f7, fog: [90, 260],
+    ground: 'sand', surround: 'sea', boundary: 'rope', sky: 0x9fd6f7, fog: [90, 260], paint: [PAINT.cyan, PAINT.pink],
     sun: { color: 0xfff1d6, intensity: 3.0 }, hemi: { sky: 0xd8efff, ground: 0xc9b98a, intensity: 1.25 },
   },
   targets: [[8, 3], [12.5, -7], [15, 8]],
@@ -323,7 +339,7 @@ const WOODS: GameMap = {
   margin: 3,
   bunkers: woods(),
   theme: {
-    ground: 'forest', surround: 'forest', boundary: 'rope', sky: 0xa9c4c9, fog: [25, 120],
+    ground: 'forest', surround: 'forest', boundary: 'rope', sky: 0xa9c4c9, fog: [25, 120], paint: [PAINT.yellow, PAINT.pink],
     sun: { color: 0xffe6c2, intensity: 2.1 }, hemi: { sky: 0xb9d3c2, ground: 0x3b4a2a, intensity: 1.0 },
   },
   targets: [[12, 4], [20, -8], [26, 10]],
@@ -366,7 +382,7 @@ const SPACE: GameMap = {
     ],
   ),
   theme: {
-    ground: 'moon', surround: 'space', boundary: 'glow', sky: 0x04050c, fog: [90, 420],
+    ground: 'moon', surround: 'space', boundary: 'glow', sky: 0x04050c, fog: [90, 420], paint: [PAINT.lime, PAINT.purple],
     sun: { color: 0xffffff, intensity: 3.1 }, hemi: { sky: 0x8a97c8, ground: 0x34343c, intensity: 0.75 },
     shots: 'moon', outfit: 'astronaut', outFx: 'stars',
   },

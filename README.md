@@ -160,6 +160,8 @@ src/          the browser game
   Your browser predicts the same steps locally, so moving feels instant, and quietly corrects itself if the server
   disagrees (`src/prediction.ts`).
 - **Paintballs:** your browser draws them the instant you click. The server *also* flies them using the same `shared/sim.ts` code, in the same fixed steps, and is the only one that decides eliminations.
+- **Paint colours:** paint comes in bright fills (yellow, lime, pink, orange, cyan, purple), not the team colours. Each
+  field gives each team a different one (`theme.paint` in `shared/maps.ts`). Look only.
 - **Bounces:** paint that hits at a glancing angle (or slowly) usually bounces off instead of breaking, flies on and can
   still eliminate someone. Whether it bounces is a roll of the dice, but every machine rolls the same dice: each ball's
   random numbers start from a hash of the point it was fired from, which the shooter, the server and every other browser
