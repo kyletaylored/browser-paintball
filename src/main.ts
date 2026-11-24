@@ -7,6 +7,7 @@ import { buildWorld } from './world';
 import { field, setMap, spawnPoint } from '../shared/field';
 import { MAP_LIST } from '../shared/maps';
 import { Input, TOUCH } from './input';
+import { TouchControls } from './touch';
 import { Menu, type MenuAction } from './menu';
 import type { PadSettings } from './gamepad';
 import { LocalPlayer } from './player';
@@ -91,6 +92,13 @@ hud.bindPadSettings(padSettings, () => {
   }
 });
 hud.bindMenuButton(() => input.stop());
+// on a touch screen: move, aim and fire from the screen (hidden while a controller is connected)
+if (TOUCH) {
+  input.touch = new TouchControls(document.getElementById('hud')!, {
+    crouch: (down) => input.touchStance('crouch', down),
+    prone: (down) => input.touchStance('prone', down),
+  });
+}
 hud.bindQuality();
 // the field picker on the main menu: shows the field behind the menu, and practice plays on it
 hud.bindMapPicker((id) => {
@@ -856,8 +864,10 @@ function frame(now: number) {
   if (menu.open) menu.pad(input.pad.state);
   hud.setControls(input.device, input.pad.state.connected ? input.pad.state.id : null, TOUCH, input.active);
   setDummiesVisible(mode === 'practice' || (mode === 'online' && !online));
+  input.touch?.setVisible(input.active && !input.pad.state.connected);
+  if (input.touch?.shown) input.touch.showStance(input.crouch, input.prone);
   const look = input.takeLook();
-  if (input.locked) player.look(look.dx, look.dy);
+  if (input.active && (look.dx || look.dy)) player.look(look.dx, look.dy);
   if (input.active && input.viewPressed) setView(player.view === 'third' ? 'first' : 'third', true);
   const shoulder = input.active && player.view === 'third' ? input.shoulderPressed : null;
   if (shoulder !== null) {

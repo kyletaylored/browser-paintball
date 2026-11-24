@@ -125,7 +125,7 @@ export class Hud {
     line.textContent = padId !== null
       ? `Controller ready: ${padName(padId)}`
       : touch
-        ? 'Connect a controller (Bluetooth or clip-on), then press any button on it'
+        ? 'Play with the on-screen controls, or connect a controller and press any button on it'
         : 'Got a controller? Connect it and press any button';
   }
 

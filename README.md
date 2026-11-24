@@ -65,6 +65,10 @@ plays one mode only, with no vote. The server holds every shooter, bots included
 - **Controller?** Connect one (Bluetooth or USB) and press any button: the main menu says when it's found. The d-pad
   or left stick moves through the menus, A picks and B goes back. On a phone, clip it on or pair it, open the game in
   the phone's browser, turn the phone sideways and pick Play online. "Add to home screen" opens it fullscreen like an app.
+- **Phone with no controller?** Turn it sideways and play with the on-screen controls: put your left thumb down
+  anywhere on the left half and drag to move (push well out to sprint), drag on the right half to aim, and hold Fire
+  to shoot (you can keep aiming by dragging on it). Jump, Crouch, Lie (tap to stay down, or hold) and Reload are round
+  the Fire button. They hide while a controller is connected.
 - **Check the server works:** `npm test` runs the wire-format round-trip checks, the controller checks and the map
   checks (every field: bunkers inside the lines, start positions clear, halves mirrored, paint stops on every bunker,
   players kept out, bots can path across), then `npm run test:server`, which starts its own servers, plays a point
@@ -135,6 +139,7 @@ src/          the browser game
   world.ts      builds the current field: sky, lights, ground, boundary, bunkers, scenery
   player.ts     first-person controller + the gun on screen
   input.ts      keyboard + mouse (pointer lock) and controllers, combined into actions; phone start
+  touch.ts      on-screen controls for phones: move stick, aim by dragging, Fire / Jump / Crouch / Lie / Reload
   gamepad.ts    controllers: deadzones, aim curve, buttons, rumble (gamepad-test.ts checks it)
   paintballs.ts all balls in flight, drawn as glowing streaks (three InstancedMeshes); near-miss whizzes
   fx.ts         paint splat decals + droplet bursts
