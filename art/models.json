@@ -87,6 +87,47 @@
         0.4,
         0.9
       ]
+    },
+    {
+      "source": "art/characters/sniper.json",
+      "out": "sniper.glb",
+      "what": "the sniper: a generated body (art/characters/sniper.glb) on the player rig, coloured from its concept drawings (npm run assets:characters)",
+      "nodes": [
+        "player",
+        "hips",
+        "torso",
+        "head",
+        "shoulderR",
+        "elbowR",
+        "shoulderL",
+        "elbowL",
+        "thighR",
+        "kneeR",
+        "thighL",
+        "kneeL",
+        "gun",
+        "body_sniper"
+      ],
+      "animations": {
+        "idle": 2.4,
+        "run": 0.66,
+        "crouch": 2,
+        "crouchMove": 0.9,
+        "shoot": 0.12,
+        "out": 1.6,
+        "outWalk": 0.9
+      },
+      "materials": [
+        "team",
+        "accent"
+      ],
+      "maxTriangles": 20000,
+      "maxKB": 300,
+      "size": [
+        1.15,
+        1.85,
+        1.2
+      ]
     }
   ]
 }

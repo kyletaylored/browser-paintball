@@ -44,7 +44,8 @@ function findBlender(): string {
 }
 
 const filter = process.argv.slice(2).filter((a) => !a.startsWith('-'));
-const rules = loadRules().filter((r) => !filter.length || filter.some((f) => r.source.includes(f) || r.out.includes(f)));
+// characters from a recipe (art/characters/*.json) are built by scripts/character-assets.ts instead
+const rules = loadRules().filter((r) => /\.(py|blend)$/.test(r.source)).filter((r) => !filter.length || filter.some((f) => r.source.includes(f) || r.out.includes(f)));
 if (!rules.length) throw new Error(`no model in art/models.json matches ${filter.join(' ')}`);
 
 const blender = findBlender();

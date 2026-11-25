@@ -16,6 +16,7 @@ import { LocalPlayer } from './player';
 import { Paintballs, type Target, type BallEvents } from './paintballs';
 import { Fx } from './fx';
 import { makeAvatar, fieldOutfit, type Avatar } from './avatars';
+import { characterFor } from './characters';
 import { StarBursts } from './stars';
 import { loadModels } from './models';
 import { Hud } from './hud';
@@ -253,7 +254,7 @@ interface Dummy extends Target {
   downUntil: number;
 }
 const dummies: Dummy[] = field.map.targets.map(([x, z], i) => {
-  const avatar = makeAvatar(models, TEAM_COLORS[1]);
+  const avatar = makeAvatar(models, TEAM_COLORS[1], characterFor(i));
   scene.add(avatar.root);
   return { id: -100 - i, team: 1, x, y: 0, z, baseZ: z, height: STAND_HEIGHT, yaw: Math.PI / 2, prone: false, alive: true, avatar, downUntil: 0 };
 });
@@ -456,7 +457,7 @@ function updateRemotes(now: number) {
     if (newest && newest.at < at) dry = true;
     let ra = remoteAvatars.get(id);
     if (!ra) {
-      const avatar = makeAvatar(models, TEAM_COLORS[r.team]);
+      const avatar = makeAvatar(models, TEAM_COLORS[r.team], characterFor(id));
       scene.add(avatar.root);
       ra = { avatar, target: { id, team: r.team, x: 0, y: 0, z: 0, height: STAND_HEIGHT, yaw: 0, prone: false, alive: true }, feet: new Footsteps(), lx: NaN, ly: 0, lz: NaN, pitch: 0 };
       remoteAvatars.set(id, ra);

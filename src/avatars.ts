@@ -6,6 +6,7 @@
 // hopper), a gold visor, a glass helmet bubble and a backpack with an aerial.
 
 import * as THREE from 'three';
+import { clone as cloneSkinned } from 'three/addons/utils/SkeletonUtils.js';
 import { STAND_HEIGHT, PRONE_FEET, PRONE_RADIUS } from '../shared/sim';
 import { field } from '../shared/field';
 import { paintTeam, paintMaterial, type Models } from './models';
@@ -31,7 +32,9 @@ export type Outfit = 'jersey' | 'astronaut';
 export const fieldOutfit = (): Outfit => field.map.theme.outfit ?? 'jersey';
 
 export function makeAvatar(models: Models | null, color: number, character: Character = CHARACTERS[0]): Avatar {
-  const a = models ? new ModelAvatar(models, color) : new PrimitiveAvatar(color);
+  // a character with a body of its own is that model; the rest are the built-in figure, dressed
+  const body = character.model ? models?.characters.get(character.model) : undefined;
+  const a = models ? new ModelAvatar(models, color, body) : new PrimitiveAvatar(color);
   toonify(a.root); // the arcade look (src/toon.ts)
   a.wear(character);
   a.dress(fieldOutfit());
@@ -145,12 +148,14 @@ export class ModelAvatar implements Avatar {
   private gear: THREE.Object3D[] = [];
   private character: Character | null = null;
 
-  constructor(models: Models, color: number) {
-    this.model = models.player.scene.clone(true);
+  /** `body`: a character's own model (same rig and clips) instead of the built-in figure */
+  constructor(models: Models, color: number, body: Models['player'] = models.player) {
+    // a skinned body needs its own skeleton (a plain clone would move the original's bones)
+    this.model = cloneSkinned(body.scene);
     paintTeam(this.model, color);
     this.root.add(this.model);
     this.mixer = new THREE.AnimationMixer(this.model);
-    for (const clip of models.player.clips) {
+    for (const clip of body.clips) {
       if (clip.name === 'shoot') {
         const add = THREE.AnimationUtils.makeClipAdditive(clip.clone());
         this.shoot = this.mixer.clipAction(add);
@@ -275,7 +280,7 @@ export class ModelAvatar implements Avatar {
     this.model.traverse((o) => {
       const mesh = o as THREE.Mesh;
       if (!mesh.isMesh) return;
-      for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) if (m.userData.teamCopy) m.dispose();
+      for (const m of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) if (m.userData.teamCopy || m.userData.accentCopy) m.dispose();
     });
   }
 

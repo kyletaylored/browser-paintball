@@ -2,7 +2,7 @@
 // scripts/blender-assets.ts after each export and by scripts/check-models.ts in CI, which needs
 // no Blender: it only reads the committed .glb files.
 
-import { NodeIO, getBounds, type Document } from '@gltf-transform/core';
+import { NodeIO, type Document } from '@gltf-transform/core';
 import { ALL_EXTENSIONS } from '@gltf-transform/extensions';
 import { MeshoptDecoder, MeshoptEncoder } from 'meshoptimizer';
 import { readFileSync, statSync } from 'node:fs';
@@ -45,6 +45,41 @@ export async function gltfIO(): Promise<NodeIO> {
     .registerDependencies({ 'meshopt.decoder': MeshoptDecoder, 'meshopt.encoder': MeshoptEncoder });
 }
 
+/**
+ * The model's box at rest. Like getBounds(), but a skinned mesh is placed by its joints (its own
+ * node's transform doesn't apply to it), so a character's body counts where it's drawn.
+ */
+function bounds(doc: Document): { min: number[]; max: number[] } {
+  const min = [Infinity, Infinity, Infinity];
+  const max = [-Infinity, -Infinity, -Infinity];
+  const mul = (a: number[], b: number[]) => {
+    const o = new Array(16).fill(0);
+    for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) for (let k = 0; k < 4; k++) o[c * 4 + r] += a[k * 4 + r] * b[c * 4 + k];
+    return o;
+  };
+  for (const node of doc.getRoot().listNodes()) {
+    const mesh = node.getMesh();
+    if (!mesh) continue;
+    const skin = node.getSkin();
+    // at rest every joint's world matrix times its inverse bind matrix is the same: use the first
+    const m = skin ? mul(skin.listJoints()[0].getWorldMatrix() as number[], skin.getInverseBindMatrices()!.getElement(0, []) as number[]) : (node.getWorldMatrix() as number[]);
+    for (const prim of mesh.listPrimitives()) {
+      const pos = prim.getAttribute('POSITION');
+      if (!pos) continue;
+      const p = [0, 0, 0];
+      for (let i = 0; i < pos.getCount(); i++) {
+        pos.getElement(i, p);
+        for (let k = 0; k < 3; k++) {
+          const w = m[k] * p[0] + m[4 + k] * p[1] + m[8 + k] * p[2] + m[12 + k];
+          min[k] = Math.min(min[k], w);
+          max[k] = Math.max(max[k], w);
+        }
+      }
+    }
+  }
+  return { min, max };
+}
+
 export function triangles(doc: Document): number {
   let n = 0;
   for (const mesh of doc.getRoot().listMeshes()) {
@@ -84,7 +119,7 @@ export async function checkModel(rule: ModelRule, file: string): Promise<{ probl
   if (tris > rule.maxTriangles) problems.push(`${tris} triangles, over the budget of ${rule.maxTriangles}`);
   const kb = statSync(file).size / 1024;
   if (kb > rule.maxKB) problems.push(`${kb.toFixed(1)} KB, over the budget of ${rule.maxKB} KB`);
-  const b = getBounds(root.listScenes()[0]);
+  const b = bounds(doc);
   const size = b.max.map((v, i) => v - b.min[i]);
   size.forEach((s, i) => {
     if (s > rule.size[i]) problems.push(`${'xyz'[i]} size ${s.toFixed(2)} m, over ${rule.size[i]} m (wrong scale or orientation?)`);
