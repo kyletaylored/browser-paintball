@@ -147,8 +147,9 @@ server/
 scripts/
   build-assets.ts builds the marker and player models from code (npm run assets)
   blender-assets.ts exports the Blender-made models (npm run assets:blender, docs/BLENDER.md)
+  character-assets.ts turns a generated character model into a game figure (npm run assets:characters)
 art/            sources for the Blender-made models (build scripts and .blend files) and their rules
-public/models/  the models (meshopt-compressed glTF, ~240 KB total)
+public/models/  the models (meshopt-compressed glTF, ~1 MB total)
 src/          the browser game
   main.ts       game loop (fixed 120 Hz physics step), shooting, wiring
   toon.ts       the arcade look: toon (banded) materials and the ink outline pass

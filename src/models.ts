@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { GLTFLoader, type GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 import { toonify } from './toon';
+import { CHARACTERS } from './characters';
 
 export interface Models {
   /** bunker templates by node name; look them up with bunkerModel() */
@@ -14,6 +15,11 @@ export interface Models {
   marker: THREE.Object3D;
   /** the player figure and its animation clips */
   player: { scene: THREE.Object3D; clips: THREE.AnimationClip[] };
+  /**
+   * characters with a body of their own (src/characters.ts `model`), by model name: the same rig and
+   * clips as the player figure. One that didn't load is missing (that character uses the figure)
+   */
+  characters: Map<string, { scene: THREE.Object3D; clips: THREE.AnimationClip[] }>;
   /**
    * the first-person pump marker for pump mode (made in Blender: art/pump-marker.py), with its
    * "pump" animation; null if it didn't load (then pump mode uses the usual marker)
@@ -77,8 +83,34 @@ export async function loadModels(onProgress: (fraction: number) => void): Promis
     if (pump) toonify(pump.scene);
     const pumpNode = pump?.scene.getObjectByName('marker') ?? null;
     if (pump && !pumpNode) console.warn('pump-marker.glb has no "marker" node: using the usual marker for pump mode');
+    // optional too: a character whose body didn't load wears the built-in figure
+    const characters = new Map<string, { scene: THREE.Object3D; clips: THREE.AnimationClip[] }>();
+    const bodies = [...new Set(CHARACTERS.flatMap((c) => (c.model ? [c.model] : [])))];
+    await Promise.all(
+      bodies.map(
+        (name) =>
+          new Promise<void>((resolve) =>
+            loader.load(
+              `${base}${name}.glb`,
+              (g) => {
+                g.scene.traverse((o) => {
+                  if ((o as THREE.Mesh).isMesh) o.castShadow = o.receiveShadow = true;
+                });
+                toonify(g.scene);
+                characters.set(name, { scene: g.scene, clips: g.animations });
+                resolve();
+              },
+              undefined,
+              () => {
+                console.warn(`${name}.glb didn't load: that character wears the built-in figure`);
+                resolve();
+              },
+            ),
+          ),
+      ),
+    );
     return {
-      bunkers: byKey, marker: markerNode, player: { scene: player.scene, clips: player.animations },
+      bunkers: byKey, marker: markerNode, player: { scene: player.scene, clips: player.animations }, characters,
       pumpMarker: pump && pumpNode ? { scene: pumpNode, clips: pump.animations } : null,
     };
   } catch (e) {
@@ -96,16 +128,22 @@ export function bunkerModel(models: Models, key: string): THREE.Object3D | undef
 
 /** give every material named "team" in this object its own copy in the team colour */
 export function paintTeam(root: THREE.Object3D, color: number): void {
+  paintMaterial(root, 'team', color);
+}
+
+/** give every material called `name` in this object its own copy in `color` ("team", "accent") */
+export function paintMaterial(root: THREE.Object3D, name: string, color: number): void {
+  const mine = `${name}Copy`;
   root.traverse((o) => {
     const mesh = o as THREE.Mesh;
     if (!mesh.isMesh) return;
     const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
     const next = mats.map((m) => {
-      if (m.name !== 'team') return m;
+      if (m.name !== name) return m;
       const c = (m as THREE.MeshStandardMaterial).clone();
       c.color.setHex(color);
-      if (m.userData.teamCopy) m.dispose(); // replacing a copy we made earlier
-      c.userData.teamCopy = true;
+      if (m.userData[mine]) m.dispose(); // replacing a copy we made earlier
+      c.userData[mine] = true;
       return c;
     });
     mesh.material = Array.isArray(mesh.material) ? next : next[0];

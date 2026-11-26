@@ -1,0 +1,33 @@
+{
+  "$comment": "How to turn the generated model sniper.glb into public/models/sniper.glb (npm run assets:characters -- sniper; see scripts/character-assets.ts). Joints are where they are in the generated model's pose, in game axes (metres, y up, facing -z) after it's turned, scaled and centred; right side only, the left is mirrored.",
+  "source": "art/characters/sniper.glb",
+  "concept": {
+    "front": "art/characters/concept/3-sniper-front.png",
+    "back": "art/characters/concept/3-sniper-back.png"
+  },
+  "faces": "+z",
+  "centerZ": 0.15,
+  "joints": {
+    "hips": [0, 0.95, 0],
+    "torso": [0, 1.03, 0],
+    "head": [0, 1.46, 0],
+    "shoulder": [0.19, 1.335, 0.0],
+    "elbow": [0.316, 1.328, -0.209],
+    "hand": [0.47, 1.32, -0.495],
+    "thigh": [0.1, 0.86, 0],
+    "knee": [0.165, 0.5, 0.02],
+    "foot": [0.21, 0.14, 0.04]
+  },
+  "palette": {
+    "team": "#d62a26",
+    "accent": "#f0509a",
+    "suit": "#37373a",
+    "trim": "#131315"
+  },
+  "matchAlso": {
+    "suit": ["#565658", "#4a3a3a"],
+    "team": ["#d23c14", "#b01818"],
+    "accent": ["#d0508c", "#904c70", "#fbc6dd"]
+  },
+  "triangles": 10000
+}
